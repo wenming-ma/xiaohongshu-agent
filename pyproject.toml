@@ -1,0 +1,16 @@
+[project]
+name = "2512280422"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.13.2",
+    "langchain-anthropic>=1.3.0",
+    "langchain-core>=1.2.5",
+    "langchain-google-genai>=4.1.2",
+    "langchain-openai>=1.1.6",
+    "langgraph>=1.0.5",
+    "playwright>=1.57.0",
+    "python-dotenv>=1.2.1",
+]
