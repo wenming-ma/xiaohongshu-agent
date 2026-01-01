@@ -4,12 +4,12 @@
 
 所有提示词统一在 prompts/image.yaml 管理
 """
-import os
 from pathlib import Path
 from typing import List, Sequence, Union
 from pydantic_ai import Agent, BinaryContent
 from pydantic_ai.messages import UserContent
 from ..models.schemas import GeneratedImage, ImageReviewResult, ImageReviewIssue
+from ..utils.anthropic_provider import get_anthropic_model
 from prompts import get_system_prompt, get_user_prompt
 
 
@@ -19,17 +19,10 @@ class ImageReviewAgent:
     # 文件大小阈值（小于此值可能是损坏的图片）
     MIN_FILE_SIZE = 10 * 1024  # 10KB
 
-    def __init__(self, model: str = "claude-sonnet-4-20250514"):
-        """
-        初始化图片审核 Agent
-
-        Args:
-            model: 使用的模型名称
-        """
-        # 从环境变量获取 API Key
-        api_key = os.getenv("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise ValueError("ANTHROPIC_API_KEY 环境变量未设置")
+    def __init__(self):
+        """初始化图片审核 Agent"""
+        # 获取带 HTTP 重试的 Model（max_retries=5）
+        model = get_anthropic_model()
 
         # 视觉审核 Agent（多模态，可以读取图片）
         # 系统提示词从 prompts/image_review.yaml 读取

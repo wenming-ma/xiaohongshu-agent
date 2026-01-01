@@ -5,14 +5,16 @@
 
 所有提示词统一在 prompts/image.yaml 管理
 """
-import os
 import asyncio
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 from ..models.schemas import ImageResult, GeneratedImage, XHSContent, ResearchResult
+from ..utils.anthropic_provider import get_anthropic_model
+from ..utils.download_manager import DownloadManager
 from .image_review import ImageReviewAgent
 from prompts import get_system_prompt, get_user_prompt, get_prompt_field
 
@@ -29,7 +31,6 @@ class ImageAgent:
 
     def __init__(
         self,
-        model: str = "claude-sonnet-4-20250514",
         image_count: int = 3,
         max_iterations: int = 3
     ):
@@ -37,16 +38,14 @@ class ImageAgent:
         初始化图片生成 Agent
 
         Args:
-            model: 使用的模型名称
             image_count: 生成图片数量（1-3张，默认3张）
             max_iterations: 审核不通过时的最大重试次数（默认3次）
         """
         self.image_count = min(max(image_count, 1), 3)  # 限制 1-3 张
         self.max_iterations = max_iterations
-        # 从环境变量获取 API Key
-        api_key = os.getenv("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise ValueError("ANTHROPIC_API_KEY 环境变量未设置")
+
+        # 获取带 HTTP 重试的 Model（max_retries=5）
+        model = get_anthropic_model()
 
         # 创建 Playwright MCP Server 实例（用于操作 Gemini）
         self.mcp_server = MCPServerStdio(
@@ -85,8 +84,11 @@ class ImageAgent:
         # Gemini URL
         self.gemini_url = "https://gemini.google.com/app"
 
-        # 图片审核 Agent（独立）
-        self.reviewer = ImageReviewAgent(model=model)
+        # 图片审核 Agent（独立，也使用共享 Provider）
+        self.reviewer = ImageReviewAgent()
+
+        # 下载文件管理器（处理浏览器下载的文件）
+        self.download_manager = DownloadManager()
 
     async def generate_image(
         self,
@@ -242,6 +244,9 @@ class ImageAgent:
         Returns:
             Path: 图片保存路径
         """
+        # 记录开始时间（用于筛选新下载的文件）
+        start_time = time.time()
+
         # 从 YAML 读取操作提示词模板并填充变量
         operation_prompt = get_prompt_field(
             "image",
@@ -252,15 +257,26 @@ class ImageAgent:
         # 运行 Gemini 操作 Agent
         result = await self.gemini_operator.run(operation_prompt)
 
-        # 图片保存路径（Chrome 默认下载目录中的最新文件）
-        # 注意：实际实现中需要处理下载目录的问题
-        image_path = output_dir / f"{image_type}.png"
-
-        # 检查是否成功
+        # 检查 Agent 执行状态
         if "SUCCESS" in result.output or "成功" in result.output:
-            print(f"   ✅ 图片生成成功")
+            print(f"         ✅ Gemini 操作成功")
         else:
-            print(f"   ⚠️ 图片生成状态: {result.output}")
+            print(f"         ⚠️ Gemini 操作状态: {result.output}")
+
+        # 等待下载完成并移动文件到目标目录
+        try:
+            image_path = self.download_manager.wait_and_move(
+                target_dir=output_dir,
+                target_name=image_type,
+                file_pattern="*.png",
+                timeout=60,
+                before_time=start_time
+            )
+            print(f"         ✅ 图片已保存: {image_path}")
+        except (TimeoutError, FileNotFoundError) as e:
+            print(f"         ⚠️ 文件处理失败: {e}")
+            # 返回期望路径（审核时会检测到缺失）
+            image_path = output_dir / f"{image_type}.png"
 
         return image_path
 
