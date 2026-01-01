@@ -42,7 +42,7 @@ class ContentAgent:
             output_type=ReviewResult,
             instrument=True,
             retries=3,  # 添加重试机制，应对临时 API 错误
-            system_prompt=(get_system_prompt("review"),),
+            system_prompt=(get_system_prompt("content_review"),),
         )
 
     async def _review(self, content: XHSContent, research: ResearchResult) -> ReviewResult:
@@ -57,7 +57,7 @@ class ContentAgent:
             ReviewResult: 审核结果
         """
         review_prompt = get_user_prompt(
-            "review",
+            "content_review",
             content=content.model_dump_json(indent=2),
             research=research.model_dump_json(indent=2)
         )

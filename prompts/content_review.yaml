@@ -1,7 +1,7 @@
 # 小红书内容审核 Agent Prompt
 # 版本管理：修改后请更新 version 字段
 
-name: review_agent
+name: content_review_agent
 version: "1.0.0"
 description: 小红书内容审核专家 - 使用 Reflexion 模式
 

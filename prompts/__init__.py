@@ -91,3 +91,30 @@ def get_prompt_metadata(name: str) -> dict[str, Any]:
     """获取 prompt 元数据（不含 prompt 内容）"""
     config = load_prompt(name)
     return {k: v for k, v in config.items() if k not in ('system_prompt', 'user_prompt_template')}
+
+
+def get_prompt_field(name: str, field: str, **variables) -> str:
+    """
+    获取 prompt 配置中的任意字段，支持变量替换
+
+    Args:
+        name: prompt 名称
+        field: 字段名称
+        **variables: 要替换的变量
+
+    Returns:
+        处理后的文本
+
+    Example:
+        >>> get_prompt_field("image", "gemini_operator_prompt")
+        >>> get_prompt_field("image", "gemini_operation_template", prompt="生成图片...")
+    """
+    config = load_prompt(name)
+    template = config.get(field, '')
+
+    # 变量替换
+    if variables:
+        for key, value in variables.items():
+            template = template.replace(f"{{{key}}}", str(value))
+
+    return template
