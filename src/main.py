@@ -5,9 +5,15 @@
 import asyncio
 import argparse
 import sys
+import io
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
+
+# 修复 Windows 控制台 UTF-8 编码问题
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 from .agents.research import ResearchAgent
 from .agents.content import ContentAgent
@@ -43,8 +49,9 @@ async def run_workflow(topic: str, audience: str) -> None:
         print("📚 Phase 1: 小红书研究")
         print("=" * 60)
 
+        # 🔑 创建 Agent（MCP 工具已在构造时注册）
         research_agent = ResearchAgent()
-        await research_agent.initialize_mcp()
+        print("   ✅ ResearchAgent 已创建（包含 Playwright MCP 工具）")
 
         research = await research_agent.research(topic, audience)
 

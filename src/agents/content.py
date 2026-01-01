@@ -10,7 +10,7 @@ from ..models.schemas import ResearchResult, XHSContent
 class ContentAgent:
     """小红书内容创作 Agent"""
 
-    def __init__(self, model: str = "claude-3-5-sonnet-20241022"):
+    def __init__(self, model: str = "claude-sonnet-4-20250514"):
         """
         初始化内容 Agent
 
@@ -24,8 +24,8 @@ class ContentAgent:
 
         self.agent = Agent(
             model=model,
-            result_type=XHSContent,
-            system_prompt="""你是小红书内容创作专家。
+            output_type=XHSContent,
+            system_prompt=("""你是小红书内容创作专家。
 
 **创作风格**：
 - 真实、接地气、有温度
@@ -67,7 +67,7 @@ class ContentAgent:
 - ❌ 不要编造数据或公司名
 - ❌ 不要空泛的建议（"要谨慎选择"）
 - ❌ 不要负面情绪过重
-- ✅ 只使用研究数据中的真实信息"""
+- ✅ 只使用研究数据中的真实信息""",)
         )
 
     async def create_content(
@@ -142,4 +142,4 @@ class ContentAgent:
         print("   ✍️  开始创作内容...")
         result = await self.agent.run(prompt)
 
-        return result.data
+        return result.output
