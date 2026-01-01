@@ -1,27 +1,22 @@
-# LangGraph 核心依赖
-langgraph>=0.2.0
-langchain>=0.3.0
-langchain-core>=0.3.0
+# ==========================================
+# Pydantic-AI 小红书内容创作工具
+# 依赖列表（简化版）
+# ==========================================
 
-# 多模型支持
-langchain-anthropic>=0.2.0
-langchain-openai>=0.2.0
-langchain-google-genai>=2.0.0
-
-# OpenAI SDK (for DALL-E 3)
-openai>=1.12.0
-
-# 浏览器自动化
-playwright>=1.40.0
-
-# Web 搜索和抓取
-beautifulsoup4>=4.12.0
-requests>=2.31.0
-aiohttp>=3.9.0
-
-# 数据处理
+# Pydantic AI（核心框架）
+pydantic-ai[mcp]>=0.1.0
 pydantic>=2.0.0
-python-dotenv>=1.0.0
 
-# 工具库
-pathlib>=1.0.1
+# HTTP 客户端
+aiohttp>=3.13.2
+
+# 环境配置
+python-dotenv>=1.2.1
+
+# ==========================================
+# 说明：
+# - Playwright MCP Server 通过 npx 使用，无需 Python 包
+# - 已移除 LangGraph、LangChain 全家桶
+# - 已移除 OpenAI（不再生成图片）
+# - 总依赖数：4 个（相比原来的 16 个减少 75%）
+# ==========================================

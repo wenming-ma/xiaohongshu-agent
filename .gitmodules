@@ -1,0 +1,6 @@
+[submodule "submodules/pydantic-ai"]
+	path = submodules/pydantic-ai
+	url = https://github.com/wenming-ma/pydantic-ai.git
+[submodule "submodules/playwright-mcp"]
+	path = submodules/playwright-mcp
+	url = https://github.com/wenming-ma/playwright-mcp.git
