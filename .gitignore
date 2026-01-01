@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Browser automation sessions
+browser-sessions/

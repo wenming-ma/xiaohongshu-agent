@@ -1,0 +1,139 @@
+"""
+主程序入口
+协调研究和内容创作的工作流
+"""
+import asyncio
+import argparse
+import sys
+from pathlib import Path
+from datetime import datetime
+from dotenv import load_dotenv
+
+from .agents.research import ResearchAgent
+from .agents.content import ContentAgent
+from .utils.file_ops import save_json
+
+
+async def run_workflow(topic: str, audience: str) -> None:
+    """
+    运行完整的内容创作工作流
+
+    Args:
+        topic: 研究主题
+        audience: 目标受众
+    """
+    print("=" * 60)
+    print("🚀 小红书内容创作工作流（Pydantic-AI）")
+    print("=" * 60)
+    print(f"\n主题: {topic}")
+    print(f"受众: {audience}\n")
+
+    # 创建输出目录
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    # 清理主题名（移除特殊字符）
+    safe_topic = "".join(c for c in topic if c.isalnum() or c in (' ', '-', '_'))[:20]
+    project_dir = Path("posts") / f"{timestamp}-{safe_topic}"
+    project_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"📁 输出目录: {project_dir}\n")
+
+    try:
+        # ==================== Phase 1: 研究 ====================
+        print("=" * 60)
+        print("📚 Phase 1: 小红书研究")
+        print("=" * 60)
+
+        research_agent = ResearchAgent()
+        await research_agent.initialize_mcp()
+
+        research = await research_agent.research(topic, audience)
+
+        # 保存研究结果
+        save_json(project_dir / "research.json", research.model_dump())
+
+        print(f"\n✅ 研究完成:")
+        print(f"   - 实体: {len(research.entities)} 个")
+        print(f"   - 案例: {len(research.cases)} 个")
+        print(f"   - 关键词: {len(research.keywords)} 个")
+        print(f"   - 可信度: {research.credibility}")
+        print(f"   - 数据点: {research.data_points} 个")
+
+        # ==================== Phase 2: 内容创作 ====================
+        print("\n" + "=" * 60)
+        print("✍️  Phase 2: 内容创作")
+        print("=" * 60)
+
+        content_agent = ContentAgent()
+        content = await content_agent.create_content(research, topic)
+
+        # 保存内容
+        save_json(project_dir / "content.json", content.model_dump())
+
+        print(f"\n✅ 内容创作完成:")
+        print(f"   - 标题: {content.title}")
+        print(f"   - 正文长度: {len(content.body)} 字")
+        print(f"   - 标签: {', '.join(content.hashtags)}")
+
+        # ==================== 完成 ====================
+        print("\n" + "=" * 60)
+        print("🎉 工作流完成！")
+        print("=" * 60)
+        print(f"\n输出文件:")
+        print(f"   - {project_dir / 'research.json'}")
+        print(f"   - {project_dir / 'content.json'}")
+
+        print(f"\n预览内容:")
+        print(f"{'─' * 60}")
+        print(f"标题: {content.title}")
+        print(f"\n{content.body}")
+        print(f"\n标签: {' '.join(['#' + tag for tag in content.hashtags])}")
+        print(f"\n{content.call_to_action}")
+        print(f"{'─' * 60}")
+
+    except Exception as e:
+        print(f"\n❌ 错误: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+def main():
+    """CLI 入口"""
+    # 加载环境变量
+    load_dotenv()
+
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(
+        description="小红书内容创作工具（Pydantic-AI）",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  python -m src.main --topic "西安公司避坑指南" --audience "求职者"
+  python -m src.main --topic "成都美食探店" --audience "吃货"
+        """
+    )
+
+    parser.add_argument(
+        "--topic",
+        required=True,
+        help="研究主题（如：西安公司避坑指南）"
+    )
+
+    parser.add_argument(
+        "--audience",
+        required=True,
+        help="目标受众（如：求职者）"
+    )
+
+    args = parser.parse_args()
+
+    # 运行工作流
+    try:
+        asyncio.run(run_workflow(args.topic, args.audience))
+    except KeyboardInterrupt:
+        print("\n\n⚠️  用户中断")
+        sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()
