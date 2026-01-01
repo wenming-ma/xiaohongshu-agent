@@ -79,3 +79,77 @@ class XHSContent(BaseModel):
                 "call_to_action": "你还遇到过哪些坑？评论区分享💬"
             }
         }
+
+
+class ReviewIssue(BaseModel):
+    """审核发现的问题"""
+
+    type: str = Field(
+        description="问题类型: count_mismatch | data_missing | logic_error | format_error"
+    )
+    severity: str = Field(
+        description="严重程度: critical | warning | info"
+    )
+    description: str = Field(
+        description="问题描述"
+    )
+    suggestion: str = Field(
+        description="修改建议"
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "type": "count_mismatch",
+                "severity": "critical",
+                "description": "声称'10家公司'，实际只列出5家",
+                "suggestion": "修改为'5家公司'或补充更多公司"
+            }
+        }
+
+
+class ReviewResult(BaseModel):
+    """审核结果"""
+
+    passed: bool = Field(
+        description="是否通过审核"
+    )
+    score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=100.0,
+        description="质量评分（0-100）"
+    )
+    issues: List[ReviewIssue] = Field(
+        default_factory=list,
+        description="发现的问题列表"
+    )
+    summary: str = Field(
+        description="审核总结"
+    )
+    entity_usage: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="实体使用情况统计"
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "passed": False,
+                "score": 65.0,
+                "issues": [
+                    {
+                        "type": "count_mismatch",
+                        "severity": "critical",
+                        "description": "声称'10家公司'，实际只列出5家",
+                        "suggestion": "修改为'5家公司'或补充更多"
+                    }
+                ],
+                "summary": "内容存在数量不一致问题，需要修改",
+                "entity_usage": {
+                    "research_entities": 11,
+                    "used_entities": 5,
+                    "usage_rate": 0.45
+                }
+            }
+        }

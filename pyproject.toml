@@ -11,6 +11,8 @@ dependencies = [
     # 本地 pydantic-ai（从 submodules 加载）
     "pydantic-ai-slim",
     "pydantic-graph",
+    # LLM Provider
+    "anthropic>=0.40.0",
     # 其他依赖
     "mcp>=1.0.0",
     "pydantic>=2.0.0",
@@ -18,6 +20,10 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "httpx>=0.27.0",
     "opentelemetry-api>=1.0.0",
+    # Logfire（可观测性）
+    "logfire>=2.0.0",
+    # Prompt 管理
+    "pyyaml>=6.0.0",
 ]
 
 [tool.uv.sources]
@@ -36,4 +42,4 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src"]
+packages = ["src", "prompts"]
