@@ -1,28 +1,33 @@
 """
 研究 Agent
 使用 Playwright MCP Server 搜索和分析小红书内容
+内置 Reflexion 循环：生成 → 审核 → 修订 → 循环直到通过
 """
 import os
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
-from ..models.schemas import ResearchResult
+from pydantic_ai.messages import ModelRequest, UserPromptPart
+from ..models.schemas import ResearchResult, ReviewResult
 from prompts import get_system_prompt, get_user_prompt
 
 
 class ResearchAgent:
-    """小红书研究 Agent"""
+    """小红书研究 Agent（带 Reflexion 循环）"""
 
-    def __init__(self, model: str = "claude-sonnet-4-20250514"):
+    def __init__(self, model: str = "claude-sonnet-4-20250514", max_iterations: int = 3):
         """
         初始化研究 Agent
 
         Args:
             model: 使用的模型名称
+            max_iterations: 最大审核迭代次数
         """
         # 从环境变量获取 API Key
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY 环境变量未设置")
+
+        self.max_iterations = max_iterations
 
         # 🔑 创建 Playwright MCP Server 实例
         self.mcp_server = MCPServerStdio(
@@ -35,17 +40,26 @@ class ResearchAgent:
             },
             tool_prefix='playwright',  # 工具名前缀，避免冲突
             cache_tools=True,  # 缓存工具列表，提高性能
-            max_retries=5,  # 🔑 增加工具重试次数（浏览器操作可能不稳定）
+            max_retries=5,  # 增加工具重试次数（浏览器操作可能不稳定）
         )
 
-        # 🔑 在 Agent 构造时直接注册 MCP 工具（官方推荐）
-        self.agent = Agent(
+        # 生成 Agent（带 MCP 工具）
+        self.generator = Agent(
             model=model,
             output_type=ResearchResult,
-            toolsets=[self.mcp_server],  # ✅ 工具在构造时注册
-            instrument=True,  # ✅ 启用 Logfire 可观测性
-            retries=3,  # ✅ 增加重试次数（浏览器操作可能需要更多重试）
-            system_prompt=(get_system_prompt("research"),),  # ✅ 从 YAML 加载
+            toolsets=[self.mcp_server],
+            instrument=True,
+            retries=3,
+            system_prompt=(get_system_prompt("research"),),
+        )
+
+        # 审核 Agent（纯推理，独立视角）
+        self.reviewer = Agent(
+            model=model,
+            output_type=ReviewResult,
+            instrument=True,
+            retries=3,  # 添加重试机制，应对临时 API 错误
+            system_prompt=(get_system_prompt("research_review"),),
         )
 
     async def list_tools(self) -> None:
@@ -53,8 +67,6 @@ class ResearchAgent:
         print("\n   🔧 正在检查可用工具...")
 
         try:
-            # 使用 MCP Server 的 list_tools 方法
-            # 注意：需要在异步上下文中调用
             async with self.mcp_server as server:
                 tools = await server.list_tools()
                 print(f"\n   📋 发现 {len(tools)} 个 Playwright MCP 工具:")
@@ -67,36 +79,96 @@ class ResearchAgent:
             print(f"   ⚠️  无法列出工具: {e}")
             print(f"   提示: 工具将在首次 Agent 调用时自动发现")
 
+    async def _review(self, result: ResearchResult, topic: str, target_audience: str) -> ReviewResult:
+        """
+        审核研究结果
+
+        Args:
+            result: 研究结果
+            topic: 研究主题
+            target_audience: 目标受众
+
+        Returns:
+            ReviewResult: 审核结果
+        """
+        review_prompt = get_user_prompt(
+            "research_review",
+            topic=topic,
+            target_audience=target_audience,
+            research=result.model_dump_json(indent=2)
+        )
+        review_result = await self.reviewer.run(review_prompt)
+        return review_result.output
+
     async def research(self, topic: str, target_audience: str) -> ResearchResult:
         """
-        执行研究任务
+        执行研究任务（带 Reflexion 循环）
 
         Args:
             topic: 研究主题
             target_audience: 目标受众
 
         Returns:
-            ResearchResult: 研究结果
+            ResearchResult: 研究结果（已通过审核或达到最大迭代次数）
         """
         # 首次运行时列出工具
         await self.list_tools()
 
-        # 从 YAML 加载并渲染 user prompt
-        prompt = get_user_prompt(
-            "research",
-            topic=topic,
-            target_audience=target_audience
-        )
+        messages = []  # 消息历史
+        result = None
+        review = None
 
-        print("   🔍 开始搜索和分析...")
+        for i in range(self.max_iterations):
+            # 1. 生成或继续修订
+            if i == 0:
+                prompt = get_user_prompt(
+                    "research",
+                    topic=topic,
+                    target_audience=target_audience
+                )
+                print("   🔍 开始搜索和分析...")
+            else:
+                # 将审核反馈注入消息历史
+                feedback_message = (
+                    f"审核未通过，请继续搜索补充数据。\n\n"
+                    f"**审核反馈**：{review.summary}\n\n"
+                    f"**具体问题**：\n"
+                )
+                for issue in review.issues:
+                    feedback_message += f"- [{issue.severity}] {issue.description}: {issue.suggestion}\n"
 
-        # 🔑 MCP Server 会在第一次使用工具时自动连接
-        result = await self.agent.run(prompt)
+                messages.append(ModelRequest(parts=[
+                    UserPromptPart(feedback_message)
+                ]))
+                prompt = "请根据反馈继续搜索，补充不足的数据。注意保留已有的有效数据。"
+                print(f"   🔄 根据反馈继续搜索 (第{i+1}轮)...")
 
-        return result.output
+            # 执行生成
+            run_result = await self.generator.run(prompt, message_history=messages)
+            result = run_result.output
+            messages.extend(run_result.new_messages())  # 保留历史
+
+            # 2. 审核
+            print(f"   🔍 审核研究结果 (第{i+1}轮)...")
+            review = await self._review(result, topic, target_audience)
+
+            # 3. 通过则返回
+            if review.passed:
+                print(f"   ✅ 研究审核通过 (第{i+1}轮)")
+                print(f"      - 实体: {len(result.entities)} 个")
+                print(f"      - 案例: {len(result.cases)} 个")
+                print(f"      - 评分: {review.score:.1f}/100")
+                return result
+
+            # 未通过，打印反馈
+            print(f"   ⚠️  研究审核未通过 (第{i+1}轮): {review.summary}")
+            for issue in review.issues:
+                print(f"      - [{issue.severity}] {issue.description}")
+
+        # 达到最大迭代次数
+        print(f"   ⚠️  达到最大迭代次数 ({self.max_iterations})，返回当前结果")
+        return result
 
     async def close(self):
         """关闭 MCP Server 连接"""
-        # MCP Server 实现了异步上下文管理器
-        # 如果需要手动关闭，可以调用此方法
         pass

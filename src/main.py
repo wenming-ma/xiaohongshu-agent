@@ -24,7 +24,6 @@ logfire.instrument_pydantic_ai()
 
 from .agents.research import ResearchAgent
 from .agents.content import ContentAgent
-from .agents.review import ReviewAgent
 from .utils.file_ops import save_json
 
 
@@ -89,34 +88,14 @@ async def run_workflow(topic: str, audience: str) -> None:
         print(f"   - 正文长度: {len(content.body)} 字")
         print(f"   - 标签: {', '.join(content.hashtags)}")
 
-        # ==================== Phase 3: 内容审核 ====================
-        print("\n" + "=" * 60)
-        print("🔍 Phase 3: 内容审核")
-        print("=" * 60)
-
-        review_agent = ReviewAgent()
-        review = await review_agent.review(content, research)
-
-        # 保存审核结果
-        save_json(project_dir / "review.json", review.model_dump())
-
-        # 打印审核报告
-        print(f"\n{review_agent.format_report(review)}")
-
-        # 如果审核未通过，给出警告
-        if not review.passed:
-            print("\n" + "=" * 60)
-            print("⚠️  内容审核未通过，建议修改后再发布")
-            print("=" * 60)
-
         # ==================== 完成 ====================
+        # 注：审核已内置到各 Agent 的 Reflexion 循环中
         print("\n" + "=" * 60)
         print("🎉 工作流完成！")
         print("=" * 60)
         print(f"\n输出文件:")
         print(f"   - {project_dir / 'research.json'}")
         print(f"   - {project_dir / 'content.json'}")
-        print(f"   - {project_dir / 'review.json'}")
 
         print(f"\n预览内容:")
         print(f"{'─' * 60}")
