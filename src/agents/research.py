@@ -3,31 +3,28 @@
 使用 Playwright MCP Server 搜索和分析小红书内容
 内置 Reflexion 循环：生成 → 审核 → 修订 → 循环直到通过
 """
-import os
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from ..models.schemas import ResearchResult, ReviewResult
+from ..utils.anthropic_provider import get_anthropic_model
 from prompts import get_system_prompt, get_user_prompt
 
 
 class ResearchAgent:
     """小红书研究 Agent（带 Reflexion 循环）"""
 
-    def __init__(self, model: str = "claude-sonnet-4-20250514", max_iterations: int = 3):
+    def __init__(self, max_iterations: int = 3):
         """
         初始化研究 Agent
 
         Args:
-            model: 使用的模型名称
             max_iterations: 最大审核迭代次数
         """
-        # 从环境变量获取 API Key
-        api_key = os.getenv("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise ValueError("ANTHROPIC_API_KEY 环境变量未设置")
-
         self.max_iterations = max_iterations
+
+        # 获取带 HTTP 重试的 Model（max_retries=5）
+        model = get_anthropic_model()
 
         # 🔑 创建 Playwright MCP Server 实例
         self.mcp_server = MCPServerStdio(
