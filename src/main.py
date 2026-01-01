@@ -24,16 +24,18 @@ logfire.instrument_pydantic_ai()
 
 from .agents.research import ResearchAgent
 from .agents.content import ContentAgent
+from .agents.image import ImageAgent
 from .utils.file_ops import save_json
 
 
-async def run_workflow(topic: str, audience: str) -> None:
+async def run_workflow(topic: str, audience: str, generate_image: bool = True) -> None:
     """
     运行完整的内容创作工作流
 
     Args:
         topic: 研究主题
         audience: 目标受众
+        generate_image: 是否生成配图（默认开启）
     """
     print("=" * 60)
     print("🚀 小红书内容创作工作流（Pydantic-AI）")
@@ -88,6 +90,39 @@ async def run_workflow(topic: str, audience: str) -> None:
         print(f"   - 正文长度: {len(content.body)} 字")
         print(f"   - 标签: {', '.join(content.hashtags)}")
 
+        # ==================== Phase 3: 配图生成（可选） ====================
+        image_result = None
+        if generate_image:
+            print("\n" + "=" * 60)
+            print("🎨 Phase 3: 配图生成")
+            print("=" * 60)
+
+            try:
+                image_agent = ImageAgent()
+                print("   ✅ ImageAgent 已创建（包含 Playwright MCP 工具）")
+
+                image_result = await image_agent.generate_image(
+                    content=content,
+                    research=research,
+                    topic=topic,
+                    output_dir=project_dir
+                )
+
+                # 保存图片结果
+                save_json(project_dir / "image.json", image_result.model_dump())
+
+                print(f"\n✅ 配图生成完成:")
+                print(f"   - 生成数量: {image_result.total_count} 张")
+                for img in image_result.images:
+                    print(f"   - {img.image_type}: {img.image_path}")
+                print(f"   - 生成时间: {image_result.generated_at}")
+
+            except Exception as e:
+                print(f"\n⚠️ 配图生成失败: {e}")
+                print("   继续完成其他步骤...")
+        else:
+            print("\n⏭️ 跳过配图生成（--no-image）")
+
         # ==================== 完成 ====================
         # 注：审核已内置到各 Agent 的 Reflexion 循环中
         print("\n" + "=" * 60)
@@ -96,6 +131,10 @@ async def run_workflow(topic: str, audience: str) -> None:
         print(f"\n输出文件:")
         print(f"   - {project_dir / 'research.json'}")
         print(f"   - {project_dir / 'content.json'}")
+        if image_result:
+            print(f"   - {project_dir / 'image.json'}")
+            for img in image_result.images:
+                print(f"   - {img.image_path}")
 
         print(f"\n预览内容:")
         print(f"{'─' * 60}")
@@ -140,11 +179,21 @@ def main():
         help="目标受众（如：求职者）"
     )
 
+    parser.add_argument(
+        "--no-image",
+        action="store_true",
+        help="跳过配图生成步骤"
+    )
+
     args = parser.parse_args()
 
     # 运行工作流
     try:
-        asyncio.run(run_workflow(args.topic, args.audience))
+        asyncio.run(run_workflow(
+            args.topic,
+            args.audience,
+            generate_image=not args.no_image
+        ))
     except KeyboardInterrupt:
         print("\n\n⚠️  用户中断")
         sys.exit(0)

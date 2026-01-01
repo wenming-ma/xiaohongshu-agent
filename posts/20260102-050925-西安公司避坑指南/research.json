@@ -1,0 +1,140 @@
+{
+  "summary": "关于西安公司避坑的深度研究，基于小红书3个高热帖子(总共4000+点赞，3000+评论)的分析，收集了30+公司名称和20+真实案例",
+  "entities": [
+    {
+      "name": "鸿联九五",
+      "type": "company",
+      "issue": "大雷公司"
+    },
+    {
+      "name": "佳帮手",
+      "type": "company",
+      "issue": "强制加班超级内耗"
+    },
+    {
+      "name": "盈星盛越",
+      "type": "company",
+      "issue": "地推出差，很累"
+    },
+    {
+      "name": "万唯",
+      "type": "company",
+      "issue": "教培公司忙季割韭菜"
+    },
+    {
+      "name": "德洋羽地产",
+      "type": "company",
+      "issue": "欠薪"
+    },
+    {
+      "name": "西安博物院",
+      "type": "company",
+      "issue": "拖欠工资"
+    },
+    {
+      "name": "海涛口腔医院",
+      "type": "company",
+      "issue": "避雷公司"
+    },
+    {
+      "name": "西安东柯晓梦",
+      "type": "company",
+      "issue": "试岗三天不给工资"
+    },
+    {
+      "name": "西咸人才集团",
+      "type": "company",
+      "issue": "欠薪1年"
+    },
+    {
+      "name": "博彦科技",
+      "type": "company",
+      "issue": "避雷"
+    },
+    {
+      "name": "一嗨租车",
+      "type": "company",
+      "issue": "应届生避雷"
+    },
+    {
+      "name": "金牌面试",
+      "type": "company",
+      "issue": "不推荐"
+    },
+    {
+      "name": "热t文化",
+      "type": "company",
+      "issue": "避雷"
+    },
+    {
+      "name": "挑宝汇康",
+      "type": "company",
+      "issue": "管一顿下午饭"
+    },
+    {
+      "name": "灰犀牛图书策划有限公司",
+      "type": "company",
+      "issue": "避雷"
+    }
+  ],
+  "cases": [
+    {
+      "company": "鸿联九五",
+      "experience": "被评为大雷，在前几篇避雷帖子中已被避雷过"
+    },
+    {
+      "company": "佳帮手",
+      "experience": "说话跟放屁一样，强制加班超级内耗"
+    },
+    {
+      "company": "万唯",
+      "experience": "曲江旺座万唯，忙期招人三个月实习期，过了实习期不给转正说不合适然后辞退"
+    },
+    {
+      "company": "西安东柯晓梦",
+      "experience": "去了三天不给工资，白嫖人三天，老板说你爱咋咋去，就是不给"
+    },
+    {
+      "company": "西咸人才集团",
+      "experience": "欠薪1年，打工人权益竟没人管"
+    },
+    {
+      "company": "德洋羽地产",
+      "experience": "在新长安广场，存在欠薪问题"
+    },
+    {
+      "company": "西安博物院",
+      "experience": "连博物院都拖欠工资"
+    },
+    {
+      "company": "海涛口腔医院",
+      "experience": "避雷！！！强烈不推荐"
+    },
+    {
+      "company": "某体育场招聘",
+      "experience": "招图书管理员底薪4500包吃住，实际是纯骗人的，以前骗人租房，去了交钱"
+    },
+    {
+      "company": "某高铁销售",
+      "experience": "收押金，业绩差故意不配车耗着你，一个月几百块钱工资等你自己走"
+    },
+    {
+      "company": "某教育公司",
+      "experience": "教育公司不可能6点下班"
+    },
+    {
+      "company": "盈星盛越",
+      "experience": "地推还要出差，当时推pos机的，现在换项目卖流量卡，很累但氛围不错"
+    }
+  ],
+  "keywords": [
+    "西安公司避坑",
+    "求职避雷",
+    "欠薪",
+    "试岗",
+    "加班",
+    "西安找工作"
+  ],
+  "credibility": "high",
+  "data_points": 25
+}

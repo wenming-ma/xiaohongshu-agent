@@ -108,6 +108,45 @@ class ReviewIssue(BaseModel):
         }
 
 
+class GeneratedImage(BaseModel):
+    """单张生成图片"""
+
+    image_path: str = Field(description="图片本地路径")
+    prompt_used: str = Field(description="使用的 Gemini 生成提示词")
+    image_type: str = Field(description="图片类型: cover/detail_1/detail_2...")
+
+
+class ImageResult(BaseModel):
+    """图片生成结果（多张）"""
+
+    images: List[GeneratedImage] = Field(
+        default_factory=list,
+        description="生成的图片列表"
+    )
+    total_count: int = Field(description="生成图片总数")
+    generated_at: str = Field(description="生成时间")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "images": [
+                    {
+                        "image_path": "posts/20250102-西安公司/cover.png",
+                        "prompt_used": "A modern minimalist poster...",
+                        "image_type": "cover"
+                    },
+                    {
+                        "image_path": "posts/20250102-西安公司/detail_1.png",
+                        "prompt_used": "An infographic showing...",
+                        "image_type": "detail_1"
+                    }
+                ],
+                "total_count": 2,
+                "generated_at": "2025-01-02T10:30:00"
+            }
+        }
+
+
 class ReviewResult(BaseModel):
     """审核结果"""
 
@@ -150,6 +189,85 @@ class ReviewResult(BaseModel):
                     "research_entities": 11,
                     "used_entities": 5,
                     "usage_rate": 0.45
+                }
+            }
+        }
+
+
+class ImageReviewIssue(BaseModel):
+    """图片审核问题"""
+
+    type: str = Field(
+        description="问题类型: file_missing | file_too_small | text_not_chinese | style_mismatch"
+    )
+    severity: str = Field(
+        description="严重程度: critical | warning | info"
+    )
+    image_type: str = Field(
+        description="图片类型: cover | detail_1 | detail_2 | all"
+    )
+    description: str = Field(
+        description="问题描述"
+    )
+    suggestion: str = Field(
+        description="修改建议"
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "type": "text_not_chinese",
+                "severity": "critical",
+                "image_type": "cover",
+                "description": "封面图文字为英文，不是中文",
+                "suggestion": "重新生成，确保提示词要求中文文字"
+            }
+        }
+
+
+class ImageReviewResult(BaseModel):
+    """图片审核结果"""
+
+    passed: bool = Field(
+        description="是否通过审核"
+    )
+    score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=100.0,
+        description="质量评分（0-100）"
+    )
+    issues: List[ImageReviewIssue] = Field(
+        default_factory=list,
+        description="发现的问题列表"
+    )
+    summary: str = Field(
+        description="审核总结"
+    )
+    file_check: Dict[str, bool] = Field(
+        default_factory=dict,
+        description="文件检查结果 {image_type: exists}"
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "passed": False,
+                "score": 50.0,
+                "issues": [
+                    {
+                        "type": "file_missing",
+                        "severity": "critical",
+                        "image_type": "cover",
+                        "description": "封面图文件不存在",
+                        "suggestion": "重新生成并下载图片"
+                    }
+                ],
+                "summary": "审核未通过，封面图缺失",
+                "file_check": {
+                    "cover": False,
+                    "detail_1": True,
+                    "detail_2": True
                 }
             }
         }

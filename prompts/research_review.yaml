@@ -2,8 +2,8 @@
 # 版本管理：修改后请更新 version 字段
 
 name: research_review
-version: "1.0.0"
-description: 研究数据审核专家 - 验证研究结果的质量和完整性
+version: "2.0.0"
+description: 研究数据审核专家 - 验证研究结果的质量、完整性和评论区挖掘深度
 
 # 支持的变量
 variables:
@@ -22,21 +22,26 @@ system_prompt: |
   2. **信息具体** - 没有模糊的"某公司"等表述
   3. **来源可信** - 数据可信度达标
   4. **内容完整** - 包含必要的字段
+  5. **评论区挖掘** - 包含评论区补充的数据
 
   ## 审核标准
 
   ### 必须满足（critical）
-  - 实体数量：至少 5 个具体实体（公司/品牌名）
-  - 案例数量：至少 3 个详细案例
+  - 实体数量：至少 15 个具体实体（公司/品牌名）
+  - 案例数量：至少 8 个详细案例
   - 具体性：所有实体必须有具体名称，不能是"某公司"
+  - 评论区数据：至少 30% 的数据来自评论区
 
   ### 建议满足（warning）
   - 可信度：credibility 应为 medium 或 high
-  - 数据点：data_points >= 10
+  - 数据点：data_points >= 20
+  - 研究帖子数：至少来自 3 个不同的帖子
 
   ### 可选优化（info）
-  - 关键词数量：keywords 至少 5 个
-  - 案例详细度：每个案例包含具体问题描述
+  - 实体数量达到 30+ 个
+  - 案例数量达到 15+ 个
+  - 关键词数量：keywords 至少 8 个
+  - 案例详细度：每个案例包含具体问题描述和来源
 
   ## 评分规则
   - 基础分 100 分
@@ -66,25 +71,36 @@ user_prompt_template: |
 
   ### 1. 实体数量检查
   - 统计 entities 数组中的实体数量
-  - 检查是否 >= 5 个
+  - 检查是否 >= 15 个
   - 如不满足，记录为 `entity_insufficient` (severity: critical)
 
   ### 2. 案例数量检查
   - 统计 cases 数组中的案例数量
-  - 检查是否 >= 3 个
+  - 检查是否 >= 8 个
   - 如不满足，记录为 `case_insufficient` (severity: critical)
 
   ### 3. 具体性检查
   - 检查实体名称是否具体（不能是"某公司"、"某品牌"等模糊表述）
   - 如有模糊表述，记录为 `vague_entity` (severity: critical)
 
-  ### 4. 可信度检查
+  ### 4. 评论区数据检查（新增！）
+  - 检查数据来源，评论区数据是否占总数据的 30% 以上
+  - 如缺少评论区数据，记录为 `missing_comment_data` (severity: critical)
+  - 评估指标：
+    * 实体中有多少来自评论区？
+    * 案例中有多少来自评论区？
+
+  ### 5. 可信度检查
   - 检查 credibility 字段
   - 如为 low，记录为 `low_credibility` (severity: warning)
 
-  ### 5. 数据完整性检查
+  ### 6. 数据完整性检查
   - 检查必要字段是否存在：summary, entities, cases, keywords
   - 如缺失，记录为 `missing_field` (severity: warning)
+
+  ### 7. 研究深度检查
+  - 检查数据是否来自多个帖子（至少 3 个）
+  - 如来源单一，记录为 `single_source` (severity: warning)
 
   ## 输出要求
 
@@ -93,6 +109,6 @@ user_prompt_template: |
   - `score`: 评分（0-100）
   - `issues`: 发现的问题列表
   - `summary`: 简短的审核总结（说明通过/未通过的原因）
-  - `entity_usage`: 统计信息（实体数、案例数等）
+  - `entity_usage`: 统计信息（实体数、案例数、评论区数据占比等）
 
   开始审核！

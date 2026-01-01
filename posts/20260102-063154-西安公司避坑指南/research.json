@@ -1,0 +1,141 @@
+{
+  "summary": "关于西安公司避坑指南的小红书研究，收集了3个高热帖子及评论区的丰富信息，共发现多家避雷公司和求职经历分享",
+  "entities": [
+    {
+      "name": "鸿联九五",
+      "type": "company",
+      "issue": "圈钱黑中介"
+    },
+    {
+      "name": "佳帮手",
+      "type": "company",
+      "issue": "强制加班超级内耗"
+    },
+    {
+      "name": "博彦科技",
+      "type": "company",
+      "issue": "被网友避雷"
+    },
+    {
+      "name": "西安麦游网络科技有限公司",
+      "type": "company",
+      "issue": "相关搜索提及"
+    },
+    {
+      "name": "西安瑞卡瑞森公司",
+      "type": "company",
+      "issue": "相关搜索提及"
+    },
+    {
+      "name": "西安旺座国际",
+      "type": "company",
+      "issue": "骗子公司"
+    },
+    {
+      "name": "1001户外旅行",
+      "type": "company",
+      "issue": "很恶心的一家公司"
+    },
+    {
+      "name": "和平门火餐吧",
+      "type": "company",
+      "issue": "避雷避雷"
+    },
+    {
+      "name": "陕西中亘环保能源节能科技有限公司",
+      "type": "company",
+      "issue": "网友询问"
+    },
+    {
+      "name": "捷泰电子",
+      "type": "company",
+      "issue": "网友询问"
+    },
+    {
+      "name": "西安鹿鸣优设",
+      "type": "company",
+      "issue": "诈骗机构，培训费欺诈"
+    },
+    {
+      "name": "鹿合天艺",
+      "type": "company",
+      "issue": "与鹿鸣优设同一公司系统"
+    },
+    {
+      "name": "鹿西辰丰",
+      "type": "company",
+      "issue": "与鹿鸣优设同一公司系统"
+    },
+    {
+      "name": "鹿合优嘉",
+      "type": "company",
+      "issue": "与鹿鸣优设同一公司系统"
+    },
+    {
+      "name": "众相原创文化传播有限公司",
+      "type": "company",
+      "issue": "严重避雷"
+    },
+    {
+      "name": "盈星盛越",
+      "type": "company",
+      "issue": "地推pos机，很累但氛围不错"
+    },
+    {
+      "name": "多金猫",
+      "type": "company",
+      "issue": "面试过试岗"
+    },
+    {
+      "name": "金牌面试",
+      "type": "company",
+      "issue": "一般不看"
+    }
+  ],
+  "cases": [
+    {
+      "company": "鸿联九五",
+      "experience": "圈钱黑中介，去了坑死你"
+    },
+    {
+      "company": "佳帮手",
+      "experience": "说话跟放屁一样，强制加班超级内耗"
+    },
+    {
+      "company": "体育场招聘骗局",
+      "experience": "招图书管理员底薪4500包吃住，发体育场c口位置，纯骗人，去了要交380元"
+    },
+    {
+      "company": "西安鹿鸣优设",
+      "experience": "诈骗机构，贬低求职者后引导交培训费，签合同后难找工作，联系负责人不回消息甚至拉黑"
+    },
+    {
+      "company": "1001户外旅行",
+      "experience": "很恶心的一家公司"
+    },
+    {
+      "company": "和平门火餐吧",
+      "experience": "被网友避雷"
+    },
+    {
+      "company": "众相原创文化传播有限公司",
+      "experience": "严重避雷"
+    },
+    {
+      "company": "盈星盛越",
+      "experience": "地推pos机工作，现在换项目卖流量卡，很累但公司氛围不错"
+    }
+  ],
+  "keywords": [
+    "避雷",
+    "西安",
+    "公司",
+    "找工作",
+    "求职",
+    "招聘",
+    "避坑",
+    "面试"
+  ],
+  "credibility": "high",
+  "data_points": 26
+}
