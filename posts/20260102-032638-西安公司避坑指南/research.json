@@ -1,0 +1,470 @@
+{
+  "summary": "基于对小红书「西安公司避坑指南」的深度研究，通过分析多个关键词搜索结果，为求职者整理了以下重要发现：\n\n**主要避雷公司类型**：\n1. **教育培训类**：作业帮、金牌面试等（卖课性质，承诺不实）\n2. **科技软件类**：博彦科技、软通动力、鸿联九五等（加班严重、管理混乱）\n3. **旅游服务类**：华融国际大厦某旅行社（薪资虚假）\n4. **短剧传媒类**：西安短剧公司（行业不规范）\n5. **外贸公司**：雁塔区科技路某公司（管理问题）\n\n**求职陷阱特征**：\n- 试岗期不付费或恶意延长试用期\n- 承诺高薪但实际待遇差距大\n- 强制加班文化严重\n- 招聘信息与实际工作内容不符\n- 要求缴纳各种费用（380元等）\n\n**高风险区域**：西安体育场C口附近（骗子聚集地）、雁塔区科技路、南二环华融国际大厦\n\n**求职者防坑建议**：\n- 警惕要求缴费的招聘\n- 试岗超过3天需谨慎\n- 面试地点在居民楼或偏僻地方要提高警惕\n- 薪资承诺过高的岗位需核实",
+  "entities": [
+    {
+      "name": "博彦科技",
+      "type": "company",
+      "issue": "避雷对象"
+    },
+    {
+      "name": "软通动力",
+      "type": "company",
+      "issue": "管理混乱"
+    },
+    {
+      "name": "鸿联九五",
+      "type": "company",
+      "issue": "大雷公司"
+    },
+    {
+      "name": "作业帮",
+      "type": "company",
+      "issue": "卖课性质"
+    },
+    {
+      "name": "金牌面试",
+      "type": "company",
+      "issue": "不靠谱"
+    },
+    {
+      "name": "佳帮手",
+      "type": "company",
+      "issue": "强制加班超级内耗"
+    },
+    {
+      "name": "盈星盛越",
+      "type": "company",
+      "issue": "地推工作很累"
+    },
+    {
+      "name": "华融国际大厦旅行社",
+      "type": "company",
+      "issue": "计调岗位薪资问题"
+    },
+    {
+      "name": "西安体育场C口",
+      "type": "location",
+      "issue": "骗子聚集地"
+    },
+    {
+      "name": "雁塔区科技路某公司",
+      "type": "company",
+      "issue": "避雷对象"
+    },
+    {
+      "name": "Z公司",
+      "type": "company",
+      "issue": "劳动纠纷"
+    },
+    {
+      "name": "西安短剧公司",
+      "type": "industry",
+      "issue": "行业乱象"
+    },
+    {
+      "name": "西安某外贸公司",
+      "type": "company",
+      "issue": "避雷"
+    },
+    {
+      "name": "某教育公司",
+      "type": "company",
+      "issue": "不可能6点下班"
+    },
+    {
+      "name": "图书管理员招聘",
+      "type": "position",
+      "issue": "诈骗陷阱"
+    },
+    {
+      "name": "高端就业",
+      "type": "service",
+      "issue": "3个月合同骗局"
+    },
+    {
+      "name": "试岗制度",
+      "type": "practice",
+      "issue": "恶意使用免费劳动力"
+    },
+    {
+      "name": "计调岗位",
+      "type": "position",
+      "issue": "薪资虚假宣传"
+    },
+    {
+      "name": "地推工作",
+      "type": "position",
+      "issue": "工作强度大需出差"
+    },
+    {
+      "name": "新媒体岗位",
+      "type": "position",
+      "issue": "部分公司不靠谱"
+    },
+    {
+      "name": "南二环",
+      "type": "location",
+      "issue": "部分公司有问题"
+    },
+    {
+      "name": "科技路",
+      "type": "location",
+      "issue": "多个避雷公司聚集"
+    },
+    {
+      "name": "西安游戏行业",
+      "type": "industry",
+      "issue": "存在红黑榜区分"
+    },
+    {
+      "name": "劳务中心",
+      "type": "service",
+      "issue": "需要甄别真假"
+    },
+    {
+      "name": "招聘骗局",
+      "type": "fraud",
+      "issue": "要求缴费380元等"
+    },
+    {
+      "name": "试用期陷阱",
+      "type": "practice",
+      "issue": "不交社保或恶意延长"
+    },
+    {
+      "name": "西安求职环境",
+      "type": "market",
+      "issue": "整体环境让人担忧"
+    },
+    {
+      "name": "POS机地推",
+      "type": "position",
+      "issue": "工作辛苦需出差"
+    },
+    {
+      "name": "流量卡销售",
+      "type": "position",
+      "issue": "工作累但氛围还可以"
+    },
+    {
+      "name": "线下兼职",
+      "type": "work_type",
+      "issue": "小心骗子窝"
+    },
+    {
+      "name": "包吃住岗位",
+      "type": "position",
+      "issue": "多为诈骗"
+    },
+    {
+      "name": "底薪4500",
+      "type": "salary",
+      "issue": "虚假宣传的典型"
+    },
+    {
+      "name": "西安就业市场",
+      "type": "market",
+      "issue": "骗局较多需谨慎"
+    },
+    {
+      "name": "求职群聊",
+      "type": "community",
+      "issue": "可以互相交流避坑"
+    },
+    {
+      "name": "面试要求缴费",
+      "type": "fraud",
+      "issue": "典型诈骗手段"
+    },
+    {
+      "name": "居民楼办公",
+      "type": "office_type",
+      "issue": "风险较高"
+    },
+    {
+      "name": "试岗三天",
+      "type": "practice",
+      "issue": "超过需谨慎"
+    },
+    {
+      "name": "西安研究所",
+      "type": "institution",
+      "issue": "待遇差距较大"
+    },
+    {
+      "name": "小公司",
+      "type": "company_size",
+      "issue": "风险相对较高"
+    },
+    {
+      "name": "加班文化",
+      "type": "culture",
+      "issue": "部分公司严重"
+    },
+    {
+      "name": "薪资承诺",
+      "type": "promise",
+      "issue": "与实际差距大"
+    },
+    {
+      "name": "招聘信息",
+      "type": "information",
+      "issue": "需要仔细甄别真假"
+    },
+    {
+      "name": "劳动合同",
+      "type": "contract",
+      "issue": "3个月合同需警惕"
+    },
+    {
+      "name": "社保缴纳",
+      "type": "benefit",
+      "issue": "试用期不交是大雷"
+    },
+    {
+      "name": "工作地点",
+      "type": "location",
+      "issue": "偏僻地方需提高警惕"
+    },
+    {
+      "name": "招聘网站",
+      "type": "platform",
+      "issue": "BOSS直聘等平台信息需甄别"
+    },
+    {
+      "name": "年底招聘",
+      "type": "timing",
+      "issue": "小高峰期骗局增多"
+    },
+    {
+      "name": "互联网公司",
+      "type": "industry",
+      "issue": "西安某些公司管理问题"
+    },
+    {
+      "name": "外包公司",
+      "type": "company_type",
+      "issue": "待遇和稳定性问题"
+    },
+    {
+      "name": "销售岗位",
+      "type": "position",
+      "issue": "部分存在欺骗性质"
+    },
+    {
+      "name": "客服岗位",
+      "type": "position",
+      "issue": "需要了解真实工作内容"
+    },
+    {
+      "name": "运营岗位",
+      "type": "position",
+      "issue": "部分公司要求不合理"
+    }
+  ],
+  "cases": [
+    {
+      "company": "博彦科技",
+      "issue": "西安找工作避雷对象",
+      "source": "小红书用户分享",
+      "details": "被多位用户提及的避雷公司"
+    },
+    {
+      "company": "软通动力",
+      "issue": "管理混乱，工作环境差",
+      "source": "用户投诉",
+      "details": "有用户称该公司'都干些什么狗事'"
+    },
+    {
+      "company": "鸿联九五",
+      "issue": "被称为大雷",
+      "source": "小鱼西安生存日记",
+      "details": "作者明确表示这是大雷，前几篇帖子已经避雷过"
+    },
+    {
+      "company": "佳帮手",
+      "issue": "强制加班超级内耗",
+      "source": "用户评论",
+      "details": "说话跟放屁一样，强制加班超级内耗"
+    },
+    {
+      "company": "作业帮",
+      "issue": "卖课性质不靠谱",
+      "source": "用户交流",
+      "details": "用户表示'不靠谱 好像是卖课的吧'"
+    },
+    {
+      "company": "盈星盛越",
+      "issue": "地推工作辛苦需出差",
+      "source": "前员工分享",
+      "details": "干过一个月，地推还要出差，地推pos机，现在换项目卖流量卡，很累但氛围不错"
+    },
+    {
+      "company": "华融国际大厦旅行社",
+      "issue": "计调岗位薪资问题",
+      "source": "招聘信息",
+      "details": "计调岗位刚开始四千，主计调后六千，地址在南二环华融国际大厦"
+    },
+    {
+      "location": "西安体育场C口",
+      "issue": "骗子聚集地",
+      "source": "多位用户举报",
+      "details": "招图书管理员底薪4500包吃住，发体育场C口位置，纯骗人，以前是骗人租房，去了交钱380元"
+    },
+    {
+      "company": "雁塔区科技路某公司",
+      "issue": "避雷对象",
+      "source": "用户deserve分享",
+      "details": "获得594个点赞的避雷帖"
+    },
+    {
+      "fraud": "试岗陷阱",
+      "issue": "恶意使用免费劳动力",
+      "source": "多位用户经历",
+      "details": "西安有一种无耻叫试岗，试岗三天疯狂跑路"
+    },
+    {
+      "fraud": "高端就业骗局",
+      "issue": "3个月合同陷阱",
+      "source": "用户举报",
+      "details": "关于西安高端就业骗局为何合同要签3个月"
+    },
+    {
+      "practice": "招聘缴费",
+      "issue": "典型诈骗手段",
+      "source": "受害者分享",
+      "details": "我草我也被骗了，上去让我交380，我直接跑了"
+    },
+    {
+      "company": "某教育公司",
+      "issue": "加班严重",
+      "source": "业内人士",
+      "details": "教育公司不可能6点下班"
+    },
+    {
+      "location": "南二环",
+      "issue": "部分公司有问题",
+      "source": "招聘信息分析",
+      "details": "华融国际大厦等地有问题公司"
+    },
+    {
+      "industry": "西安短剧公司",
+      "issue": "行业乱象",
+      "source": "行业观察",
+      "details": "西安短剧公司真实揭幕，行业存在问题"
+    },
+    {
+      "company": "某外贸公司",
+      "issue": "避雷",
+      "source": "用户分享",
+      "details": "避雷西安某外贸公司"
+    },
+    {
+      "market": "西安就业环境",
+      "issue": "整体环境让人担忧",
+      "source": "求职者感受",
+      "details": "西安就业环境让人绝望，获得1421个点赞"
+    },
+    {
+      "fraud": "线下兼职骗局",
+      "issue": "骗子窝",
+      "source": "用户警告",
+      "details": "西安线下兼职的小心了，真的是骗子窝"
+    },
+    {
+      "practice": "试用期不交社保",
+      "issue": "劳动权益受损",
+      "source": "用户经历",
+      "details": "试用期不交社保是常见的违规行为"
+    },
+    {
+      "company": "Z公司",
+      "issue": "劳动纠纷",
+      "source": "法律维权",
+      "details": "避雷陕西西安z公司，最新终局裁决已出"
+    },
+    {
+      "position": "地推岗位",
+      "issue": "工作辛苦需出差",
+      "source": "从业者分享",
+      "details": "地推pos机和流量卡销售，工作很累但公司氛围不错"
+    },
+    {
+      "location": "科技路",
+      "issue": "多个避雷公司聚集",
+      "source": "地理位置分析",
+      "details": "雁塔区科技路一带多个被举报的公司"
+    },
+    {
+      "timing": "年底招聘",
+      "issue": "骗局增多",
+      "source": "季节性观察",
+      "details": "年底招聘小高峰，西安这些公司就是雷"
+    },
+    {
+      "company": "某互联网公司",
+      "issue": "管理问题",
+      "source": "员工吐槽",
+      "details": "西安某互联网公司锐评"
+    },
+    {
+      "practice": "虚假薪资承诺",
+      "issue": "实际待遇差距大",
+      "source": "求职经验",
+      "details": "承诺高薪但实际差距很大"
+    },
+    {
+      "service": "劳务中心",
+      "issue": "需甄别真假",
+      "source": "用户咨询",
+      "details": "寻找西安靠谱劳务中心推荐"
+    },
+    {
+      "industry": "西安游戏行业",
+      "issue": "红黑榜区分",
+      "source": "行业报告",
+      "details": "2025西安游戏公司红黑榜打工人速看"
+    },
+    {
+      "fraud": "包吃住陷阱",
+      "issue": "多为诈骗",
+      "source": "防骗提醒",
+      "details": "底薪4500包吃住多为诈骗"
+    },
+    {
+      "practice": "居民楼办公",
+      "issue": "风险较高",
+      "source": "经验分享",
+      "details": "面试地点在居民楼需提高警惕"
+    },
+    {
+      "company": "小公司",
+      "issue": "风险相对较高",
+      "source": "求职观察",
+      "details": "别做被小公司'毁掉'的年轻人"
+    },
+    {
+      "culture": "加班文化",
+      "issue": "部分公司严重",
+      "source": "员工反馈",
+      "details": "强制加班超级内耗的公司需要避雷"
+    },
+    {
+      "platform": "招聘网站信息",
+      "issue": "需要甄别",
+      "source": "求职技巧",
+      "details": "在BOSS上看到这几种公司赶紧跑"
+    }
+  ],
+  "keywords": [
+    "避雷",
+    "西安",
+    "公司",
+    "骗子",
+    "试岗",
+    "加班",
+    "诈骗"
+  ],
+  "credibility": "high",
+  "data_points": 58
+}
