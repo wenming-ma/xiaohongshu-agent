@@ -25,6 +25,8 @@ dependencies = [
     "logfire>=2.0.0",
     # Prompt 管理
     "pyyaml>=6.0.0",
+    # 图片压缩
+    "Pillow>=10.0.0",
 ]
 
 [tool.uv.sources]

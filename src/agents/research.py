@@ -9,20 +9,21 @@ from pydantic_ai.messages import ModelRequest, UserPromptPart
 from ..models.schemas import ResearchResult, ReviewResult
 from ..utils.anthropic_provider import get_anthropic_model
 from ..utils.retry_handler import with_retry
+from ..config.settings import RetryConfig, ReviewConfig, PathConfig
 from prompts import get_system_prompt, get_user_prompt
 
 
 class ResearchAgent:
     """小红书研究 Agent（带 Reflexion 循环）"""
 
-    def __init__(self, max_iterations: int = 3):
+    def __init__(self, max_iterations: int = None):
         """
         初始化研究 Agent
 
         Args:
-            max_iterations: 最大审核迭代次数
+            max_iterations: 最大审核迭代次数，默认使用配置
         """
-        self.max_iterations = max_iterations
+        self.max_iterations = max_iterations or ReviewConfig.MAX_ITERATIONS
 
         # 获取带 HTTP 重试的 Model（max_retries=5）
         model = get_anthropic_model()
@@ -34,11 +35,11 @@ class ResearchAgent:
             env={
                 'HEADLESS': 'false',  # 显示浏览器窗口
                 'BROWSER_TYPE': 'chromium',
-                'USER_DATA_DIR': './browser-sessions/xiaohongshu'
+                'USER_DATA_DIR': PathConfig.BROWSER_SESSION_XHS
             },
             tool_prefix='playwright',  # 工具名前缀，避免冲突
             cache_tools=True,  # 缓存工具列表，提高性能
-            max_retries=5,  # 增加工具重试次数（浏览器操作可能不稳定）
+            max_retries=RetryConfig.MCP_RETRIES,
         )
 
         # 生成 Agent（带 MCP 工具）
@@ -47,7 +48,7 @@ class ResearchAgent:
             output_type=ResearchResult,
             toolsets=[self.mcp_server],
             instrument=True,
-            retries=3,
+            retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(get_system_prompt("research"),),
         )
 
@@ -56,7 +57,7 @@ class ResearchAgent:
             model=model,
             output_type=ReviewResult,
             instrument=True,
-            retries=3,  # 添加重试机制，应对临时 API 错误
+            retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(get_system_prompt("research_review"),),
         )
 
@@ -98,7 +99,7 @@ class ResearchAgent:
         review_result = await self.reviewer.run(review_prompt)
         return review_result.output
 
-    @with_retry(max_retries=5, initial_delay=5.0)
+    @with_retry(max_retries=RetryConfig.MAX_RETRIES, initial_delay=RetryConfig.INITIAL_DELAY)
     async def research(self, topic: str, target_audience: str) -> ResearchResult:
         """
         执行研究任务（带 Reflexion 循环 + 外层重试）

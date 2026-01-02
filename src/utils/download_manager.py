@@ -11,35 +11,27 @@ import time
 import shutil
 from pathlib import Path
 from typing import Optional
+from ..config.settings import TimeoutConfig, PathConfig
 
 
 class DownloadManager:
     """Playwright MCP 下载文件管理器"""
-
-    # 默认下载目录（需与 @playwright/mcp --output-dir 一致）
-    DEFAULT_DOWNLOAD_DIR = Path('./output/playwright-downloads')
-
-    # 等待下载的超时时间（秒）
-    DOWNLOAD_TIMEOUT = 60
-
-    # 轮询间隔（秒）
-    POLL_INTERVAL = 2
 
     def __init__(self, download_dir: Optional[Path] = None):
         """
         初始化下载管理器
 
         Args:
-            download_dir: 自定义下载目录，默认为系统下载目录
+            download_dir: 自定义下载目录，默认使用配置
         """
-        self.download_dir = download_dir or self.DEFAULT_DOWNLOAD_DIR
+        self.download_dir = download_dir or PathConfig.DOWNLOADS_DIR
 
     def wait_and_move(
         self,
         target_dir: Path,
         target_name: str,
         file_pattern: str = "*.png",
-        timeout: float = DOWNLOAD_TIMEOUT,
+        timeout: float = None,
         before_time: Optional[float] = None
     ) -> Path:
         """
@@ -59,6 +51,8 @@ class DownloadManager:
             TimeoutError: 等待超时
             FileNotFoundError: 未找到文件
         """
+        if timeout is None:
+            timeout = TimeoutConfig.DOWNLOAD_TIMEOUT
         if before_time is None:
             before_time = time.time()
 
@@ -87,7 +81,7 @@ class DownloadManager:
 
                 return target_path
 
-            time.sleep(self.POLL_INTERVAL)
+            time.sleep(TimeoutConfig.POLL_INTERVAL)
 
         raise TimeoutError(
             f"等待下载超时 ({timeout}s)，"

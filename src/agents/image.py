@@ -16,6 +16,7 @@ from ..models.schemas import ImageResult, GeneratedImage, XHSContent, ResearchRe
 from ..utils.anthropic_provider import get_anthropic_model
 from ..utils.download_manager import DownloadManager
 from ..utils.retry_handler import with_retry
+from ..config.settings import RetryConfig, ReviewConfig, ImageConfig, PathConfig, TimeoutConfig, APIConfig
 from .image_review import ImageReviewAgent
 from prompts import get_system_prompt, get_user_prompt, get_prompt_field
 
@@ -32,24 +33,25 @@ class ImageAgent:
 
     def __init__(
         self,
-        image_count: int = 3,
-        max_iterations: int = 3
+        image_count: int = None,
+        max_iterations: int = None
     ):
         """
         初始化图片生成 Agent
 
         Args:
-            image_count: 生成图片数量（1-3张，默认3张）
-            max_iterations: 审核不通过时的最大重试次数（默认3次）
+            image_count: 生成图片数量，默认使用配置
+            max_iterations: 审核不通过时的最大重试次数，默认使用配置
         """
-        self.image_count = min(max(image_count, 1), 3)  # 限制 1-3 张
-        self.max_iterations = max_iterations
+        image_count = image_count or ImageConfig.DEFAULT_COUNT
+        self.image_count = min(max(image_count, ImageConfig.MIN_COUNT), ImageConfig.MAX_COUNT)
+        self.max_iterations = max_iterations or ReviewConfig.MAX_ITERATIONS
 
         # 获取带 HTTP 重试的 Model（max_retries=5）
         model = get_anthropic_model()
 
         # Playwright 下载输出目录
-        self.downloads_dir = Path('./output/playwright-downloads')
+        self.downloads_dir = PathConfig.DOWNLOADS_DIR
         self.downloads_dir.mkdir(parents=True, exist_ok=True)
 
         # 创建 Playwright MCP Server 实例（用于操作 Gemini）
@@ -62,11 +64,11 @@ class ImageAgent:
             env={
                 'HEADLESS': 'false',  # 显示浏览器窗口（方便登录和调试）
                 'BROWSER_TYPE': 'chromium',
-                'USER_DATA_DIR': './browser-sessions/gemini'  # 保存 Gemini 登录态
+                'USER_DATA_DIR': PathConfig.BROWSER_SESSION_GEMINI
             },
             tool_prefix='playwright',
             cache_tools=True,
-            max_retries=5,
+            max_retries=RetryConfig.MCP_RETRIES,
         )
 
         # 提示词生成 Agent（生成 Gemini 图片描述）
@@ -85,12 +87,12 @@ class ImageAgent:
             output_type=str,
             toolsets=[self.mcp_server],
             instrument=True,
-            retries=3,
+            retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(get_prompt_field("image", "gemini_operator_prompt"),),
         )
 
         # Gemini URL
-        self.gemini_url = "https://gemini.google.com/app"
+        self.gemini_url = APIConfig.GEMINI_URL
 
         # 图片审核 Agent（独立，也使用共享 Provider）
         self.reviewer = ImageReviewAgent()
@@ -98,7 +100,7 @@ class ImageAgent:
         # 下载文件管理器（监控 Playwright 输出目录）
         self.download_manager = DownloadManager(download_dir=self.downloads_dir)
 
-    @with_retry(max_retries=5, initial_delay=5.0)
+    @with_retry(max_retries=RetryConfig.MAX_RETRIES, initial_delay=RetryConfig.INITIAL_DELAY)
     async def generate_image(
         self,
         content: XHSContent,
@@ -278,7 +280,7 @@ class ImageAgent:
             target_dir=output_dir,
             target_name=image_type,
             file_pattern="*.png",
-            timeout=60,
+            timeout=TimeoutConfig.GEMINI_WAIT,
             before_time=start_time
         )
         print(f"         ✅ 图片已保存: {image_path}")

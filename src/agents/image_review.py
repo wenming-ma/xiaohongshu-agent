@@ -10,6 +10,8 @@ from pydantic_ai import Agent, BinaryContent
 from pydantic_ai.messages import UserContent
 from ..models.schemas import GeneratedImage, ImageReviewResult, ImageReviewIssue
 from ..utils.anthropic_provider import get_anthropic_model
+from ..utils.image_compression import compress_image_for_review
+from ..config.settings import ReviewConfig, ImageConfig
 from prompts import get_system_prompt, get_user_prompt
 
 
@@ -17,7 +19,7 @@ class ImageReviewAgent:
     """小红书图片审核 Agent"""
 
     # 文件大小阈值（小于此值可能是损坏的图片）
-    MIN_FILE_SIZE = 10 * 1024  # 10KB
+    MIN_FILE_SIZE = ImageConfig.MIN_FILE_SIZE
 
     def __init__(self):
         """初始化图片审核 Agent"""
@@ -77,7 +79,7 @@ class ImageReviewAgent:
 
         # 3. 计算最终评分
         score = self._calculate_score(issues)
-        passed = score >= 60 and not any(i.severity == "critical" for i in issues)
+        passed = score >= ReviewConfig.PASS_SCORE and not any(i.severity == "critical" for i in issues)
 
         result = ImageReviewResult(
             passed=passed,
@@ -179,17 +181,21 @@ class ImageReviewAgent:
         # 构建多模态消息：文本 + 图片
         user_content: List[UserContent] = [prompt_text]
 
-        # 添加每张图片
+        # 添加每张图片（压缩后）
         for img in images:
             path = Path(img.image_path)
             if path.exists():
                 try:
-                    # 使用 BinaryContent.from_path 读取本地图片
-                    image_content = BinaryContent.from_path(path)
+                    # 压缩图片后再发送给审核模型，避免 413 错误
+                    compressed_data = await compress_image_for_review(path)
+                    image_content = BinaryContent(
+                        data=compressed_data,
+                        media_type="image/jpeg"
+                    )
                     user_content.append(f"\n### {img.image_type} 图片：")
                     user_content.append(image_content)
                 except Exception as e:
-                    print(f"      ⚠️ 无法读取图片 {path}: {e}")
+                    print(f"      ⚠️ 无法读取/压缩图片 {path}: {e}")
 
         # 调用多模态审核
         print(f"      🔍 视觉审核中（{len(images)} 张图片）...")
@@ -230,11 +236,11 @@ class ImageReviewAgent:
 
         for issue in issues:
             if issue.severity == "critical":
-                score -= 25
+                score -= ReviewConfig.CRITICAL_PENALTY
             elif issue.severity == "warning":
-                score -= 10
+                score -= ReviewConfig.WARNING_PENALTY
             else:  # info
-                score -= 5
+                score -= ReviewConfig.INFO_PENALTY
 
         return max(0, score)
 

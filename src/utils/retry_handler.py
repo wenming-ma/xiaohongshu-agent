@@ -9,6 +9,8 @@ from pydantic_ai.exceptions import ModelHTTPError, ModelAPIError
 from httpx import HTTPStatusError
 from anthropic import APIConnectionError, APIStatusError
 
+from ..config.settings import RetryConfig
+
 
 # 可重试的异常类型
 RETRYABLE_EXCEPTIONS = (
@@ -25,7 +27,7 @@ RETRYABLE_EXCEPTIONS = (
 )
 
 
-def with_retry(max_retries: int = 3, initial_delay: float = 2.0):
+def with_retry(max_retries: int = None, initial_delay: float = None):
     """
     异步重试装饰器（指数退避）
 
@@ -34,14 +36,19 @@ def with_retry(max_retries: int = 3, initial_delay: float = 2.0):
     - 方法层重试整个工作流失败
 
     Args:
-        max_retries: 最大重试次数
-        initial_delay: 初始延迟（秒），后续按 2^attempt 增长
+        max_retries: 最大重试次数，默认使用配置
+        initial_delay: 初始延迟（秒），后续按 2^attempt 增长，默认使用配置
 
     Usage:
-        @with_retry(max_retries=5, initial_delay=5.0)
+        @with_retry(max_retries=RetryConfig.MAX_RETRIES, initial_delay=RetryConfig.INITIAL_DELAY)
         async def my_func():
             ...
     """
+    # 使用配置默认值
+    if max_retries is None:
+        max_retries = RetryConfig.MAX_RETRIES
+    if initial_delay is None:
+        initial_delay = RetryConfig.INITIAL_DELAY
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):

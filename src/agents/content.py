@@ -8,20 +8,21 @@ from pydantic_ai.messages import ModelRequest, UserPromptPart
 from ..models.schemas import ResearchResult, XHSContent, ReviewResult
 from ..utils.anthropic_provider import get_anthropic_model
 from ..utils.retry_handler import with_retry
+from ..config.settings import RetryConfig, ReviewConfig
 from prompts import get_system_prompt, get_user_prompt
 
 
 class ContentAgent:
     """小红书内容创作 Agent（带 Reflexion 循环）"""
 
-    def __init__(self, max_iterations: int = 3):
+    def __init__(self, max_iterations: int = None):
         """
         初始化内容 Agent
 
         Args:
-            max_iterations: 最大审核迭代次数
+            max_iterations: 最大审核迭代次数，默认使用配置
         """
-        self.max_iterations = max_iterations
+        self.max_iterations = max_iterations or ReviewConfig.MAX_ITERATIONS
 
         # 获取带 HTTP 重试的 Model（max_retries=5）
         model = get_anthropic_model()
@@ -39,7 +40,7 @@ class ContentAgent:
             model=model,
             output_type=ReviewResult,
             instrument=True,
-            retries=3,  # 添加重试机制，应对临时 API 错误
+            retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(get_system_prompt("content_review"),),
         )
 
@@ -62,7 +63,7 @@ class ContentAgent:
         review_result = await self.reviewer.run(review_prompt)
         return review_result.output
 
-    @with_retry(max_retries=5, initial_delay=5.0)
+    @with_retry(max_retries=RetryConfig.MAX_RETRIES, initial_delay=RetryConfig.INITIAL_DELAY)
     async def create_content(
         self,
         research: ResearchResult,

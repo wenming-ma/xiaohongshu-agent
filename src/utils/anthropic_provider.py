@@ -14,6 +14,7 @@ from anthropic import AsyncAnthropic
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
+from ..config.settings import RetryConfig as AppRetryConfig, APIConfig
 
 
 # 全局共享的 Provider 实例（避免重复创建）
@@ -26,23 +27,22 @@ def _create_retrying_http_client() -> AsyncClient:
 
     使用 pydantic-ai 官方的 AsyncTenacityTransport：
     - 支持 Retry-After header（API 返回的等待时间）
-    - 指数退避（fallback）：1s, 2s, 4s... 最大 60s
-    - 最大重试 5 次
-    - 最大等待 300s
+    - 指数退避（fallback）
+    - 配置来自 settings.py
     """
     def should_retry_status(response):
         """检查响应状态码，决定是否重试"""
-        if response.status_code in (429, 500, 502, 503, 504):
+        if response.status_code in APIConfig.RETRYABLE_STATUS_CODES:
             response.raise_for_status()
 
     transport = AsyncTenacityTransport(
         config=RetryConfig(
             retry=retry_if_exception_type((HTTPStatusError, ConnectionError)),
             wait=wait_retry_after(
-                fallback_strategy=wait_exponential(multiplier=1, max=60),
-                max_wait=300
+                fallback_strategy=wait_exponential(multiplier=1, max=AppRetryConfig.HTTP_MAX_WAIT),
+                max_wait=AppRetryConfig.HTTP_TOTAL_MAX_WAIT
             ),
-            stop=stop_after_attempt(5),
+            stop=stop_after_attempt(AppRetryConfig.HTTP_MAX_RETRIES),
             reraise=True
         ),
         validate_response=should_retry_status
@@ -51,7 +51,7 @@ def _create_retrying_http_client() -> AsyncClient:
 
 
 def get_anthropic_model(
-    model_name: str = "claude-sonnet-4-20250514"
+    model_name: str = None
 ) -> AnthropicModel:
     """
     获取配置好重试机制的 Anthropic Model
@@ -61,12 +61,13 @@ def get_anthropic_model(
     - 方法层：@with_retry 装饰器（兜底重试整个工作流）
 
     Args:
-        model_name: 模型名称（默认 claude-sonnet-4-20250514）
+        model_name: 模型名称，默认使用配置
 
     Returns:
         AnthropicModel 实例
     """
     global _shared_provider
+    model_name = model_name or APIConfig.DEFAULT_MODEL
 
     if _shared_provider is None:
         api_key = os.getenv("ANTHROPIC_API_KEY")
