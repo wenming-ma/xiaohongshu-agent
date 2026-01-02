@@ -19,6 +19,7 @@ dependencies = [
     "aiohttp>=3.13.2",
     "python-dotenv>=1.2.1",
     "httpx>=0.27.0",
+    "tenacity>=8.0.0",
     "opentelemetry-api>=1.0.0",
     # Logfire（可观测性）
     "logfire>=2.0.0",
