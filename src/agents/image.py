@@ -15,6 +15,7 @@ from pydantic_ai.mcp import MCPServerStdio
 from ..models.schemas import ImageResult, GeneratedImage, XHSContent, ResearchResult
 from ..utils.anthropic_provider import get_anthropic_model
 from ..utils.download_manager import DownloadManager
+from ..utils.retry_handler import with_retry
 from .image_review import ImageReviewAgent
 from prompts import get_system_prompt, get_user_prompt, get_prompt_field
 
@@ -90,6 +91,7 @@ class ImageAgent:
         # 下载文件管理器（处理浏览器下载的文件）
         self.download_manager = DownloadManager()
 
+    @with_retry(max_retries=5, initial_delay=5.0)
     async def generate_image(
         self,
         content: XHSContent,
@@ -98,7 +100,7 @@ class ImageAgent:
         output_dir: Path
     ) -> ImageResult:
         """
-        生成配图（带审核循环，只重新生成失败的图片）
+        生成配图（带审核循环 + 外层重试）
 
         Args:
             content: 内容数据

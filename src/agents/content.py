@@ -7,6 +7,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from ..models.schemas import ResearchResult, XHSContent, ReviewResult
 from ..utils.anthropic_provider import get_anthropic_model
+from ..utils.retry_handler import with_retry
 from prompts import get_system_prompt, get_user_prompt
 
 
@@ -61,13 +62,14 @@ class ContentAgent:
         review_result = await self.reviewer.run(review_prompt)
         return review_result.output
 
+    @with_retry(max_retries=5, initial_delay=5.0)
     async def create_content(
         self,
         research: ResearchResult,
         topic: str
     ) -> XHSContent:
         """
-        创作小红书内容（带 Reflexion 循环）
+        创作小红书内容（带 Reflexion 循环 + 外层重试）
 
         Args:
             research: 研究结果

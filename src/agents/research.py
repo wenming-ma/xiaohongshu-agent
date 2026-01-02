@@ -8,6 +8,7 @@ from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from ..models.schemas import ResearchResult, ReviewResult
 from ..utils.anthropic_provider import get_anthropic_model
+from ..utils.retry_handler import with_retry
 from prompts import get_system_prompt, get_user_prompt
 
 
@@ -97,9 +98,10 @@ class ResearchAgent:
         review_result = await self.reviewer.run(review_prompt)
         return review_result.output
 
+    @with_retry(max_retries=5, initial_delay=5.0)
     async def research(self, topic: str, target_audience: str) -> ResearchResult:
         """
-        执行研究任务（带 Reflexion 循环）
+        执行研究任务（带 Reflexion 循环 + 外层重试）
 
         Args:
             topic: 研究主题

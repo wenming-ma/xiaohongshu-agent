@@ -4,3 +4,12 @@
 [submodule "submodules/playwright-mcp"]
 	path = submodules/playwright-mcp
 	url = https://github.com/wenming-ma/playwright-mcp.git
+[submodule "submodules/reference/langgraph"]
+	path = submodules/reference/langgraph
+	url = https://github.com/langchain-ai/langgraph
+[submodule "submodules/reference/autogen"]
+	path = submodules/reference/autogen
+	url = https://github.com/microsoft/autogen
+[submodule "submodules/reference/crewai"]
+	path = submodules/reference/crewai
+	url = https://github.com/crewAIInc/crewAI
