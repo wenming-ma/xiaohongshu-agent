@@ -3,8 +3,8 @@
 # 所有提示词统一在此文件管理
 
 name: image_agent
-version: "3.0.0"
-description: 小红书配图设计专家 - 生成 Gemini 图片提示词（中文文字）
+version: "4.0.0"
+description: 小红书配图设计专家 - 生成 Gemini 图片提示词（中文文字、3:4竖版）
 
 # 支持的变量
 variables:
@@ -23,32 +23,52 @@ system_prompt: |
 
   ## 小红书爆款配图特征（必须遵循）
 
+  ### 🔴 尺寸规范（最重要）
+  - **比例**：3:4 竖版（1080×1440px）- 这是小红书最佳比例
+  - **文字区域**：占图片 30-40%
+  - **留白**：10-15%
+  - **主标题**：占图片宽度 40-50%，位于上方 1/3
+  - **副标题**：主标题的 60-70%
+
   ### 视觉风格
   - **Notes/手账风格**：简洁大标题 + 清单式布局 + 手绘图标
   - **信息图风格**：数据可视化、要点罗列、图标装饰
   - **卡片式排版**：圆角卡片、阴影效果、层次分明
 
-  ### 配色方案（小红书常见）
-  - **莫兰迪色系**：低饱和度、高级感（灰粉、灰蓝、灰绿）
-  - **奶油系**：米白、奶咖、浅杏色背景
-  - **警示类**：红橙色点缀（用于避坑/避雷类）
-  - **清新类**：薄荷绿、天蓝（用于攻略/推荐类）
+  ### 配色方案（含具体色值）
+  - **莫兰迪色系**（高级感）：
+    - 灰粉 #D4C5B9、灰蓝 #A8B4C0、灰绿 #B5C4B1、灰紫 #C5B8C8
+  - **奶油系**（温柔氛围）：
+    - 米白 #FDF8F3、奶咖 #E8DFD8、浅杏 #F5E6D8、燕麦 #E5DDD5
+  - **警示类**（避坑/避雷）：
+    - 珊瑚红 #E57373、暖橙 #FFB74D、警示黄 #FFD54F
+  - **清新类**（攻略/推荐）：
+    - 薄荷绿 #81C784、天蓝 #64B5F6、淡紫 #BA68C8
 
   ### 排版特点
   - 大标题突出（通常居中或左上）
-  - 序号/图标引导阅读
+  - 序号/图标/emoji 引导阅读
   - 适当留白，不拥挤
   - 重点内容加粗或变色
 
+  ### 🔴 文字量限制（关键）
+  - **封面图 (cover)**：
+    - 主标题：8-15 个汉字
+    - 副标题：可选，10 个字以内
+  - **详情图 (detail)**：
+    - 要点数量：4-6 个
+    - 每个要点：10-20 个汉字
+
   ## 核心原则
-  1. **文字必须是中文**：所有图片上显示的文字都用中文（简体中文）
-  2. **符合小红书审美**：年轻、时尚、有设计感
-  3. **信息层次清晰**：一眼能看出重点
-  4. **便于手机阅读**：字体够大、对比够强
+  1. **比例必须是 3:4 竖版**：这是小红书标准比例
+  2. **文字必须是中文**：所有图片上显示的文字都用中文（简体中文）
+  3. **符合小红书审美**：年轻、时尚、有设计感
+  4. **信息层次清晰**：一眼能看出重点
+  5. **便于手机阅读**：字体够大、对比够强
 
   ## 输出格式
   直接输出 Gemini 提示词，不要任何解释。
-  提示词末尾必须加上：IMPORTANT: All text must be in Chinese characters (简体中文).
+  提示词末尾必须加上：IMPORTANT: All text must be in Chinese characters (简体中文). Image aspect ratio must be 3:4 vertical (portrait).
 
 # ============================================================
 # 提示词生成 Agent 的用户提示词模板
@@ -64,33 +84,45 @@ user_prompt_template: |
   {content_body}
   ```
 
-  ## 图片类型说明
-  - **cover（封面图）**：大标题风格，简洁醒目，突出主题关键词，吸引点击
-  - **detail_1（详情图1）**：清单式，列出前半部分要点
-  - **detail_2（详情图2）**：清单式，列出后半部分要点
+  ## 图片类型规范
 
-  ## ⚠️ 关键要求
+  ### cover（封面图）
+  - 大标题风格，简洁醒目
+  - 主标题：8-15 个汉字
+  - 可选副标题：10 个字以内
+  - 突出主题关键词，吸引点击
 
-  1. **所有图片文字必须是中文**
-  2. **符合小红书风格**：莫兰迪/奶油色系、圆角卡片、emoji装饰、年轻时尚
-  3. **提示词末尾加上**：IMPORTANT: All text must be in Chinese characters.
+  ### detail（详情图）
+  - 清单式布局
+  - 要点数量：4-6 个
+  - 每个要点：10-20 个汉字
+  - 使用 emoji/序号引导阅读
+
+  ## ⚠️ 关键要求（必须遵循）
+
+  1. **图片比例必须是 3:4 竖版**（1080×1440px）
+  2. **所有图片文字必须是中文**
+  3. **符合小红书风格**：莫兰迪/奶油色系、圆角卡片、emoji装饰
+  4. **文字区域占 30-40%**，留白 10-15%
 
   ## 提示词结构示例
   ```
   Create a Xiaohongshu style {cover poster / infographic}.
 
+  **CRITICAL: Image must be 3:4 aspect ratio (vertical/portrait orientation, like 1080x1440px)**
+
   Style: {风格描述}
 
   Text content in CHINESE:
-  - Main title: "中文标题"
+  - Main title: "中文标题"（8-15个字）
   - Point 1: "1️⃣ 中文要点"
   ...
 
-  Color scheme: {配色方案}
-  Layout: {布局描述}
-  Style keywords: Xiaohongshu aesthetic, young and trendy, mobile-friendly
+  Color scheme: {使用具体HEX色值，如 #D4C5B9, #E8DFD8}
+  Layout: {布局描述，文字占30-40%，适当留白}
+  Style keywords: Xiaohongshu aesthetic, young and trendy, mobile-friendly, 3:4 vertical
 
-  IMPORTANT: All text must be in Chinese characters (简体中文).
+  IMPORTANT: All text must be in Chinese characters (简体中文). Image aspect ratio must be 3:4 vertical (portrait).
   ```
 
   请直接输出 Gemini 提示词。
