@@ -198,12 +198,21 @@ class ImageReviewAgent:
             return result.output
         except Exception as e:
             print(f"      ⚠️ 视觉审核失败: {e}")
-            # 视觉审核失败时返回默认通过（仅依赖文件检查）
+            # 视觉审核失败 = 审核未通过，需要重试
+            # 常见原因：413 (图片太大), 网络错误等
             return ImageReviewResult(
-                passed=True,
-                score=80,
-                issues=[],
-                summary=f"视觉审核跳过（{e}）",
+                passed=False,
+                score=0,
+                issues=[
+                    ImageReviewIssue(
+                        type="review_failed",
+                        severity="critical",
+                        image_type="all",
+                        description=f"视觉审核失败: {e}",
+                        suggestion="检查图片大小或网络连接后重试"
+                    )
+                ],
+                summary=f"视觉审核失败: {e}",
                 file_check=file_check
             )
 
