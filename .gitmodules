@@ -13,3 +13,6 @@
 [submodule "submodules/reference/crewai"]
 	path = submodules/reference/crewai
 	url = https://github.com/crewAIInc/crewAI
+[submodule "submodules/reference/playwright"]
+	path = submodules/reference/playwright
+	url = https://github.com/wenming-ma/playwright.git
