@@ -9,8 +9,8 @@ import asyncio
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict
-from pydantic_ai import Agent
+from typing import List, Dict, Optional
+from pydantic_ai import Agent, Tool
 from pydantic_ai.mcp import MCPServerStdio
 from ..models.schemas import ImageResult, GeneratedImage, XHSContent, ResearchResult
 from ..utils.anthropic_provider import get_anthropic_model
@@ -24,27 +24,16 @@ from prompts import get_system_prompt, get_user_prompt, get_prompt_field
 class ImageAgent:
     """Gemini 图片生成 Agent"""
 
-    # 图片类型配置
-    IMAGE_TYPES = [
-        {"type": "cover", "desc": "封面图 - 大标题风格，突出主题"},
-        {"type": "detail_1", "desc": "详情图1 - 清单式，列出前半部分要点"},
-        {"type": "detail_2", "desc": "详情图2 - 清单式，列出后半部分要点"},
-    ]
-
     def __init__(
         self,
-        image_count: int = None,
         max_iterations: int = None
     ):
         """
         初始化图片生成 Agent
 
         Args:
-            image_count: 生成图片数量，默认使用配置
             max_iterations: 审核不通过时的最大重试次数，默认使用配置
         """
-        image_count = image_count or ImageConfig.DEFAULT_COUNT
-        self.image_count = min(max(image_count, ImageConfig.MIN_COUNT), ImageConfig.MAX_COUNT)
         self.max_iterations = max_iterations or ReviewConfig.MAX_ITERATIONS
 
         # 获取带 HTTP 重试的 Model（max_retries=5）
@@ -53,6 +42,9 @@ class ImageAgent:
         # Playwright 下载输出目录
         self.downloads_dir = PathConfig.DOWNLOADS_DIR
         self.downloads_dir.mkdir(parents=True, exist_ok=True)
+
+        # 记录操作开始时间（用于筛选新下载的文件）
+        self._operation_start_time: Optional[float] = None
 
         # 创建 Playwright MCP Server 实例（用于操作 Gemini）
         self.mcp_server = MCPServerStdio(
@@ -80,12 +72,32 @@ class ImageAgent:
             system_prompt=(get_system_prompt("image"),),
         )
 
-        # Gemini 操作 Agent（使用 Playwright 工具）
+        # 创建检查下载的工具
+        def check_download_status() -> str:
+            """
+            检查下载目录是否有新的 PNG 图片文件。
+            在点击下载按钮后调用此工具确认下载是否完成。
+            返回: "DOWNLOADED: 文件名" 表示下载成功，"NOT_FOUND" 表示未找到新文件。
+            """
+            if self._operation_start_time is None:
+                return "NOT_FOUND: 操作未开始"
+
+            # 查找新下载的 PNG 文件
+            for f in self.downloads_dir.glob("*.png"):
+                if f.stat().st_mtime > self._operation_start_time:
+                    # 检查文件是否完整（不是临时文件）
+                    if not f.suffix.endswith(('.crdownload', '.tmp', '.part')):
+                        return f"DOWNLOADED: {f.name} ({f.stat().st_size / 1024:.0f}KB)"
+
+            return "NOT_FOUND: 下载目录中没有新文件"
+
+        # Gemini 操作 Agent（使用 Playwright 工具 + 下载检查工具）
         # 系统提示词从 prompts/image.yaml 的 gemini_operator_prompt 读取
         self.gemini_operator = Agent(
             model=model,
             output_type=str,
             toolsets=[self.mcp_server],
+            tools=[Tool(check_download_status, takes_ctx=False)],
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(get_prompt_field("image", "gemini_operator_prompt"),),
@@ -99,6 +111,47 @@ class ImageAgent:
 
         # 下载文件管理器（监控 Playwright 输出目录）
         self.download_manager = DownloadManager(download_dir=self.downloads_dir)
+
+    def _get_image_types(self, research: ResearchResult) -> List[Dict]:
+        """
+        根据研究数据动态计算需要的图片类型
+
+        Args:
+            research: 研究结果（包含 entities 列表）
+
+        Returns:
+            图片类型列表，如 [cover, detail_1, detail_2, detail_3, ...]
+        """
+        # 1. 封面图（固定 1 张）
+        types = [{"type": "cover", "desc": "封面图 - 大标题风格，突出主题"}]
+
+        # 2. 计算详情图数量
+        entity_count = len(research.entities)
+        if entity_count == 0:
+            # 没有实体时至少生成 1 张详情图
+            detail_count = ImageConfig.MIN_DETAIL_IMAGES
+        else:
+            # 向上取整：(entity_count + per - 1) // per
+            detail_count = max(
+                ImageConfig.MIN_DETAIL_IMAGES,
+                min(
+                    ImageConfig.MAX_DETAIL_IMAGES,
+                    (entity_count + ImageConfig.ENTITIES_PER_DETAIL - 1) // ImageConfig.ENTITIES_PER_DETAIL
+                )
+            )
+
+        # 3. 生成详情图类型
+        for i in range(1, detail_count + 1):
+            start = (i - 1) * ImageConfig.ENTITIES_PER_DETAIL
+            end = min(i * ImageConfig.ENTITIES_PER_DETAIL, entity_count)
+            types.append({
+                "type": f"detail_{i}",
+                "desc": f"详情图{i} - 清单式，显示第 {start + 1}-{end} 个实体",
+                "entity_start": start,  # 0-based index
+                "entity_end": end
+            })
+
+        return types
 
     @with_retry(max_retries=RetryConfig.MAX_RETRIES, initial_delay=RetryConfig.INITIAL_DELAY)
     async def generate_image(
@@ -120,13 +173,17 @@ class ImageAgent:
         Returns:
             ImageResult: 图片结果（包含多张图片）
         """
-        print(f"   🎨 开始生成 {self.image_count} 张配图（最多重试 {self.max_iterations} 次）...")
+        # 动态计算图片类型
+        image_types = self._get_image_types(research)
+        entity_count = len(research.entities)
+
+        print(f"   🎨 开始生成 {len(image_types)} 张配图（{entity_count} 个实体，最多重试 {self.max_iterations} 次）...")
 
         # 存储已生成的图片 {image_type: GeneratedImage}
         generated_images: Dict[str, GeneratedImage] = {}
 
         # 待生成的图片类型
-        pending_types = [t["type"] for t in self.IMAGE_TYPES[:self.image_count]]
+        pending_types = [t["type"] for t in image_types]
 
         for iteration in range(self.max_iterations):
             if not pending_types:
@@ -136,14 +193,14 @@ class ImageAgent:
 
             # 1. 生成待处理的图片
             for image_type in pending_types:
-                image_type_info = next(t for t in self.IMAGE_TYPES if t["type"] == image_type)
+                image_type_info = next(t for t in image_types if t["type"] == image_type)
                 image_desc = image_type_info["desc"]
 
                 print(f"\n      [{image_type}] {image_desc}")
 
-                # 生成 Gemini 提示词
+                # 生成 Gemini 提示词（传入实体分配信息）
                 print(f"         📝 生成图片描述提示词...")
-                prompt = await self._generate_prompt(content, topic, image_type, image_desc)
+                prompt = await self._generate_prompt(content, research, topic, image_type_info)
                 print(f"         ✅ 提示词: {prompt[:60]}...")
 
                 # 使用 Playwright 操作 Gemini 生成图片
@@ -160,7 +217,7 @@ class ImageAgent:
 
             # 2. 审核所有图片
             all_images = list(generated_images.values())
-            review = await self.reviewer.review(all_images, topic, self.image_count)
+            review = await self.reviewer.review(all_images, topic, len(image_types))
 
             # 3. 检查是否通过
             if review.passed:
@@ -198,39 +255,48 @@ class ImageAgent:
     async def _generate_prompt(
         self,
         content: XHSContent,
+        research: ResearchResult,
         topic: str,
-        image_type: str = "cover",
-        image_desc: str = ""
+        image_type_info: Dict
     ) -> str:
         """
-        生成 Gemini 图片提示词
+        生成 Gemini 图片提示词（带实体分配信息）
 
         Args:
             content: 内容数据
+            research: 研究数据（包含 entities 列表）
             topic: 主题
-            image_type: 图片类型 (cover/detail_1/detail_2)
-            image_desc: 图片描述
+            image_type_info: 图片类型信息（包含 type, desc, entity_start, entity_end）
         """
-        # 根据图片类型调整正文摘要
-        body_text = content.body
+        image_type = image_type_info["type"]
+        image_desc = image_type_info["desc"]
+
         if image_type == "cover":
-            # 封面图只需要标题和主题
-            body_excerpt = body_text[:150]
-        elif image_type == "detail_1":
-            # 详情图1取前半部分
-            mid = len(body_text) // 2
-            body_excerpt = body_text[:mid]
+            # 封面图：只需标题和主题
+            body_excerpt = content.body[:150]
         else:
-            # 详情图2取后半部分
-            mid = len(body_text) // 2
-            body_excerpt = body_text[mid:]
+            # 详情图：提取对应的实体
+            start = image_type_info.get("entity_start", 0)
+            end = image_type_info.get("entity_end", len(research.entities))
+            entities = research.entities[start:end]
+
+            if entities:
+                # 构建实体信息列表
+                entities_info = "\n".join([
+                    f"{i+1}. {e.get('name', '未知')}: {e.get('description', e.get('issue', ''))}"
+                    for i, e in enumerate(entities)
+                ])
+                body_excerpt = f"本图需要展示以下 {len(entities)} 个实体：\n{entities_info}"
+            else:
+                # 无实体时使用正文
+                body_excerpt = content.body[:300]
 
         # 从 YAML 读取用户提示词模板并填充变量
         user_prompt = get_user_prompt(
             "image",
             topic=topic,
             content_title=content.title,
-            content_body=body_excerpt[:300],
+            content_body=body_excerpt,
             image_type=image_type,
             image_desc=image_desc
         )
@@ -257,6 +323,7 @@ class ImageAgent:
         """
         # 记录开始时间（用于筛选新下载的文件）
         start_time = time.time()
+        self._operation_start_time = start_time  # 供 check_download_status 工具使用
 
         # 从 YAML 读取操作提示词模板并填充变量
         operation_prompt = get_prompt_field(

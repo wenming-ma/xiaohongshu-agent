@@ -45,10 +45,10 @@ class ImageConfig:
     MIN_FILE_SIZE = 10 * 1024       # 最小文件大小（10KB）
     MAX_REVIEW_SIZE_MB = 5.0        # 审核时最大图片大小（MB）
 
-    # 图片数量
-    DEFAULT_COUNT = 3          # 默认生成图片数量
-    MIN_COUNT = 1              # 最小数量
-    MAX_COUNT = 3              # 最大数量
+    # 详情图动态数量配置
+    ENTITIES_PER_DETAIL = 6         # 每张详情图显示的实体数量
+    MIN_DETAIL_IMAGES = 1           # 最少详情图数量
+    MAX_DETAIL_IMAGES = 5           # 最多详情图数量（可显示 30 个实体）
 
     # 压缩参数
     COMPRESS_QUALITY_START = 95    # 压缩起始质量
