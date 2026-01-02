@@ -1,6 +1,11 @@
 """
 下载文件管理器
-处理浏览器下载文件的发现和移动
+处理 Playwright MCP 下载文件的发现和移动
+
+注意：Playwright 不使用系统 Downloads 目录！
+- Playwright 下载到临时目录：%TEMP%/playwright-artifacts-xxx
+- Browser Context 关闭时自动删除下载
+- 需要通过 --output-dir 参数指定输出目录
 """
 import time
 import shutil
@@ -9,10 +14,10 @@ from typing import Optional
 
 
 class DownloadManager:
-    """浏览器下载文件管理器"""
+    """Playwright MCP 下载文件管理器"""
 
-    # 默认下载目录（Windows）
-    DEFAULT_DOWNLOAD_DIR = Path.home() / "Downloads"
+    # 默认下载目录（需与 @playwright/mcp --output-dir 一致）
+    DEFAULT_DOWNLOAD_DIR = Path('./output/playwright-downloads')
 
     # 等待下载的超时时间（秒）
     DOWNLOAD_TIMEOUT = 60

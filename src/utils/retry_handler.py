@@ -12,12 +12,16 @@ from anthropic import APIConnectionError, APIStatusError
 
 # 可重试的异常类型
 RETRYABLE_EXCEPTIONS = (
+    # API 相关错误
     ModelHTTPError,      # pydantic-ai HTTP 错误
     ModelAPIError,       # pydantic-ai API 错误（含 Connection error）
     HTTPStatusError,     # httpx HTTP 状态错误
     APIConnectionError,  # anthropic 连接错误
     APIStatusError,      # anthropic 状态错误
     ConnectionError,     # 通用连接错误
+    # 文件/下载相关错误
+    TimeoutError,        # 下载超时
+    FileNotFoundError,   # 文件未找到
 )
 
 

@@ -48,10 +48,17 @@ class ImageAgent:
         # 获取带 HTTP 重试的 Model（max_retries=5）
         model = get_anthropic_model()
 
+        # Playwright 下载输出目录
+        self.downloads_dir = Path('./output/playwright-downloads')
+        self.downloads_dir.mkdir(parents=True, exist_ok=True)
+
         # 创建 Playwright MCP Server 实例（用于操作 Gemini）
         self.mcp_server = MCPServerStdio(
             command='npx',
-            args=['-y', '@playwright/mcp'],
+            args=[
+                '-y', '@playwright/mcp',
+                '--output-dir', str(self.downloads_dir)  # 指定下载目录
+            ],
             env={
                 'HEADLESS': 'false',  # 显示浏览器窗口（方便登录和调试）
                 'BROWSER_TYPE': 'chromium',
@@ -88,8 +95,8 @@ class ImageAgent:
         # 图片审核 Agent（独立，也使用共享 Provider）
         self.reviewer = ImageReviewAgent()
 
-        # 下载文件管理器（处理浏览器下载的文件）
-        self.download_manager = DownloadManager()
+        # 下载文件管理器（监控 Playwright 输出目录）
+        self.download_manager = DownloadManager(download_dir=self.downloads_dir)
 
     @with_retry(max_retries=5, initial_delay=5.0)
     async def generate_image(
@@ -266,19 +273,15 @@ class ImageAgent:
             print(f"         ⚠️ Gemini 操作状态: {result.output}")
 
         # 等待下载完成并移动文件到目标目录
-        try:
-            image_path = self.download_manager.wait_and_move(
-                target_dir=output_dir,
-                target_name=image_type,
-                file_pattern="*.png",
-                timeout=60,
-                before_time=start_time
-            )
-            print(f"         ✅ 图片已保存: {image_path}")
-        except (TimeoutError, FileNotFoundError) as e:
-            print(f"         ⚠️ 文件处理失败: {e}")
-            # 返回期望路径（审核时会检测到缺失）
-            image_path = output_dir / f"{image_type}.png"
+        # 如果超时或找不到文件，让异常抛出，由 @with_retry 重试整个流程
+        image_path = self.download_manager.wait_and_move(
+            target_dir=output_dir,
+            target_name=image_type,
+            file_pattern="*.png",
+            timeout=60,
+            before_time=start_time
+        )
+        print(f"         ✅ 图片已保存: {image_path}")
 
         return image_path
 
