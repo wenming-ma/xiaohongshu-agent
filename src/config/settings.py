@@ -55,6 +55,9 @@ class ImageConfig:
     COMPRESS_QUALITY_MIN = 20      # 压缩最低质量
     COMPRESS_QUALITY_STEP = 5      # 质量递减步长
 
+    # 自动截屏配置（类似 C++ 析构函数，在 Agent 退出时自动截屏）
+    AUTO_SCREENSHOT_ENABLED = True  # 是否启用自动截屏
+
 
 # ==================== 超时配置 ====================
 class TimeoutConfig:

@@ -111,9 +111,6 @@ class ResearchAgent:
         Returns:
             ResearchResult: 研究结果（已通过审核或达到最大迭代次数）
         """
-        # 首次运行时列出工具
-        await self.list_tools()
-
         messages = []  # 消息历史
         result = None
         review = None

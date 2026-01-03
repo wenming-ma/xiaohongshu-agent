@@ -4,67 +4,68 @@
 通过 Playwright MCP 操作 Gemini 网页
 
 所有提示词统一在 prompts/image.yaml 管理
+
+验证机制（通过类装饰器实现）：
+- @GeminiConfigValidator: 每张图片生成后验证 Gemini 配置（Create images + Pro）
+- @ImageQualityValidator: 验证图片质量（字迹清晰、风格匹配）
 """
-import asyncio
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional
 from pydantic_ai import Agent, Tool
-from pydantic_ai.mcp import MCPServerStdio
+from ..mcp import AutoScreenshotMCPServer
 from ..models.schemas import ImageResult, GeneratedImage, XHSContent, ResearchResult
 from ..utils.anthropic_provider import get_anthropic_model
 from ..utils.download_manager import DownloadManager
 from ..utils.retry_handler import with_retry
-from ..config.settings import RetryConfig, ReviewConfig, ImageConfig, PathConfig, TimeoutConfig, APIConfig
-from .image_review import ImageReviewAgent
+from ..validators import GeminiConfigValidator, ImageQualityValidator
+from ..config.settings import RetryConfig, ImageConfig, PathConfig, TimeoutConfig, APIConfig
 from prompts import get_system_prompt, get_user_prompt, get_prompt_field
 
 
 class ImageAgent:
     """Gemini 图片生成 Agent"""
 
-    def __init__(
-        self,
-        max_iterations: int = None
-    ):
-        """
-        初始化图片生成 Agent
+    def __init__(self):
+        """初始化图片生成 Agent"""
+        # ==================== 1. 配置参数 ====================
+        self.gemini_url = APIConfig.GEMINI_URL
 
-        Args:
-            max_iterations: 审核不通过时的最大重试次数，默认使用配置
-        """
-        self.max_iterations = max_iterations or ReviewConfig.MAX_ITERATIONS
-
-        # 获取带 HTTP 重试的 Model（max_retries=5）
-        model = get_anthropic_model()
-
-        # Playwright 下载输出目录
+        # ==================== 2. 路径配置 ====================
         self.downloads_dir = PathConfig.DOWNLOADS_DIR
         self.downloads_dir.mkdir(parents=True, exist_ok=True)
 
-        # 记录操作开始时间（用于筛选新下载的文件）
+        # ==================== 3. 内部状态 ====================
         self._operation_start_time: Optional[float] = None
+        self._last_gemini_screenshot: Optional[Path] = None
 
-        # 创建 Playwright MCP Server 实例（用于操作 Gemini）
-        self.mcp_server = MCPServerStdio(
+        # ==================== 4. 工具/管理器 ====================
+        self.download_manager = DownloadManager(download_dir=self.downloads_dir)
+
+        # ==================== 5. MCP Server ====================
+        # Playwright MCP - 在所有图片生成完成后自动截屏（类似 C++ 析构函数）
+        # 注：每张图片的验证截屏由 @GeminiConfigValidator 装饰器处理
+        self.mcp_server = AutoScreenshotMCPServer(
             command='npx',
-            args=[
-                '-y', '@playwright/mcp',
-                '--output-dir', str(self.downloads_dir)  # 指定下载目录
-            ],
+            args=['-y', '@playwright/mcp', '--output-dir', str(self.downloads_dir)],
             env={
-                'HEADLESS': 'false',  # 显示浏览器窗口（方便登录和调试）
+                'HEADLESS': 'false',
                 'BROWSER_TYPE': 'chromium',
                 'USER_DATA_DIR': PathConfig.BROWSER_SESSION_GEMINI
             },
             tool_prefix='playwright',
             cache_tools=True,
             max_retries=RetryConfig.MCP_RETRIES,
+            screenshot_dir=self.downloads_dir,
+            screenshot_callback=self._on_auto_screenshot,
+            auto_screenshot=ImageConfig.AUTO_SCREENSHOT_ENABLED,
         )
 
-        # 提示词生成 Agent（生成 Gemini 图片描述）
-        # 系统提示词从 prompts/image.yaml 的 system_prompt 读取
+        # ==================== 6. Agents ====================
+        model = get_anthropic_model()
+
+        # 提示词生成 Agent
         self.prompt_generator = Agent(
             model=model,
             output_type=str,
@@ -72,45 +73,37 @@ class ImageAgent:
             system_prompt=(get_system_prompt("image"),),
         )
 
-        # 创建检查下载的工具
-        def check_download_status() -> str:
-            """
-            检查下载目录是否有新的 PNG 图片文件。
-            在点击下载按钮后调用此工具确认下载是否完成。
-            返回: "DOWNLOADED: 文件名" 表示下载成功，"NOT_FOUND" 表示未找到新文件。
-            """
-            if self._operation_start_time is None:
-                return "NOT_FOUND: 操作未开始"
-
-            # 查找新下载的 PNG 文件
-            for f in self.downloads_dir.glob("*.png"):
-                if f.stat().st_mtime > self._operation_start_time:
-                    # 检查文件是否完整（不是临时文件）
-                    if not f.suffix.endswith(('.crdownload', '.tmp', '.part')):
-                        return f"DOWNLOADED: {f.name} ({f.stat().st_size / 1024:.0f}KB)"
-
-            return "NOT_FOUND: 下载目录中没有新文件"
-
-        # Gemini 操作 Agent（使用 Playwright 工具 + 下载检查工具）
-        # 系统提示词从 prompts/image.yaml 的 gemini_operator_prompt 读取
+        # Gemini 操作 Agent
         self.gemini_operator = Agent(
             model=model,
             output_type=str,
             toolsets=[self.mcp_server],
-            tools=[Tool(check_download_status, takes_ctx=False)],
+            tools=[Tool(self._check_download_status, takes_ctx=False)],
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(get_prompt_field("image", "gemini_operator_prompt"),),
         )
 
-        # Gemini URL
-        self.gemini_url = APIConfig.GEMINI_URL
+    # ==================== 工具方法 ====================
 
-        # 图片审核 Agent（独立，也使用共享 Provider）
-        self.reviewer = ImageReviewAgent()
+    def _check_download_status(self) -> str:
+        """
+        检查下载目录是否有新的 PNG 图片文件。
+        在点击下载按钮后调用此工具确认下载是否完成。
 
-        # 下载文件管理器（监控 Playwright 输出目录）
-        self.download_manager = DownloadManager(download_dir=self.downloads_dir)
+        Returns:
+            "DOWNLOADED: 文件名" 表示下载成功
+            "NOT_FOUND" 表示未找到新文件
+        """
+        if self._operation_start_time is None:
+            return "NOT_FOUND: 操作未开始"
+
+        for f in self.downloads_dir.glob("*.png"):
+            if f.stat().st_mtime > self._operation_start_time:
+                if not f.suffix.endswith(('.crdownload', '.tmp', '.part')):
+                    return f"DOWNLOADED: {f.name} ({f.stat().st_size / 1024:.0f}KB)"
+
+        return "NOT_FOUND: 下载目录中没有新文件"
 
     def _get_image_types(self, research: ResearchResult) -> List[Dict]:
         """
@@ -153,7 +146,6 @@ class ImageAgent:
 
         return types
 
-    @with_retry(max_retries=RetryConfig.MAX_RETRIES, initial_delay=RetryConfig.INITIAL_DELAY)
     async def generate_image(
         self,
         content: XHSContent,
@@ -162,7 +154,14 @@ class ImageAgent:
         output_dir: Path
     ) -> ImageResult:
         """
-        生成配图（带审核循环 + 外层重试）
+        生成配图（每张图片即时验证）
+
+        使用 async with self.mcp_server 保持浏览器会话，
+        每张图片生成后立即验证，验证失败自动重试单张图片。
+
+        验证机制（通过类装饰器实现）：
+        - @GeminiConfigValidator: 验证 Create images + Pro 模式
+        - @ImageQualityValidator: 验证字迹清晰度和风格
 
         Args:
             content: 内容数据
@@ -177,23 +176,17 @@ class ImageAgent:
         image_types = self._get_image_types(research)
         entity_count = len(research.entities)
 
-        print(f"   🎨 开始生成 {len(image_types)} 张配图（{entity_count} 个实体，最多重试 {self.max_iterations} 次）...")
+        print(f"   🎨 开始生成 {len(image_types)} 张配图（{entity_count} 个实体）...")
 
-        # 存储已生成的图片 {image_type: GeneratedImage}
-        generated_images: Dict[str, GeneratedImage] = {}
+        # 存储已生成的图片
+        generated_images: List[GeneratedImage] = []
 
-        # 待生成的图片类型
-        pending_types = [t["type"] for t in image_types]
-
-        for iteration in range(self.max_iterations):
-            if not pending_types:
-                break
-
-            print(f"\n   🔄 第 {iteration + 1} 次生成（待生成: {pending_types}）")
-
-            # 1. 生成待处理的图片
-            for image_type in pending_types:
-                image_type_info = next(t for t in image_types if t["type"] == image_type)
+        # 使用 MCP Server 上下文保持浏览器会话
+        # 浏览器在所有图片生成完成后才关闭
+        # AutoScreenshotMCPServer 会在退出时自动截屏
+        async with self.mcp_server:
+            for image_type_info in image_types:
+                image_type = image_type_info["type"]
                 image_desc = image_type_info["desc"]
 
                 print(f"\n      [{image_type}] {image_desc}")
@@ -204,53 +197,31 @@ class ImageAgent:
                 print(f"         ✅ 提示词: {prompt[:60]}...")
 
                 # 使用 Playwright 操作 Gemini 生成图片
+                # 验证由 @GeminiConfigValidator 和 @ImageQualityValidator 装饰器处理
                 print(f"         🌐 启动 Gemini 图片生成...")
-                image_path = await self._generate_via_gemini(prompt, output_dir, image_type)
+                image_path = await self._generate_via_gemini(
+                    prompt=prompt,
+                    output_dir=output_dir,
+                    image_type=image_type,
+                    topic=topic  # 传递 topic 用于质量验证
+                )
 
-                generated_images[image_type] = GeneratedImage(
+                generated_images.append(GeneratedImage(
                     image_path=str(image_path),
                     prompt_used=prompt,
                     image_type=image_type
-                )
+                ))
 
-                print(f"         ✅ {image_type} 生成完成")
+                print(f"         ✅ {image_type} 生成并验证完成")
 
-            # 2. 审核所有图片
-            all_images = list(generated_images.values())
-            review = await self.reviewer.review(all_images, topic, len(image_types))
-
-            # 3. 检查是否通过
-            if review.passed:
-                print(f"\n   ✅ 图片审核通过（评分: {review.score:.1f}）")
-                return ImageResult(
-                    images=all_images,
-                    total_count=len(all_images),
-                    generated_at=datetime.now().isoformat()
-                )
-
-            # 4. 未通过，找出有问题的图片类型
-            print(f"\n   ⚠️ 审核未通过（评分: {review.score:.1f}）")
-            for issue in review.issues:
-                print(f"      - [{issue.severity}] {issue.image_type}: {issue.description}")
-
-            # 5. 获取需要重新生成的图片类型
-            pending_types = self.reviewer.get_failed_image_types(review)
-
-            if not pending_types:
-                # 没有明确失败的图片，但审核未通过（可能是 warning 级别问题）
-                # 不再重试，接受当前结果
-                print(f"\n   ℹ️ 无 critical 问题，接受当前结果")
-                break
-
-            print(f"\n   🔄 将重新生成: {pending_types}")
-
-        # 达到最大次数或无需重试，返回最终结果
-        all_images = list(generated_images.values())
+        # 所有图片生成完成，直接返回结果
+        # 无需批量审核，每张图片已在生成时验证
         return ImageResult(
-            images=all_images,
-            total_count=len(all_images),
+            images=generated_images,
+            total_count=len(generated_images),
             generated_at=datetime.now().isoformat()
         )
+        # <-- MCP Server 在这里退出，触发自动截屏并关闭浏览器
 
     async def _generate_prompt(
         self,
@@ -304,19 +275,31 @@ class ImageAgent:
         result = await self.prompt_generator.run(user_prompt)
         return result.output
 
+    @with_retry(max_retries=RetryConfig.MAX_RETRIES, initial_delay=RetryConfig.INITIAL_DELAY)
+    @GeminiConfigValidator(max_retries=3, initial_delay=5.0)
+    @ImageQualityValidator(max_retries=2, initial_delay=5.0)
     async def _generate_via_gemini(
         self,
         prompt: str,
         output_dir: Path,
-        image_type: str = "cover"
+        image_type: str = "cover",
+        topic: str = ""
     ) -> Path:
         """
-        通过 Gemini 网页生成图片
+        通过 Gemini 网页生成图片（带重试和验证）
+
+        三层重试机制（由装饰器处理）：
+        1. @with_retry: 网络/API 错误重试
+        2. @GeminiConfigValidator: 验证 Gemini 配置（Create images + Pro）
+        3. @ImageQualityValidator: 验证图片质量（字迹清晰、风格匹配）
+
+        失败时自动重试单张图片生成。
 
         Args:
             prompt: 图片描述提示词
             output_dir: 输出目录
             image_type: 图片类型
+            topic: 主题（用于风格验证）
 
         Returns:
             Path: 图片保存路径
@@ -333,16 +316,17 @@ class ImageAgent:
         )
 
         # 运行 Gemini 操作 Agent
+        # 截屏验证由装饰器 @GeminiConfigValidator 处理
         result = await self.gemini_operator.run(operation_prompt)
 
-        # 检查 Agent 执行状态
+        # 检查 Agent 输出状态
         if "SUCCESS" in result.output or "成功" in result.output:
             print(f"         ✅ Gemini 操作成功")
         else:
             print(f"         ⚠️ Gemini 操作状态: {result.output}")
 
         # 等待下载完成并移动文件到目标目录
-        # 如果超时或找不到文件，让异常抛出，由 @with_retry 重试整个流程
+        # 如果超时或找不到文件，让异常抛出，由验证装饰器处理重试
         image_path = self.download_manager.wait_and_move(
             target_dir=output_dir,
             target_name=image_type,
@@ -367,3 +351,18 @@ class ImageAgent:
                     print(f"      ✅ {tool_name}")
         except Exception as e:
             print(f"   ⚠️ 无法列出工具: {e}")
+
+    async def _on_auto_screenshot(self, screenshot_path: Path) -> None:
+        """
+        最终截屏完成后的回调
+
+        在所有图片生成完成、MCP Server 退出前触发最终截屏。
+        类似 C++ 析构函数的自动清理机制。
+
+        注：每张图片的验证截屏由 @GeminiConfigValidator 装饰器处理。
+
+        Args:
+            screenshot_path: 截屏文件路径
+        """
+        # 保存最后一次截屏路径
+        self._last_gemini_screenshot = screenshot_path

@@ -194,80 +194,84 @@ class ReviewResult(BaseModel):
         }
 
 
-class ImageReviewIssue(BaseModel):
-    """图片审核问题"""
-
-    type: str = Field(
-        description="问题类型: file_missing | file_too_small | text_not_chinese | style_mismatch"
-    )
-    severity: str = Field(
-        description="严重程度: critical | warning | info"
-    )
-    image_type: str = Field(
-        description="图片类型: cover | detail_1 | detail_2 | all"
-    )
-    description: str = Field(
-        description="问题描述"
-    )
-    suggestion: str = Field(
-        description="修改建议"
-    )
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "type": "text_not_chinese",
-                "severity": "critical",
-                "image_type": "cover",
-                "description": "封面图文字为英文，不是中文",
-                "suggestion": "重新生成，确保提示词要求中文文字"
-            }
-        }
+# ==================== 专用验证器模型 ====================
 
 
-class ImageReviewResult(BaseModel):
-    """图片审核结果"""
+class GeminiConfigReview(BaseModel):
+    """Gemini 配置验证结果 - 检查 Create images + Pro 模式"""
 
     passed: bool = Field(
-        description="是否通过审核"
+        description="验证是否通过"
     )
-    score: float = Field(
-        default=0.0,
-        ge=0.0,
-        le=100.0,
-        description="质量评分（0-100）"
+    create_images_enabled: bool = Field(
+        description="Tools -> Create images 是否已选中"
     )
-    issues: List[ImageReviewIssue] = Field(
+    pro_mode_enabled: bool = Field(
+        description="Pro 模式是否已选中"
+    )
+    issues: List[str] = Field(
         default_factory=list,
-        description="发现的问题列表"
+        description="发现的配置问题"
     )
     summary: str = Field(
-        description="审核总结"
-    )
-    file_check: Dict[str, bool] = Field(
-        default_factory=dict,
-        description="文件检查结果 {image_type: exists}"
+        description="验证总结"
     )
 
     class Config:
         json_schema_extra = {
             "example": {
                 "passed": False,
-                "score": 50.0,
-                "issues": [
-                    {
-                        "type": "file_missing",
-                        "severity": "critical",
-                        "image_type": "cover",
-                        "description": "封面图文件不存在",
-                        "suggestion": "重新生成并下载图片"
-                    }
-                ],
-                "summary": "审核未通过，封面图缺失",
-                "file_check": {
-                    "cover": False,
-                    "detail_1": True,
-                    "detail_2": True
-                }
+                "create_images_enabled": True,
+                "pro_mode_enabled": False,
+                "issues": ["Pro 模式未选中，当前为 Fast 模式"],
+                "summary": "Gemini 配置不正确：需要选择 Pro 模式"
+            }
+        }
+
+
+class ImageQualityReview(BaseModel):
+    """图片质量验证结果 - 检查字迹清晰度和风格"""
+
+    passed: bool = Field(
+        description="验证是否通过"
+    )
+    text_clarity_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=100.0,
+        description="文字清晰度评分（0-100）"
+    )
+    style_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=100.0,
+        description="风格匹配度评分（0-100）"
+    )
+    aspect_ratio_correct: bool = Field(
+        default=True,
+        description="图片比例是否为 3:4 竖版"
+    )
+    text_is_chinese: bool = Field(
+        default=True,
+        description="图片文字是否为中文"
+    )
+    issues: List[str] = Field(
+        default_factory=list,
+        description="发现的质量问题"
+    )
+    summary: str = Field(
+        description="验证总结"
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "passed": True,
+                "text_clarity_score": 85.0,
+                "style_score": 90.0,
+                "aspect_ratio_correct": True,
+                "text_is_chinese": True,
+                "issues": [],
+                "summary": "图片质量良好，文字清晰，风格符合小红书审美"
             }
         }

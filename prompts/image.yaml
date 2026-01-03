@@ -3,7 +3,7 @@
 # 所有提示词统一在此文件管理
 
 name: image_agent
-version: "4.0.0"
+version: "4.1.0"
 description: 小红书配图设计专家 - 生成 Gemini 图片提示词（中文文字、3:4竖版）
 
 # 支持的变量
