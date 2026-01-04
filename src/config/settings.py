@@ -91,3 +91,19 @@ class APIConfig:
 
     # 可重试的 HTTP 状态码
     RETRYABLE_STATUS_CODES = (429, 500, 502, 503, 504)
+
+
+# ==================== 发布配置 ====================
+class PublishConfig:
+    """发布相关配置"""
+
+    # 重试配置
+    MAX_RETRIES = 3            # 发布失败最大重试次数
+    INITIAL_DELAY = 10.0       # 初始延迟（秒）
+
+    # 超时配置
+    UPLOAD_TIMEOUT = 120       # 图片上传超时（秒）
+    PUBLISH_TIMEOUT = 60       # 发布操作超时（秒）
+
+    # 小红书发布页面
+    XHS_PUBLISH_URL = "https://creator.xiaohongshu.com/publish/publish"

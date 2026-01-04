@@ -275,3 +275,54 @@ class ImageQualityReview(BaseModel):
                 "summary": "图片质量良好，文字清晰，风格符合小红书审美"
             }
         }
+
+
+class PublishResult(BaseModel):
+    """小红书发布结果"""
+
+    published: bool = Field(
+        description="是否发布成功"
+    )
+    platform: str = Field(
+        default="xiaohongshu",
+        description="发布平台"
+    )
+    publish_time: str = Field(
+        description="发布时间（ISO格式）"
+    )
+    post_url: str = Field(
+        default="",
+        description="发布链接（如果获取到）"
+    )
+    error_message: str = Field(
+        default="",
+        description="错误信息（失败时）"
+    )
+    retry_count: int = Field(
+        default=0,
+        description="重试次数"
+    )
+
+    # 元数据（用于失败后手动重试）
+    content_snapshot: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="内容快照"
+    )
+    image_paths: Optional[List[str]] = Field(
+        default=None,
+        description="图片路径列表"
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "published": True,
+                "platform": "xiaohongshu",
+                "publish_time": "2025-01-04T10:30:00",
+                "post_url": "https://www.xiaohongshu.com/explore/...",
+                "error_message": "",
+                "retry_count": 0,
+                "content_snapshot": None,
+                "image_paths": None
+            }
+        }

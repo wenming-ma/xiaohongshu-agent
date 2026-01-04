@@ -123,6 +123,56 @@ async def run_workflow(topic: str, audience: str, generate_image: bool = True) -
         else:
             print("\n⏭️ 跳过配图生成（--no-image）")
 
+        # ==================== Phase 4: 发布到小红书（自动） ====================
+        if image_result:
+            print("\n" + "=" * 60)
+            print("📤 Phase 4: 发布到小红书")
+            print("=" * 60)
+
+            try:
+                from .agents.publisher import PublisherAgent
+
+                publisher_agent = PublisherAgent()
+                print("   ✅ PublisherAgent 已创建（包含 Playwright MCP 工具）")
+
+                # 提取图片路径
+                image_paths = [Path(img.image_path) for img in image_result.images]
+
+                publish_result = await publisher_agent.publish(
+                    content=content,
+                    images=image_paths,
+                    output_dir=project_dir
+                )
+
+                # 保存发布结果
+                save_json(project_dir / "publish.json", publish_result.model_dump())
+
+                if publish_result.published:
+                    print(f"\n✅ 发布成功:")
+                    print(f"   - 发布时间: {publish_result.publish_time}")
+                    if publish_result.post_url:
+                        print(f"   - 链接: {publish_result.post_url}")
+                    if publish_result.retry_count > 0:
+                        print(f"   - 重试次数: {publish_result.retry_count}")
+                else:
+                    print(f"\n❌ 发布失败:")
+                    print(f"   - 错误: {publish_result.error_message}")
+                    print(f"   - 元数据已保存到 publish.json，可手动重试")
+
+            except Exception as e:
+                print(f"\n⚠️ 发布失败: {e}")
+                # 保存失败元数据
+                from .models.schemas import PublishResult
+                failed_result = PublishResult(
+                    published=False,
+                    publish_time=datetime.now().isoformat(),
+                    error_message=str(e),
+                    content_snapshot=content.model_dump(),
+                    image_paths=[str(p) for p in image_paths]
+                )
+                save_json(project_dir / "publish.json", failed_result.model_dump())
+                print("   元数据已保存，可稍后手动重试")
+
         # ==================== 完成 ====================
         # 注：审核已内置到各 Agent 的 Reflexion 循环中
         print("\n" + "=" * 60)
@@ -135,6 +185,10 @@ async def run_workflow(topic: str, audience: str, generate_image: bool = True) -
             print(f"   - {project_dir / 'image.json'}")
             for img in image_result.images:
                 print(f"   - {img.image_path}")
+            # 发布结果（如果执行了发布）
+            publish_json = project_dir / 'publish.json'
+            if publish_json.exists():
+                print(f"   - {publish_json}")
 
         print(f"\n预览内容:")
         print(f"{'─' * 60}")
