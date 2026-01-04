@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional
 from pydantic_ai import Agent, Tool
-from ..mcp import AutoScreenshotMCPServer
+from pydantic_ai.mcp import MCPServerStdio
 from ..models.schemas import ImageResult, GeneratedImage, XHSContent, ResearchResult
 from ..utils.anthropic_provider import get_anthropic_model
 from ..utils.download_manager import DownloadManager
@@ -38,15 +38,14 @@ class ImageAgent:
 
         # ==================== 3. 内部状态 ====================
         self._operation_start_time: Optional[float] = None
-        self._last_gemini_screenshot: Optional[Path] = None
 
         # ==================== 4. 工具/管理器 ====================
         self.download_manager = DownloadManager(download_dir=self.downloads_dir)
 
         # ==================== 5. MCP Server ====================
-        # Playwright MCP - 在所有图片生成完成后自动截屏（类似 C++ 析构函数）
-        # 注：每张图片的验证截屏由 @GeminiConfigValidator 装饰器处理
-        self.mcp_server = AutoScreenshotMCPServer(
+        # Playwright MCP - 控制浏览器生成图片
+        # 注：验证截屏由 @GeminiConfigValidator 装饰器处理
+        self.mcp_server = MCPServerStdio(
             command='npx',
             args=['-y', '@playwright/mcp', '--output-dir', str(self.downloads_dir)],
             env={
@@ -57,9 +56,7 @@ class ImageAgent:
             tool_prefix='playwright',
             cache_tools=True,
             max_retries=RetryConfig.MCP_RETRIES,
-            screenshot_dir=self.downloads_dir,
-            screenshot_callback=self._on_auto_screenshot,
-            auto_screenshot=ImageConfig.AUTO_SCREENSHOT_ENABLED,
+            timeout=TimeoutConfig.MCP_INIT_TIMEOUT,  # 初始化超时（npx + Playwright 启动）
         )
 
         # ==================== 6. Agents ====================
@@ -183,7 +180,6 @@ class ImageAgent:
 
         # 使用 MCP Server 上下文保持浏览器会话
         # 浏览器在所有图片生成完成后才关闭
-        # AutoScreenshotMCPServer 会在退出时自动截屏
         async with self.mcp_server:
             for image_type_info in image_types:
                 image_type = image_type_info["type"]
@@ -221,7 +217,7 @@ class ImageAgent:
             total_count=len(generated_images),
             generated_at=datetime.now().isoformat()
         )
-        # <-- MCP Server 在这里退出，触发自动截屏并关闭浏览器
+        # <-- MCP Server 在这里退出，关闭浏览器
 
     async def _generate_prompt(
         self,
@@ -351,18 +347,3 @@ class ImageAgent:
                     print(f"      ✅ {tool_name}")
         except Exception as e:
             print(f"   ⚠️ 无法列出工具: {e}")
-
-    async def _on_auto_screenshot(self, screenshot_path: Path) -> None:
-        """
-        最终截屏完成后的回调
-
-        在所有图片生成完成、MCP Server 退出前触发最终截屏。
-        类似 C++ 析构函数的自动清理机制。
-
-        注：每张图片的验证截屏由 @GeminiConfigValidator 装饰器处理。
-
-        Args:
-            screenshot_path: 截屏文件路径
-        """
-        # 保存最后一次截屏路径
-        self._last_gemini_screenshot = screenshot_path

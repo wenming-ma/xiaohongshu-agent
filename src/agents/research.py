@@ -9,7 +9,7 @@ from pydantic_ai.messages import ModelRequest, UserPromptPart
 from ..models.schemas import ResearchResult, ReviewResult
 from ..utils.anthropic_provider import get_anthropic_model
 from ..utils.retry_handler import with_retry
-from ..config.settings import RetryConfig, ReviewConfig, PathConfig
+from ..config.settings import RetryConfig, ReviewConfig, PathConfig, TimeoutConfig
 from prompts import get_system_prompt, get_user_prompt
 
 
@@ -40,6 +40,7 @@ class ResearchAgent:
             tool_prefix='playwright',  # 工具名前缀，避免冲突
             cache_tools=True,  # 缓存工具列表，提高性能
             max_retries=RetryConfig.MCP_RETRIES,
+            timeout=TimeoutConfig.MCP_INIT_TIMEOUT,  # 初始化超时（npx + Playwright 启动）
         )
 
         # 生成 Agent（带 MCP 工具）

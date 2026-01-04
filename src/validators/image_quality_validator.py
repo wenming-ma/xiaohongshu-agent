@@ -18,6 +18,7 @@ from typing import Any
 from pydantic_ai import Agent, BinaryContent
 from .base import BaseValidator
 from ..models.schemas import ImageQualityReview
+from ..utils.image_compression import compress_image_for_review
 from prompts import get_system_prompt, get_user_prompt
 
 
@@ -43,10 +44,12 @@ class ImageQualityValidator(BaseValidator):
         """延迟初始化 Agent（首次使用时创建）"""
         if self._agent is None:
             from ..utils.anthropic_provider import get_anthropic_model
+            from ..config.settings import RetryConfig
             self._agent = Agent(
                 model=get_anthropic_model(),
                 output_type=ImageQualityReview,
                 instrument=True,
+                retries=RetryConfig.AGENT_RETRIES,  # Agent 内部重试
                 system_prompt=(get_system_prompt("image_quality_review"),),
             )
         return self._agent
@@ -100,8 +103,8 @@ class ImageQualityValidator(BaseValidator):
                 summary="无法验证：图片文件不存在"
             )
 
-        # 读取图片文件
-        image_data = image_path.read_bytes()
+        # 压缩图片文件（Claude API 限制 5MB）
+        image_data = await compress_image_for_review(image_path, max_size_mb=5.0)
 
         # 从上下文获取 topic（用于风格验证）
         topic = context.get("topic", "")
@@ -109,11 +112,11 @@ class ImageQualityValidator(BaseValidator):
         # 获取用户提示词
         user_prompt = get_user_prompt("image_quality_review", topic=topic)
 
-        # 使用 Agent 分析图片
+        # 使用 Agent 分析图片（使用压缩后的 JPEG）
         result = await self.agent.run(
             [
                 user_prompt,
-                BinaryContent(data=image_data, media_type='image/png')
+                BinaryContent(data=image_data, media_type='image/jpeg')
             ]
         )
 

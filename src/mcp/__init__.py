@@ -1,7 +1,6 @@
 """
 MCP Server 扩展模块
-提供自动截屏等增强功能
 """
-from .auto_screenshot import AutoScreenshotMCPServer
+# 目前为空，保留模块结构以备将来扩展
+__all__ = []
 
-__all__ = ["AutoScreenshotMCPServer"]

@@ -17,6 +17,7 @@ from typing import Any
 from pydantic_ai import Agent, BinaryContent
 from .base import BaseValidator
 from ..models.schemas import GeminiConfigReview
+from ..utils.image_compression import compress_image_for_review
 from prompts import get_system_prompt, get_user_prompt
 
 
@@ -40,10 +41,12 @@ class GeminiConfigValidator(BaseValidator):
         """延迟初始化 Agent（首次使用时创建）"""
         if self._agent is None:
             from ..utils.anthropic_provider import get_anthropic_model
+            from ..config.settings import RetryConfig
             self._agent = Agent(
                 model=get_anthropic_model(),
                 output_type=GeminiConfigReview,
                 instrument=True,
+                retries=RetryConfig.AGENT_RETRIES,  # Agent 内部重试
                 system_prompt=(get_system_prompt("gemini_config_review"),),
             )
         return self._agent
@@ -76,6 +79,9 @@ class GeminiConfigValidator(BaseValidator):
 
         screenshot_path = agent_instance.downloads_dir / filename
         print(f"         📸 [{self.validator_name}] 截屏: {screenshot_path.name}")
+
+        # 保存截屏路径，验证通过后删除
+        self._temp_screenshot = screenshot_path
         return screenshot_path
 
     async def validate(self, screenshot_path: Path, context: dict) -> GeminiConfigReview:
@@ -103,17 +109,17 @@ class GeminiConfigValidator(BaseValidator):
                 summary="无法验证：截屏文件不存在"
             )
 
-        # 读取截屏文件
-        image_data = screenshot_path.read_bytes()
+        # 压缩截屏文件（Claude API 限制 5MB）
+        image_data = await compress_image_for_review(screenshot_path, max_size_mb=5.0)
 
         # 获取用户提示词
         user_prompt = get_user_prompt("gemini_config_review")
 
-        # 使用 Agent 分析截屏
+        # 使用 Agent 分析截屏（使用压缩后的 JPEG）
         result = await self.agent.run(
             [
                 user_prompt,
-                BinaryContent(data=image_data, media_type='image/png')
+                BinaryContent(data=image_data, media_type='image/jpeg')
             ]
         )
 

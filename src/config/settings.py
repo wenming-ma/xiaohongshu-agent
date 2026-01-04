@@ -55,9 +55,6 @@ class ImageConfig:
     COMPRESS_QUALITY_MIN = 20      # 压缩最低质量
     COMPRESS_QUALITY_STEP = 5      # 质量递减步长
 
-    # 自动截屏配置（类似 C++ 析构函数，在 Agent 退出时自动截屏）
-    AUTO_SCREENSHOT_ENABLED = True  # 是否启用自动截屏
-
 
 # ==================== 超时配置 ====================
 class TimeoutConfig:
@@ -66,6 +63,7 @@ class TimeoutConfig:
     DOWNLOAD_TIMEOUT = 60      # 下载超时（秒）
     POLL_INTERVAL = 2          # 轮询间隔（秒）
     GEMINI_WAIT = 60           # Gemini 生成等待（秒）
+    MCP_INIT_TIMEOUT = 30      # MCP Server 初始化超时（秒）
 
 
 # ==================== 路径配置 ====================

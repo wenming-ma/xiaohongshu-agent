@@ -47,6 +47,7 @@ class BaseValidator(ABC):
         self.max_retries = max_retries
         self.initial_delay = initial_delay
         self._agent = None  # 延迟初始化
+        self._temp_screenshot = None  # 临时截屏路径（验证通过后删除）
 
     @property
     @abstractmethod
@@ -105,15 +106,21 @@ class BaseValidator(ABC):
                     result = await func(agent_instance, *args, **kwargs)
 
                     # 2. 获取验证目标
+                    print(f"         🔍 [{self.validator_name}] 准备验证...")
                     target = await self.get_validation_target(
                         agent_instance, result, kwargs
                     )
 
                     # 3. 执行验证
+                    print(f"         🔍 [{self.validator_name}] 开始分析...")
                     review = await self.validate(target, kwargs)
 
                     if review.passed:
                         self._log_success(review)
+                        # 验证通过，删除临时截屏（如果存在）
+                        if self._temp_screenshot and self._temp_screenshot.exists():
+                            self._temp_screenshot.unlink()
+                            print(f"         🗑️  [{self.validator_name}] 已删除临时截屏")
                         return result
 
                     # 4. 验证失败
@@ -126,8 +133,12 @@ class BaseValidator(ABC):
                         raise last_error
 
                 except ValidationError:
+                    # ValidationError 已经在上面处理过了，直接抛出
                     raise
-                except Exception:
+                except Exception as e:
+                    # 记录其他异常（如网络错误、Agent 调用失败等）
+                    print(f"         ❌ [{self.validator_name}] 验证异常: {type(e).__name__}")
+                    print(f"            {str(e)[:200]}")
                     raise
 
             raise last_error
