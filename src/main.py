@@ -68,7 +68,7 @@ async def run_workflow(topic: str, audience: str, generate_image: bool = True) -
         save_json(project_dir / "research.json", research.model_dump())
 
         print(f"\n✅ 研究完成:")
-        print(f"   - 实体: {len(research.entities)} 个")
+        print(f"   - 关键信息: {len(research.key_infos)} 个")
         print(f"   - 案例: {len(research.cases)} 个")
         print(f"   - 关键词: {len(research.keywords)} 个")
         print(f"   - 可信度: {research.credibility}")

@@ -71,8 +71,26 @@ class PublisherAgent:
         print(f"   - 图片数量: {len(images)} 张")
 
         try:
-            # 构建用户提示词
-            image_paths_str = "\n".join([f"   {i+1}. {str(img)}" for i, img in enumerate(images)])
+            # 验证图片顺序（第一张必须是 cover）
+            if images:
+                first_image_name = images[0].stem  # 获取文件名（不含扩展名）
+                if not first_image_name.startswith('cover'):
+                    print(f"   ⚠️  警告：第一张图片不是封面图！")
+                    print(f"      当前第一张：{first_image_name}")
+                    print(f"      预期第一张：cover")
+                    # 注：不自动修正，让用户知道问题
+
+            # 打印图片上传顺序（供确认）
+            print(f"\n   📋 图片上传顺序：")
+            for i, img in enumerate(images):
+                image_type = img.stem  # cover, detail_1, detail_2...
+                print(f"      {i+1}. {image_type} → {img.name}")
+
+            # 构建用户提示词（带类型标注）
+            image_paths_str = "\n".join([
+                f"   {i+1}. {str(img)} [{img.stem}]"
+                for i, img in enumerate(images)
+            ])
             hashtags_str = ", ".join(content.hashtags)
 
             user_prompt = get_user_prompt(

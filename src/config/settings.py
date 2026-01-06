@@ -107,3 +107,20 @@ class PublishConfig:
 
     # 小红书发布页面
     XHS_PUBLISH_URL = "https://creator.xiaohongshu.com/publish/publish"
+
+
+# ==================== 研究配置 ====================
+class ResearchConfig:
+    """研究相关配置"""
+
+    # 帖子数量要求
+    MIN_POSTS_RESEARCHED = 50      # 最少研究帖子数
+
+    # 数据质量要求
+    MIN_KEY_INFOS = 15            # 最少关键信息数量
+    MIN_CASES = 10                 # 最少案例数量
+    MIN_COMMENT_DATA_RATIO = 0.3  # 评论区数据最低占比（30%）
+
+    # 验证配置
+    VALIDATION_MAX_RETRIES = 5    # 验证失败最大重试次数
+    VALIDATION_PASS_SCORE = 70    # 验证通过分数阈值

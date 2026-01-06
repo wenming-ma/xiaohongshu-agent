@@ -15,13 +15,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 from pydantic_ai import Agent, BinaryContent
-from .base import BaseValidator
+from .external_base import ExternalValidator
 from ..models.schemas import GeminiConfigReview
 from ..utils.image_compression import compress_image_for_review
 from prompts import get_system_prompt, get_user_prompt
 
 
-class GeminiConfigValidator(BaseValidator):
+class GeminiConfigValidator(ExternalValidator):
     """
     Gemini 配置验证器 - 可直接作为装饰器使用
 

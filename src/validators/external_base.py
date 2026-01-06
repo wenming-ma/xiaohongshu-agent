@@ -1,6 +1,6 @@
 """
-验证器基类
-提供通用的重试逻辑和装饰器接口
+外部验证器基类（装饰器模式）
+验证失败时重试整个函数
 
 子类只需实现：
 - validator_name: 验证器名称（用于日志）
@@ -23,11 +23,14 @@ class ValidationError(Exception):
         super().__init__(f"验证失败: {', '.join(issues)}")
 
 
-class BaseValidator(ABC):
+class ExternalValidator(ABC):
     """
-    验证器基类 - 同时作为装饰器使用
+    外部验证器基类 - 作为装饰器使用
 
-    通过 __call__ 方法使类实例可直接作为装饰器：
+    特点：
+    - 装饰器模式，在函数外部执行验证
+    - 验证失败时重试整个函数
+    - 适用于图片生成等可重试的场景
 
     Usage:
         @GeminiConfigValidator(max_retries=3)

@@ -104,7 +104,7 @@ class ContentAgent:
 
                 feedback_message += (
                     f"\n**研究数据参考**：\n"
-                    f"- 可用实体: {len(research.entities)} 个\n"
+                    f"- 可用关键信息: {len(research.key_infos)} 个\n"
                     f"- 可用案例: {len(research.cases)} 个\n"
                 )
 

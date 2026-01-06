@@ -10,9 +10,9 @@ class ResearchResult(BaseModel):
     """小红书研究结果"""
 
     summary: str = Field(description="研究总结")
-    entities: List[Dict[str, Any]] = Field(
+    key_infos: List[Dict[str, Any]] = Field(
         default_factory=list,
-        description="提取的实体（公司、价格等）"
+        description="提取的关键信息（名称、品牌、地点、数字等具体信息）"
     )
     cases: List[Dict[str, Any]] = Field(
         default_factory=list,
@@ -31,19 +31,40 @@ class ResearchResult(BaseModel):
         description="收集的数据点数量"
     )
 
+    # 帖子追踪（用于验证研究深度）
+    posts_researched: int = Field(
+        default=0,
+        description="研究的帖子数量（进入详情页才算）"
+    )
+    post_sources: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="研究的帖子来源列表（URL、标题、点赞数等）"
+    )
+    comment_data_ratio: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="评论区数据占比（0-1）"
+    )
+
     class Config:
         json_schema_extra = {
             "example": {
-                "summary": "关于西安公司避坑的研究，收集了10家公司的真实案例",
-                "entities": [
-                    {"type": "company", "name": "某科技公司", "issue": "加班严重"}
+                "summary": "关于某主题的研究，收集了多个关键信息和真实案例",
+                "key_infos": [
+                    {"type": "brand", "name": "具体品牌名", "detail": "相关描述", "source": "post_1"}
                 ],
                 "cases": [
-                    {"company": "某科技", "experience": "试用期不交社保"}
+                    {"title": "用户真实经历", "description": "具体问题描述", "source": "comment_1"}
                 ],
-                "keywords": ["避坑", "西安", "公司"],
+                "keywords": ["关键词1", "关键词2", "关键词3"],
                 "credibility": "high",
-                "data_points": 15
+                "data_points": 15,
+                "posts_researched": 5,
+                "post_sources": [
+                    {"url": "https://...", "title": "帖子标题", "likes": 1200, "comments": 300}
+                ],
+                "comment_data_ratio": 0.45
             }
         }
 

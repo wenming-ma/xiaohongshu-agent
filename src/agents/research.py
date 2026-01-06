@@ -1,34 +1,43 @@
 """
 研究 Agent
 使用 Playwright MCP Server 搜索和分析小红书内容
-内置 Reflexion 循环：生成 → 审核 → 修订 → 循环直到通过
+
+验证流程：
+1. generator.run() 执行研究
+2. ResearchDepthValidator 验证帖子数量
+3. ResearchReviewValidator 验证数据质量
+4. 两个都通过 → 返回结果
+5. 任一失败 → 注入反馈，继续循环（保持消息历史）
 """
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.messages import ModelRequest, UserPromptPart
-from ..models.schemas import ResearchResult, ReviewResult
+from ..models.schemas import ResearchResult
 from ..utils.anthropic_provider import get_anthropic_model
 from ..utils.retry_handler import with_retry
-from ..config.settings import RetryConfig, ReviewConfig, PathConfig, TimeoutConfig
+from ..validators import ResearchDepthValidator, ResearchReviewValidator
+from ..config.settings import RetryConfig, ResearchConfig, PathConfig, TimeoutConfig
 from prompts import get_system_prompt, get_user_prompt
 
 
 class ResearchAgent:
-    """小红书研究 Agent（带 Reflexion 循环）"""
+    """
+    小红书研究 Agent
 
-    def __init__(self, max_iterations: int = None):
-        """
-        初始化研究 Agent
+    研究流程：
+    1. 使用 Playwright MCP 工具在小红书搜索和浏览
+    2. 进入高热帖子详情页，阅读内容和评论区
+    3. 提取实体、案例等数据
+    4. 验证帖子数量和数据质量
+    5. 未通过则继续探索，直到满足要求
+    """
 
-        Args:
-            max_iterations: 最大审核迭代次数，默认使用配置
-        """
-        self.max_iterations = max_iterations or ReviewConfig.MAX_ITERATIONS
-
-        # 获取带 HTTP 重试的 Model（max_retries=5）
+    def __init__(self):
+        """初始化研究 Agent"""
+        # 获取带 HTTP 重试的 Model
         model = get_anthropic_model()
 
-        # 🔑 创建 Playwright MCP Server 实例
+        # Playwright MCP Server 实例
         self.mcp_server = MCPServerStdio(
             command='npx',
             args=['-y', '@playwright/mcp'],
@@ -37,13 +46,13 @@ class ResearchAgent:
                 'BROWSER_TYPE': 'chromium',
                 'USER_DATA_DIR': PathConfig.BROWSER_SESSION_XHS
             },
-            tool_prefix='playwright',  # 工具名前缀，避免冲突
-            cache_tools=True,  # 缓存工具列表，提高性能
+            tool_prefix='playwright',
+            cache_tools=True,
             max_retries=RetryConfig.MCP_RETRIES,
-            timeout=TimeoutConfig.MCP_INIT_TIMEOUT,  # 初始化超时（npx + Playwright 启动）
+            timeout=TimeoutConfig.MCP_INIT_TIMEOUT,
         )
 
-        # 生成 Agent（带 MCP 工具）
+        # 研究生成 Agent（带 MCP 工具）
         self.generator = Agent(
             model=model,
             output_type=ResearchResult,
@@ -53,14 +62,16 @@ class ResearchAgent:
             system_prompt=(get_system_prompt("research"),),
         )
 
-        # 审核 Agent（纯推理，独立视角）
-        self.reviewer = Agent(
-            model=model,
-            output_type=ReviewResult,
-            instrument=True,
-            retries=RetryConfig.AGENT_RETRIES,
-            system_prompt=(get_system_prompt("research_review"),),
+        # 初始化验证器
+        self.depth_validator = ResearchDepthValidator(
+            min_posts=ResearchConfig.MIN_POSTS_RESEARCHED
         )
+        self.review_validator = ResearchReviewValidator(
+            min_posts=ResearchConfig.MIN_POSTS_RESEARCHED
+        )
+
+        # 验证配置
+        self.max_iterations = ResearchConfig.VALIDATION_MAX_RETRIES
 
     async def list_tools(self) -> None:
         """列出所有可用的 MCP 工具（用于验证）"""
@@ -79,94 +90,125 @@ class ResearchAgent:
             print(f"   ⚠️  无法列出工具: {e}")
             print(f"   提示: 工具将在首次 Agent 调用时自动发现")
 
-    async def _review(self, result: ResearchResult, topic: str, target_audience: str) -> ReviewResult:
-        """
-        审核研究结果
-
-        Args:
-            result: 研究结果
-            topic: 研究主题
-            target_audience: 目标受众
-
-        Returns:
-            ReviewResult: 审核结果
-        """
-        review_prompt = get_user_prompt(
-            "research_review",
-            topic=topic,
-            target_audience=target_audience,
-            research=result.model_dump_json(indent=2)
-        )
-        review_result = await self.reviewer.run(review_prompt)
-        return review_result.output
-
     @with_retry(max_retries=RetryConfig.MAX_RETRIES, initial_delay=RetryConfig.INITIAL_DELAY)
     async def research(self, topic: str, target_audience: str) -> ResearchResult:
         """
-        执行研究任务（带 Reflexion 循环 + 外层重试）
+        执行研究任务
+
+        验证流程（内部循环）：
+        1. generator.run() 执行研究
+        2. ResearchDepthValidator 验证帖子数量
+        3. ResearchReviewValidator 验证数据质量
+        4. 两个都通过 → 返回结果
+        5. 任一失败 → 注入反馈，继续循环
+
+        @with_retry 处理网络/API 错误（重试整个研究）
+        浏览器在验证通过后才关闭。
 
         Args:
             topic: 研究主题
             target_audience: 目标受众
 
         Returns:
-            ResearchResult: 研究结果（已通过审核或达到最大迭代次数）
+            ResearchResult: 研究结果（已通过验证）
         """
-        messages = []  # 消息历史
+        # 准备初始提示词
+        initial_prompt = get_user_prompt(
+            "research",
+            topic=topic,
+            target_audience=target_audience,
+            min_posts=ResearchConfig.MIN_POSTS_RESEARCHED
+        )
+
+        # 保持消息历史
+        message_history = []
         result = None
-        review = None
+        validation_context = {
+            "topic": topic,
+            "target_audience": target_audience
+        }
 
-        for i in range(self.max_iterations):
-            # 1. 生成或继续修订
-            if i == 0:
-                prompt = get_user_prompt(
-                    "research",
-                    topic=topic,
-                    target_audience=target_audience
+        print(f"\n📚 开始研究：{topic}")
+        print(f"   目标受众：{target_audience}")
+        print(f"   最大迭代次数：{self.max_iterations}")
+
+        async with self.mcp_server:  # 浏览器保持打开
+            for iteration in range(self.max_iterations):
+                print(f"\n{'='*50}")
+                print(f"🔄 第 {iteration + 1}/{self.max_iterations} 轮研究")
+                print(f"{'='*50}")
+
+                # 1. 执行研究
+                if iteration == 0:
+                    # 首轮：使用初始提示词
+                    agent_result = await self.generator.run(
+                        initial_prompt,
+                        message_history=message_history
+                    )
+                else:
+                    # 后续轮：消息历史已包含反馈
+                    agent_result = await self.generator.run(
+                        message_history=message_history
+                    )
+
+                result = agent_result.output
+
+                # 更新消息历史
+                message_history = list(agent_result.all_messages())
+
+                print(f"\n📊 本轮研究结果：")
+                print(f"   - 帖子数量: {result.posts_researched}")
+                print(f"   - 关键信息数量: {len(result.key_infos)}")
+                print(f"   - 案例数量: {len(result.cases)}")
+                print(f"   - 评论区数据占比: {result.comment_data_ratio:.0%}")
+
+                # 2. 验证帖子数量
+                print(f"\n🔍 验证研究深度...")
+                depth_result = await self.depth_validator.validate(
+                    result, validation_context
                 )
-                print("   🔍 开始搜索和分析...")
-            else:
-                # 将审核反馈注入消息历史
-                feedback_message = (
-                    f"审核未通过，请继续搜索补充数据。\n\n"
-                    f"**审核反馈**：{review.summary}\n\n"
-                    f"**具体问题**：\n"
+
+                # 3. 验证数据质量
+                print(f"🔍 验证数据质量...")
+                review_result = await self.review_validator.validate(
+                    result, validation_context
                 )
-                for issue in review.issues:
-                    feedback_message += f"- [{issue.severity}] {issue.description}: {issue.suggestion}\n"
 
-                messages.append(ModelRequest(parts=[
-                    UserPromptPart(feedback_message)
-                ]))
-                prompt = "请根据反馈继续搜索，补充不足的数据。注意保留已有的有效数据。"
-                print(f"   🔄 根据反馈继续搜索 (第{i+1}轮)...")
+                # 4. 两个都通过？
+                if depth_result.passed and review_result.passed:
+                    print(f"\n✅ 研究验证全部通过！")
+                    print(f"   - 深度验证评分: {depth_result.score:.1f}/100")
+                    print(f"   - 质量验证评分: {review_result.score:.1f}/100")
+                    return result
 
-            # 执行生成
-            run_result = await self.generator.run(prompt, message_history=messages)
-            result = run_result.output
-            messages.extend(run_result.new_messages())  # 保留历史
+                # 5. 构建反馈，继续循环
+                feedback = self._combine_feedback(depth_result, review_result)
+                print(f"\n⚠️  验证未通过，注入反馈继续探索...")
 
-            # 2. 审核
-            print(f"   🔍 审核研究结果 (第{i+1}轮)...")
-            review = await self._review(result, topic, target_audience)
+                # 注入反馈到消息历史
+                feedback_message = ModelRequest(
+                    parts=[UserPromptPart(content=feedback)]
+                )
+                message_history.append(feedback_message)
 
-            # 3. 通过则返回
-            if review.passed:
-                print(f"   ✅ 研究审核通过 (第{i+1}轮)")
-                print(f"      - 实体: {len(result.entities)} 个")
-                print(f"      - 案例: {len(result.cases)} 个")
-                print(f"      - 评分: {review.score:.1f}/100")
-                return result
+            # 达到最大迭代次数
+            print(f"\n⚠️  达到最大迭代次数 ({self.max_iterations})，返回当前结果")
+            return result
 
-            # 未通过，打印反馈
-            print(f"   ⚠️  研究审核未通过 (第{i+1}轮): {review.summary}")
-            for issue in review.issues:
-                print(f"      - [{issue.severity}] {issue.description}")
+    def _combine_feedback(self, depth_result, review_result) -> str:
+        """合并两个验证器的反馈"""
+        feedbacks = []
 
-        # 达到最大迭代次数
-        print(f"   ⚠️  达到最大迭代次数 ({self.max_iterations})，返回当前结果")
-        return result
+        if not depth_result.passed and depth_result.feedback:
+            feedbacks.append(depth_result.feedback)
 
-    async def close(self):
-        """关闭 MCP Server 连接"""
-        pass
+        if not review_result.passed and review_result.feedback:
+            feedbacks.append(review_result.feedback)
+
+        combined = "\n\n---\n\n".join(feedbacks)
+
+        return (
+            f"**验证未通过，请继续探索**\n\n"
+            f"{combined}\n\n"
+            f"**请根据上述反馈继续研究，进入更多帖子并收集更多数据。**"
+        )

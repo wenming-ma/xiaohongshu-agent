@@ -107,7 +107,7 @@ class ImageAgent:
         根据研究数据动态计算需要的图片类型
 
         Args:
-            research: 研究结果（包含 entities 列表）
+            research: 研究结果（包含 key_infos 列表）
 
         Returns:
             图片类型列表，如 [cover, detail_1, detail_2, detail_3, ...]
@@ -116,29 +116,29 @@ class ImageAgent:
         types = [{"type": "cover", "desc": "封面图 - 大标题风格，突出主题"}]
 
         # 2. 计算详情图数量
-        entity_count = len(research.entities)
-        if entity_count == 0:
-            # 没有实体时至少生成 1 张详情图
+        key_info_count = len(research.key_infos)
+        if key_info_count == 0:
+            # 没有关键信息时至少生成 1 张详情图
             detail_count = ImageConfig.MIN_DETAIL_IMAGES
         else:
-            # 向上取整：(entity_count + per - 1) // per
+            # 向上取整：(count + per - 1) // per
             detail_count = max(
                 ImageConfig.MIN_DETAIL_IMAGES,
                 min(
                     ImageConfig.MAX_DETAIL_IMAGES,
-                    (entity_count + ImageConfig.ENTITIES_PER_DETAIL - 1) // ImageConfig.ENTITIES_PER_DETAIL
+                    (key_info_count + ImageConfig.ENTITIES_PER_DETAIL - 1) // ImageConfig.ENTITIES_PER_DETAIL
                 )
             )
 
         # 3. 生成详情图类型
         for i in range(1, detail_count + 1):
             start = (i - 1) * ImageConfig.ENTITIES_PER_DETAIL
-            end = min(i * ImageConfig.ENTITIES_PER_DETAIL, entity_count)
+            end = min(i * ImageConfig.ENTITIES_PER_DETAIL, key_info_count)
             types.append({
                 "type": f"detail_{i}",
-                "desc": f"详情图{i} - 清单式，显示第 {start + 1}-{end} 个实体",
-                "entity_start": start,  # 0-based index
-                "entity_end": end
+                "desc": f"详情图{i} - 清单式，显示第 {start + 1}-{end} 个关键信息",
+                "info_start": start,  # 0-based index
+                "info_end": end
             })
 
         return types
@@ -171,9 +171,9 @@ class ImageAgent:
         """
         # 动态计算图片类型
         image_types = self._get_image_types(research)
-        entity_count = len(research.entities)
+        key_info_count = len(research.key_infos)
 
-        print(f"   🎨 开始生成 {len(image_types)} 张配图（{entity_count} 个实体）...")
+        print(f"   🎨 开始生成 {len(image_types)} 张配图（{key_info_count} 个关键信息）...")
 
         # 存储已生成的图片
         generated_images: List[GeneratedImage] = []
@@ -227,13 +227,13 @@ class ImageAgent:
         image_type_info: Dict
     ) -> str:
         """
-        生成 Gemini 图片提示词（带实体分配信息）
+        生成 Gemini 图片提示词（带关键信息分配）
 
         Args:
             content: 内容数据
-            research: 研究数据（包含 entities 列表）
+            research: 研究数据（包含 key_infos 列表）
             topic: 主题
-            image_type_info: 图片类型信息（包含 type, desc, entity_start, entity_end）
+            image_type_info: 图片类型信息（包含 type, desc, info_start, info_end）
         """
         image_type = image_type_info["type"]
         image_desc = image_type_info["desc"]
@@ -242,20 +242,20 @@ class ImageAgent:
             # 封面图：只需标题和主题
             body_excerpt = content.body[:150]
         else:
-            # 详情图：提取对应的实体
-            start = image_type_info.get("entity_start", 0)
-            end = image_type_info.get("entity_end", len(research.entities))
-            entities = research.entities[start:end]
+            # 详情图：提取对应的关键信息
+            start = image_type_info.get("info_start", 0)
+            end = image_type_info.get("info_end", len(research.key_infos))
+            key_infos = research.key_infos[start:end]
 
-            if entities:
-                # 构建实体信息列表
-                entities_info = "\n".join([
-                    f"{i+1}. {e.get('name', '未知')}: {e.get('description', e.get('issue', ''))}"
-                    for i, e in enumerate(entities)
+            if key_infos:
+                # 构建关键信息列表
+                infos_text = "\n".join([
+                    f"{i+1}. {info.get('name', '未知')}: {info.get('description', info.get('detail', ''))}"
+                    for i, info in enumerate(key_infos)
                 ])
-                body_excerpt = f"本图需要展示以下 {len(entities)} 个实体：\n{entities_info}"
+                body_excerpt = f"本图需要展示以下 {len(key_infos)} 个关键信息：\n{infos_text}"
             else:
-                # 无实体时使用正文
+                # 无关键信息时使用正文
                 body_excerpt = content.body[:300]
 
         # 从 YAML 读取用户提示词模板并填充变量
