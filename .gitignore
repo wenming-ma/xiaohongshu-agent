@@ -13,3 +13,4 @@ wheels/
 browser-sessions/
 posts/
 nul
+.env
