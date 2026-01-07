@@ -201,14 +201,14 @@ class ReviewResult(BaseModel):
                     {
                         "type": "count_mismatch",
                         "severity": "critical",
-                        "description": "声称'10家公司'，实际只列出5家",
-                        "suggestion": "修改为'5家公司'或补充更多"
+                        "description": "声称'10个要点'，实际只列出5个",
+                        "suggestion": "修改为'5个要点'或补充更多"
                     }
                 ],
                 "summary": "内容存在数量不一致问题，需要修改",
                 "entity_usage": {
-                    "research_entities": 11,
-                    "used_entities": 5,
+                    "research_key_infos": 11,
+                    "used_key_infos": 5,
                     "usage_rate": 0.45
                 }
             }

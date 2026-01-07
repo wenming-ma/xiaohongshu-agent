@@ -4,7 +4,7 @@
 
 验证流程：
 1. generator.run() 执行研究
-2. ResearchDepthValidator 验证帖子数量
+2. ResearchDepthValidator 验证帖子数量（基于 MCP 工具调用追踪）
 3. ResearchReviewValidator 验证数据质量
 4. 两个都通过 → 返回结果
 5. 任一失败 → 注入反馈，继续循环（保持消息历史）
@@ -15,6 +15,7 @@ from pydantic_ai.messages import ModelRequest, UserPromptPart
 from ..models.schemas import ResearchResult
 from ..utils.anthropic_provider import get_anthropic_model
 from ..utils.retry_handler import with_retry
+from ..utils.navigate_tracker import NavigateTracker
 from ..validators import ResearchDepthValidator, ResearchReviewValidator
 from ..config.settings import RetryConfig, ResearchConfig, PathConfig, TimeoutConfig
 from prompts import get_system_prompt, get_user_prompt
@@ -52,11 +53,14 @@ class ResearchAgent:
             timeout=TimeoutConfig.MCP_INIT_TIMEOUT,
         )
 
-        # 研究生成 Agent（带 MCP 工具）
+        # 导航追踪器 - 包装 MCP Server 以追踪帖子详情页访问
+        self.navigate_tracker = NavigateTracker(self.mcp_server)
+
+        # 研究生成 Agent（使用追踪器包装的工具集）
         self.generator = Agent(
             model=model,
             output_type=ResearchResult,
-            toolsets=[self.mcp_server],
+            toolsets=[self.navigate_tracker],
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(get_system_prompt("research"),),
@@ -123,10 +127,9 @@ class ResearchAgent:
         # 保持消息历史
         message_history = []
         result = None
-        validation_context = {
-            "topic": topic,
-            "target_audience": target_audience
-        }
+
+        # 重置导航追踪器
+        self.navigate_tracker.reset()
 
         print(f"\n📚 开始研究：{topic}")
         print(f"   目标受众：{target_audience}")
@@ -156,13 +159,26 @@ class ResearchAgent:
                 # 更新消息历史
                 message_history = list(agent_result.all_messages())
 
+                # 获取追踪的帖子数量（真实数据）
+                tracked_stats = self.navigate_tracker.get_stats()
+                tracked_post_count = tracked_stats["post_detail_count"]
+
                 print(f"\n📊 本轮研究结果：")
-                print(f"   - 帖子数量: {result.posts_researched}")
+                print(f"   - 帖子数量（追踪）: {tracked_post_count}")
+                print(f"   - 帖子数量（自报）: {result.posts_researched}")
                 print(f"   - 关键信息数量: {len(result.key_infos)}")
                 print(f"   - 案例数量: {len(result.cases)}")
                 print(f"   - 评论区数据占比: {result.comment_data_ratio:.0%}")
 
-                # 2. 验证帖子数量
+                # 构建验证上下文（包含追踪数据）
+                validation_context = {
+                    "topic": topic,
+                    "target_audience": target_audience,
+                    "tracked_post_count": tracked_post_count,
+                    "tracked_urls": tracked_stats["post_detail_urls"],
+                }
+
+                # 2. 验证帖子数量（使用追踪数据）
                 print(f"\n🔍 验证研究深度...")
                 depth_result = await self.depth_validator.validate(
                     result, validation_context

@@ -63,13 +63,13 @@ user_prompt_template: |
   请按以下步骤逐项检查：
 
   ### 1. 数量一致性检查
-  - 统计内容中提到的数字（如"X家公司"、"X个案例"）
+  - 统计内容中提到的数字（如"X个要点"、"X个案例"）
   - 统计实际列出的具体项目数量
   - 比较是否匹配
   - 如不匹配，记录为 `count_mismatch` (severity: critical)
 
   ### 2. 数据利用率评估
-  - 研究数据中有多少实体（entities）？
+  - 研究数据中有多少关键信息（key_infos）？
   - 内容中使用了多少？
   - 计算利用率 = 使用数量 / 研究数量
   - 如利用率 < 50%，记录为 `data_missing` (severity: warning)
@@ -102,6 +102,6 @@ user_prompt_template: |
   - `score`: 评分（0-100）
   - `issues`: 发现的问题列表
   - `summary`: 简短的审核总结
-  - `entity_usage`: 实体使用统计
+  - `entity_usage`: 关键信息使用统计
 
   开始审核！
