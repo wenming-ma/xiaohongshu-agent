@@ -14,7 +14,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from ..models.schemas import ResearchResult
-from ..utils.anthropic_provider import get_anthropic_model
+from ..utils.model_factory import get_model
 from ..utils.retry_handler import with_retry
 from ..utils.navigate_tracker import NavigateTracker
 from ..validators import ResearchDepthValidator, ResearchReviewValidator
@@ -36,8 +36,8 @@ class ResearchAgent:
 
     def __init__(self):
         """初始化研究 Agent"""
-        # 获取带 HTTP 重试的 Model
-        model = get_anthropic_model()
+        # 获取带 HTTP 重试的 Model（根据配置选择 Anthropic 或 OpenRouter）
+        model = get_model()
 
         # Playwright MCP Server 实例
         self.mcp_server = MCPServerStdio(

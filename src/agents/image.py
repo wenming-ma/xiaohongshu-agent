@@ -16,7 +16,7 @@ from typing import List, Dict, Optional
 from pydantic_ai import Agent, Tool
 from pydantic_ai.mcp import MCPServerStdio
 from ..models.schemas import ImageResult, GeneratedImage, XHSContent, ResearchResult
-from ..utils.anthropic_provider import get_anthropic_model
+from ..utils.model_factory import get_model
 from ..utils.download_manager import DownloadManager
 from ..utils.retry_handler import with_retry
 from ..validators import GeminiConfigValidator, ImageQualityValidator
@@ -60,7 +60,8 @@ class ImageAgent:
         )
 
         # ==================== 6. Agents ====================
-        model = get_anthropic_model()
+        # 获取带 HTTP 重试的 Model（根据配置选择 Anthropic 或 OpenRouter）
+        model = get_model()
 
         # 提示词生成 Agent
         self.prompt_generator = Agent(

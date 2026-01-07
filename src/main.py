@@ -8,7 +8,10 @@ import sys
 import io
 from pathlib import Path
 from datetime import datetime
+
+# 🔑 必须在 logfire.configure() 之前加载 .env，否则 LOGFIRE_TOKEN 不会生效
 from dotenv import load_dotenv
+load_dotenv()
 
 # 修复 Windows 控制台 UTF-8 编码问题
 if sys.platform == "win32":
@@ -214,8 +217,7 @@ async def run_workflow(topic: str, audience: str, generate_image: bool = True) -
 
 def main():
     """CLI 入口"""
-    # 加载环境变量
-    load_dotenv()
+    # 注：load_dotenv() 已在模块顶部调用（Logfire 需要先加载 token）
 
     # 解析命令行参数
     parser = argparse.ArgumentParser(

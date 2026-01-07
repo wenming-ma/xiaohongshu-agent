@@ -43,10 +43,10 @@ class ImageQualityValidator(ExternalValidator):
     def agent(self) -> Agent:
         """延迟初始化 Agent（首次使用时创建）"""
         if self._agent is None:
-            from ..utils.anthropic_provider import get_anthropic_model
+            from ..utils.model_factory import get_model
             from ..config.settings import RetryConfig
             self._agent = Agent(
-                model=get_anthropic_model(),
+                model=get_model(),
                 output_type=ImageQualityReview,
                 instrument=True,
                 retries=RetryConfig.AGENT_RETRIES,  # Agent 内部重试

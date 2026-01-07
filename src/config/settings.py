@@ -91,8 +91,14 @@ class PathConfig:
 class APIConfig:
     """API 相关配置"""
 
-    # Claude 模型
+    # Claude 模型（Anthropic 直连）
     DEFAULT_MODEL = "claude-sonnet-4-20250514"
+
+    # OpenRouter 模型配置
+    OPENROUTER_MODEL = "z-ai/glm-4.7"
+
+    # 模型提供者选择："anthropic" 或 "openrouter"
+    MODEL_PROVIDER = "openrouter"
 
     # Gemini URL
     GEMINI_URL = "https://gemini.google.com/app"

@@ -55,9 +55,9 @@ class ResearchReviewValidator(InternalValidator):
     def reviewer(self) -> Agent:
         """延迟初始化 reviewer Agent"""
         if self._reviewer is None:
-            from ..utils.anthropic_provider import get_anthropic_model
+            from ..utils.model_factory import get_model
             self._reviewer = Agent(
-                model=get_anthropic_model(),
+                model=get_model(),
                 output_type=ReviewResult,
                 instrument=True,
                 retries=RetryConfig.AGENT_RETRIES,
