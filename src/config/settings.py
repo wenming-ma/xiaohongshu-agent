@@ -71,7 +71,7 @@ class TimeoutConfig:
     DOWNLOAD_TIMEOUT = 60      # 下载超时（秒）
     POLL_INTERVAL = 2          # 轮询间隔（秒）
     GEMINI_WAIT = 60           # Gemini 生成等待（秒）
-    MCP_INIT_TIMEOUT = 30      # MCP Server 初始化超时（秒）
+    MCP_INIT_TIMEOUT = 90      # MCP Server 初始化超时（秒）- Windows 上 npx 启动较慢
 
 
 # ==================== 路径配置 ====================
@@ -95,7 +95,14 @@ class APIConfig:
     DEFAULT_MODEL = "claude-sonnet-4-20250514"
 
     # OpenRouter 模型配置
-    OPENROUTER_MODEL = "z-ai/glm-4.7"
+    # 注意：研究阶段需要处理截屏，必须使用支持视觉的模型
+    # 已验证可用的模型：
+    #   - "anthropic/claude-3-haiku" （稳定，代码能力强，支持视觉）⭐推荐
+    #   - "anthropic/claude-3.5-sonnet" （更强，但更贵）
+    #   - "google/gemini-2.5-flash" （便宜，但代码生成偶有语法错误）
+    #   - "google/gemini-2.0-flash-exp:free" （免费但不稳定）
+    # 不支持视觉的模型（如 z-ai/glm-4.7）会报 404 错误
+    OPENROUTER_MODEL = "anthropic/claude-3-haiku"
 
     # 模型提供者选择："anthropic" 或 "openrouter"
     MODEL_PROVIDER = "openrouter"
