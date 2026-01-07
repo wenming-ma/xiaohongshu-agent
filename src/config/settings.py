@@ -7,20 +7,28 @@ from pathlib import Path
 
 # ==================== 重试配置 ====================
 class RetryConfig:
-    """重试相关配置"""
+    """
+    重试相关配置
+    
+    遵循 pydantic-ai 官方最佳实践：
+    - 只重试暂时性错误（Rate limits、Network timeouts、Temporary API outages）
+    - 保守的重试次数（3-5 次）
+    - 指数退避 + Retry-After header 支持
+    """
 
     # 方法层重试（@with_retry 装饰器）
-    MAX_RETRIES = 10           # 最大重试次数
-    INITIAL_DELAY = 5.0        # 初始延迟（秒）
+    MAX_RETRIES = 5            # 最大重试次数（官方建议 3-5）
+    INITIAL_DELAY = 1.0        # 初始延迟（秒），后续按 2^attempt 增长
+    MAX_TOTAL_WAIT = 300       # 总最大等待时间（秒），防止无限等待
 
     # HTTP 层重试（AsyncTenacityTransport）
-    HTTP_MAX_RETRIES = 10      # HTTP 最大重试次数
+    HTTP_MAX_RETRIES = 5       # HTTP 最大重试次数（官方建议 3-5）
     HTTP_MAX_WAIT = 60         # 单次最大等待（秒）
     HTTP_TOTAL_MAX_WAIT = 300  # 总最大等待（秒）
 
-    # Agent 内部重试
-    AGENT_RETRIES = 5          # pydantic-ai Agent 重试
-    MCP_RETRIES = 10           # MCP 工具重试
+    # Agent 内部重试（工具验证/输出验证）
+    AGENT_RETRIES = 3          # pydantic-ai Agent 重试（官方默认 1）
+    MCP_RETRIES = 5            # MCP 工具重试
 
 
 # ==================== 审核配置 ====================

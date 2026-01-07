@@ -11,6 +11,7 @@ from abc import ABC, abstractmethod
 from functools import wraps
 import asyncio
 from typing import Any, Callable, TypeVar
+import logfire
 
 T = TypeVar('T')
 
@@ -104,45 +105,76 @@ class ExternalValidator(ABC):
             last_error = None
 
             for attempt in range(self.max_retries + 1):
-                try:
-                    # 1. 执行被装饰的函数
-                    result = await func(agent_instance, *args, **kwargs)
+                # 使用 logfire span 追踪每次验证尝试
+                with logfire.span(
+                    f'validator:{self.validator_name}',
+                    attempt=attempt + 1,
+                    max_retries=self.max_retries,
+                    **{k: str(v)[:100] for k, v in kwargs.items() if isinstance(v, (str, int, float, bool))}
+                ) as span:
+                    try:
+                        # 1. 执行被装饰的函数
+                        result = await func(agent_instance, *args, **kwargs)
 
-                    # 2. 获取验证目标
-                    print(f"         🔍 [{self.validator_name}] 准备验证...")
-                    target = await self.get_validation_target(
-                        agent_instance, result, kwargs
-                    )
+                        # 2. 获取验证目标
+                        print(f"         🔍 [{self.validator_name}] 准备验证...")
+                        target = await self.get_validation_target(
+                            agent_instance, result, kwargs
+                        )
 
-                    # 3. 执行验证
-                    print(f"         🔍 [{self.validator_name}] 开始分析...")
-                    review = await self.validate(target, kwargs)
+                        # 3. 执行验证
+                        print(f"         🔍 [{self.validator_name}] 开始分析...")
+                        review = await self.validate(target, kwargs)
 
-                    if review.passed:
-                        self._log_success(review)
-                        # 验证通过，删除临时截屏（如果存在）
-                        if self._temp_screenshot and self._temp_screenshot.exists():
-                            self._temp_screenshot.unlink()
-                            print(f"         🗑️  [{self.validator_name}] 已删除临时截屏")
-                        return result
+                        # 记录验证结果到 span
+                        span.set_attribute('passed', review.passed)
+                        if hasattr(review, 'issues'):
+                            span.set_attribute('issues_count', len(review.issues))
 
-                    # 4. 验证失败
-                    last_error = ValidationError(review.issues)
-                    if attempt < self.max_retries:
-                        delay = self.initial_delay * (2 ** attempt)
-                        self._log_retry(review.summary, attempt, delay)
-                        await asyncio.sleep(delay)
-                    else:
-                        raise last_error
+                        if review.passed:
+                            self._log_success(review)
+                            logfire.info(
+                                f'{self.validator_name} passed',
+                                validator=self.validator_name,
+                                attempt=attempt + 1
+                            )
+                            # 验证通过，删除临时截屏（如果存在）
+                            if self._temp_screenshot and self._temp_screenshot.exists():
+                                self._temp_screenshot.unlink()
+                                print(f"         🗑️  [{self.validator_name}] 已删除临时截屏")
+                            return result
 
-                except ValidationError:
-                    # ValidationError 已经在上面处理过了，直接抛出
-                    raise
-                except Exception as e:
-                    # 记录其他异常（如网络错误、Agent 调用失败等）
-                    print(f"         ❌ [{self.validator_name}] 验证异常: {type(e).__name__}")
-                    print(f"            {str(e)[:200]}")
-                    raise
+                        # 4. 验证失败
+                        last_error = ValidationError(review.issues)
+                        span.set_attribute('failure_reason', review.summary if hasattr(review, 'summary') else str(review.issues))
+                        
+                        if attempt < self.max_retries:
+                            delay = self.initial_delay * (2 ** attempt)
+                            self._log_retry(review.summary, attempt, delay)
+                            logfire.warn(
+                                f'{self.validator_name} failed, retrying',
+                                validator=self.validator_name,
+                                attempt=attempt + 1,
+                                retry_delay=delay
+                            )
+                            await asyncio.sleep(delay)
+                        else:
+                            logfire.error(
+                                f'{self.validator_name} failed after all retries',
+                                validator=self.validator_name,
+                                total_attempts=attempt + 1
+                            )
+                            raise last_error
+
+                    except ValidationError:
+                        # ValidationError 已经在上面处理过了，直接抛出
+                        raise
+                    except Exception as e:
+                        # 记录其他异常（如网络错误、Agent 调用失败等）
+                        span.set_attribute('error', str(e)[:200])
+                        print(f"         ❌ [{self.validator_name}] 验证异常: {type(e).__name__}")
+                        print(f"            {str(e)[:200]}")
+                        raise
 
             raise last_error
 

@@ -18,8 +18,15 @@ if sys.platform == "win32":
 # Logfire 可观测性配置
 import logfire
 
-# 'if-token-present' 表示如果没有配置 LOGFIRE_TOKEN，则不发送数据（本地模式）
-logfire.configure(send_to_logfire='if-token-present')
+# Logfire 配置
+# - 'if-token-present' 表示如果没有配置 LOGFIRE_TOKEN，则不发送数据（本地模式）
+# - environment 区分开发/生产环境
+# - service_name 标识服务名称，便于在 Dashboard 中筛选
+logfire.configure(
+    send_to_logfire='if-token-present',
+    environment='development',
+    service_name='xiaohongshu-agent',
+)
 logfire.instrument_pydantic_ai()
 
 from .agents.research import ResearchAgent

@@ -25,16 +25,19 @@ class NavigateTracker(WrapperToolset):
         '/discovery/item/',  # 发现页帖子详情
     ]
 
-    def __init__(self, wrapped_toolset):
-        """
-        初始化追踪器
-
-        Args:
-            wrapped_toolset: 被包装的工具集（通常是 MCPServerStdio）
-        """
-        super().__init__(wrapped_toolset)
-        self._visited_urls: List[str] = []
-        self._post_detail_urls: List[str] = []
+    @property
+    def _visited_urls(self) -> List[str]:
+        """延迟初始化的访问 URL 列表"""
+        if not hasattr(self, '_visited_urls_storage'):
+            self._visited_urls_storage = []
+        return self._visited_urls_storage
+    
+    @property
+    def _post_detail_urls(self) -> List[str]:
+        """延迟初始化的帖子详情页 URL 列表"""
+        if not hasattr(self, '_post_detail_urls_storage'):
+            self._post_detail_urls_storage = []
+        return self._post_detail_urls_storage
 
     async def call_tool(
         self,
