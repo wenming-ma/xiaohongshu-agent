@@ -22,6 +22,8 @@ from ..config.settings import RetryConfig
 # ==================== 暂时性错误（可重试）====================
 # 这些错误是暂时的，重试后可能成功
 TRANSIENT_EXCEPTIONS = (
+    # 协程被上游中断/取消（常见于网络连接被重置）
+    asyncio.CancelledError,
     # pydantic-ai 错误
     ModelHTTPError,         # HTTP 层错误（如 429、5xx）
     ModelAPIError,          # API 错误（含 Connection error）

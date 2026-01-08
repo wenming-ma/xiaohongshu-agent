@@ -104,16 +104,15 @@ class APIConfig:
     # 不支持视觉的模型（如 z-ai/glm-4.7）会报 404 错误
     OPENROUTER_MODEL = "minimax/minimax-m2.1"
 
-    # MiniMax 模型配置（OpenAI 兼容格式）
+    # MiniMax 模型配置（Anthropic 兼容格式 - 官方推荐）
     # 可用模型：
-    #   - "MiniMax-M2.1" （最新旗舰模型）
+    #   - "MiniMax-M2.1" （最新旗舰模型，支持 Tool Use & Interleaved Thinking）
     #   - "MiniMax-Text-01" （支持100万token上下文）
-    #   - "abab6.5s-chat" （高性价比）
-    #   - "abab6-chat" （基础版）
     MINIMAX_MODEL = "MiniMax-M2.1"
-    MINIMAX_BASE_URL = "https://api.minimax.io/v1"
+    MINIMAX_BASE_URL = "https://api.minimax.io/anthropic"
 
     # 模型提供者选择："anthropic" 或 "openrouter" 或 "minimax"
+    # minimax 使用 Anthropic 兼容 API，支持 Tool Use
     MODEL_PROVIDER = "minimax"
 
     # Gemini URL

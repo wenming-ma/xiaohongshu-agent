@@ -61,9 +61,16 @@ class NavigateTracker(WrapperToolset):
         # 先执行工具调用
         result = await super().call_tool(name, tool_args, ctx, tool)
 
-        # 追踪 navigate 调用
-        if name == 'playwright_navigate':
-            url = tool_args.get('url', '')
+        # 追踪 navigate 调用（兼容带前缀的工具名）
+        if name == 'playwright_navigate' or name == 'playwright_browser_navigate' or (
+            name.startswith('playwright_') and 'navigate' in name
+        ):
+            url = (
+                tool_args.get('url')
+                or tool_args.get('target')
+                or tool_args.get('href')
+                or ''
+            )
             self._track_navigation(url)
 
         return result
