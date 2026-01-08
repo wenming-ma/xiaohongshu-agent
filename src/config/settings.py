@@ -17,14 +17,14 @@ class RetryConfig:
     """
 
     # 方法层重试（@with_retry 装饰器）
-    MAX_RETRIES = 5            # 最大重试次数（官方建议 3-5）
+    MAX_RETRIES = 8            # 最大重试次数（更耐心，避免中途重启）
     INITIAL_DELAY = 1.0        # 初始延迟（秒），后续按 2^attempt 增长
-    MAX_TOTAL_WAIT = 300       # 总最大等待时间（秒），防止无限等待
+    MAX_TOTAL_WAIT = 900       # 总最大等待时间（秒），防止无限等待
 
     # HTTP 层重试（AsyncTenacityTransport）
-    HTTP_MAX_RETRIES = 5       # HTTP 最大重试次数（官方建议 3-5）
-    HTTP_MAX_WAIT = 60         # 单次最大等待（秒）
-    HTTP_TOTAL_MAX_WAIT = 300  # 总最大等待（秒）
+    HTTP_MAX_RETRIES = 8       # HTTP 最大重试次数（加大容忍度）
+    HTTP_MAX_WAIT = 90         # 单次最大等待（秒）
+    HTTP_TOTAL_MAX_WAIT = 600  # 总最大等待（秒）
 
     # Agent 内部重试（工具验证/输出验证）
     AGENT_RETRIES = 3          # pydantic-ai Agent 重试（官方默认 1）

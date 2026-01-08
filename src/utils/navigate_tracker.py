@@ -73,6 +73,9 @@ class NavigateTracker(WrapperToolset):
             )
             self._track_navigation(url)
 
+        # 对于点击等导航操作，解析工具返回内容中的 Page URL
+        self._track_from_result(result)
+
         return result
 
     def _track_navigation(self, url: str) -> None:
@@ -85,12 +88,68 @@ class NavigateTracker(WrapperToolset):
         if not url:
             return
 
+        if url in self._visited_urls:
+            return
+
         self._visited_urls.append(url)
 
         # 检查是否是帖子详情页
-        if self._is_post_detail_url(url):
+        if self._is_post_detail_url(url) and url not in self._post_detail_urls:
             self._post_detail_urls.append(url)
             print(f"   [追踪] 帖子详情页: {url[:80]}...")
+
+    def _track_from_result(self, result: Any) -> None:
+        """从工具返回内容里提取 URL（用于 click/snapshot 后的页面状态）"""
+        for url in self._extract_urls(result):
+            self._track_navigation(url)
+
+    def _extract_urls(self, payload: Any) -> list[str]:
+        """递归从工具响应里提取 URL（包含 Page URL 行）"""
+        urls: list[str] = []
+        texts: list[str] = []
+
+        if payload is None:
+            return urls
+
+        if isinstance(payload, str):
+            texts.append(payload)
+        elif isinstance(payload, dict):
+            for key, value in payload.items():
+                if key in ("url", "href", "page_url") and isinstance(value, str):
+                    urls.append(value)
+                elif key == "content":
+                    urls.extend(self._extract_urls(value))
+                elif isinstance(value, str):
+                    texts.append(value)
+                else:
+                    urls.extend(self._extract_urls(value))
+        elif isinstance(payload, list):
+            for item in payload:
+                urls.extend(self._extract_urls(item))
+        elif hasattr(payload, "content"):
+            urls.extend(self._extract_urls(getattr(payload, "content")))
+        else:
+            # 尝试读取常见对象属性（TextPart 等）
+            for attr in ("text", "markdown", "url", "href", "page_url", "message"):
+                if hasattr(payload, attr):
+                    value = getattr(payload, attr)
+                    if isinstance(value, str):
+                        texts.append(value)
+                    else:
+                        urls.extend(self._extract_urls(value))
+
+        if texts:
+            text_blob = "\n".join(texts)
+            for line in text_blob.splitlines():
+                if "Page URL:" in line:
+                    candidate = line.split("Page URL:", 1)[-1].strip()
+                    urls.append(candidate)
+                else:
+                    stripped = line.strip()
+                    if stripped.startswith("http://") or stripped.startswith("https://"):
+                        urls.append(stripped.split()[0].rstrip(")>]"))
+
+        return urls
 
     def _is_post_detail_url(self, url: str) -> bool:
         """
@@ -144,7 +203,15 @@ class NavigateTracker(WrapperToolset):
             "post_detail_urls": self._post_detail_urls.copy(),
         }
 
-    def reset(self) -> None:
-        """重置追踪数据"""
+    def reset(self, force: bool = False) -> None:
+        """
+        重置追踪数据
+
+        只有 force=True 时才清空，用于防止 Agent 在每次 run 后的自动 reset
+        抹掉追踪状态。研究开始前手动调用 reset(force=True) 即可。
+        """
+        if not force:
+            return
+
         self._visited_urls.clear()
         self._post_detail_urls.clear()

@@ -96,6 +96,12 @@ class ResearchAgent:
             print(f"   提示: 工具将在首次 Agent 调用时自动发现")
 
     @with_retry(max_retries=RetryConfig.MAX_RETRIES, initial_delay=RetryConfig.INITIAL_DELAY)
+    async def _run_generator(self, prompt, message_history):
+        """对单次模型调用做重试，保持当前消息历史不丢失"""
+        if prompt is None:
+            return await self.generator.run(message_history=message_history)
+        return await self.generator.run(prompt, message_history=message_history)
+
     async def research(self, topic: str, target_audience: str) -> ResearchResult:
         """
         执行研究任务
@@ -129,8 +135,8 @@ class ResearchAgent:
         message_history = []
         result = None
 
-        # 重置导航追踪器
-        self.navigate_tracker.reset()
+        # 重置导航追踪器（强制清空，避免自动 reset 跳过）
+        self.navigate_tracker.reset(force=True)
 
         print(f"\n📚 开始研究：{topic}")
         print(f"   目标受众：{target_audience}")
@@ -157,14 +163,15 @@ class ResearchAgent:
                     ) as iteration_span:
                         # 1. 执行研究
                         if iteration == 0:
-                            # 首轮：使用初始提示词
-                            agent_result = await self.generator.run(
+                            # 首轮：使用初始提示词；失败重试仅作用于本轮调用
+                            agent_result = await self._run_generator(
                                 initial_prompt,
                                 message_history=message_history
                             )
                         else:
-                            # 后续轮：消息历史已包含反馈
-                            agent_result = await self.generator.run(
+                            # 后续轮：继续沿用消息历史；失败重试不清空历史
+                            agent_result = await self._run_generator(
+                                None,
                                 message_history=message_history
                             )
 
