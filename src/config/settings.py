@@ -102,10 +102,19 @@ class APIConfig:
     #   - "google/gemini-2.5-flash" （便宜，但代码生成偶有语法错误）
     #   - "google/gemini-2.0-flash-exp:free" （免费但不稳定）
     # 不支持视觉的模型（如 z-ai/glm-4.7）会报 404 错误
-    OPENROUTER_MODEL = "anthropic/claude-3-haiku"
+    OPENROUTER_MODEL = "minimax/minimax-m2.1"
 
-    # 模型提供者选择："anthropic" 或 "openrouter"
-    MODEL_PROVIDER = "openrouter"
+    # MiniMax 模型配置（OpenAI 兼容格式）
+    # 可用模型：
+    #   - "MiniMax-M2.1" （最新旗舰模型）
+    #   - "MiniMax-Text-01" （支持100万token上下文）
+    #   - "abab6.5s-chat" （高性价比）
+    #   - "abab6-chat" （基础版）
+    MINIMAX_MODEL = "MiniMax-M2.1"
+    MINIMAX_BASE_URL = "https://api.minimax.io/v1"
+
+    # 模型提供者选择："anthropic" 或 "openrouter" 或 "minimax"
+    MODEL_PROVIDER = "minimax"
 
     # Gemini URL
     GEMINI_URL = "https://gemini.google.com/app"
