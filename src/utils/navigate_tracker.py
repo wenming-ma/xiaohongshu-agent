@@ -2,9 +2,9 @@
 MCP 工具调用追踪器
 用于跟踪 playwright_navigate 调用，统计帖子详情页访问次数
 """
+import re
 from typing import Any, List
 from pydantic_ai import RunContext, WrapperToolset, ToolsetTool
-
 
 class NavigateTracker(WrapperToolset):
     """
@@ -25,18 +25,20 @@ class NavigateTracker(WrapperToolset):
         '/discovery/item/',  # 发现页帖子详情
     ]
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # 实例级存储，避免复杂共享/深拷贝逻辑
+        self._visited_urls_storage: List[str] = []
+        self._post_detail_urls_storage: List[str] = []
+
     @property
     def _visited_urls(self) -> List[str]:
-        """延迟初始化的访问 URL 列表"""
-        if not hasattr(self, '_visited_urls_storage'):
-            self._visited_urls_storage = []
+        """访问 URL 列表"""
         return self._visited_urls_storage
     
     @property
     def _post_detail_urls(self) -> List[str]:
-        """延迟初始化的帖子详情页 URL 列表"""
-        if not hasattr(self, '_post_detail_urls_storage'):
-            self._post_detail_urls_storage = []
+        """帖子详情页 URL 列表"""
         return self._post_detail_urls_storage
 
     async def call_tool(
@@ -145,9 +147,9 @@ class NavigateTracker(WrapperToolset):
                     candidate = line.split("Page URL:", 1)[-1].strip()
                     urls.append(candidate)
                 else:
-                    stripped = line.strip()
-                    if stripped.startswith("http://") or stripped.startswith("https://"):
-                        urls.append(stripped.split()[0].rstrip(")>]"))
+                    match = re.search(r"https?://[^\s)>\]]+", line)
+                    if match:
+                        urls.append(match.group(0))
 
         return urls
 
@@ -197,11 +199,12 @@ class NavigateTracker(WrapperToolset):
         Returns:
             统计信息字典
         """
-        return {
+        stats = {
             "total_navigations": len(self._visited_urls),
             "post_detail_count": len(self._post_detail_urls),
             "post_detail_urls": self._post_detail_urls.copy(),
         }
+        return stats
 
     def reset(self, force: bool = False) -> None:
         """
