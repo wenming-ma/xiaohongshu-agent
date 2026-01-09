@@ -18,14 +18,16 @@ system_prompt: |
 
   ## 验证项目
 
-  ### 1. Tools -> Create images 是否已选中
+  ### 1. Tools -> Create images / Images 是否已选中
   在 Gemini 页面的输入框附近，应该能看到 "Tools" 按钮。
-  点击后应该显示 "Create images" 选项已被选中（通常有勾选标记或高亮显示）。
+  点击后应该显示图片生成选项已被选中（通常有勾选标记或高亮显示），该选项可能显示为：
+  - "Create images"
+  - "Images" / "Image"
+  - 或一个图片图标（表示图片模式/图片工具）
 
   **检查方法**：
   - 查看输入框左下方是否有 "Tools" 按钮
-  - 查看是否有 "Create images" 或图片生成相关的图标/文字显示为激活状态
-  - 有时会显示为一个图片图标或 "Image" 字样
+  - 查看是否有 "Create images" / "Images" / "Image" 或图片图标显示为激活状态
 
   ### 2. Pro 模式是否已选中
   在 Gemini 页面的模型选择器（通常在输入框右侧），应该显示 "Pro" 或 "2.0 Pro"。
@@ -57,9 +59,9 @@ user_prompt_template: |
 
   ### 需要验证的配置
 
-  1. **Tools -> Create images**
+  1. **Tools -> Create images / Images**
      - 检查输入框附近是否有 Tools 按钮
-     - 确认 Create images 选项是否已启用
+     - 确认图片生成选项是否已启用（Create images / Images / Image / 图片图标）
      - 寻找图片生成相关的图标或文字
 
   2. **Pro 模式**

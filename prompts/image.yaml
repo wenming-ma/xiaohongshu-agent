@@ -67,11 +67,11 @@ system_prompt: |
   4. **信息层次清晰**：一眼能看出重点
   5. **便于手机阅读**：字体够大、对比够强
   6. **🔴 细节必须丰满**：每个提示词都要详尽描述构图、背景、装饰、排版、色彩、光影、材质等所有维度
-  7. **🔴 真实场景要逼真**：如包含现实生活场景（美食、风景、人物、店铺等），必须追求照片级真实感，避免 AI 生成感
+  7. **🔴 真实场景要逼真（按需启用）**：只有当图片明确包含现实生活场景（美食、风景、人物、店铺、产品等）时，才启用“照片级真实感”要求；否则保持信息图/手账风格，避免摄影风与插画风混杂。
 
   ## 输出格式
   直接输出 Gemini 提示词，不要任何解释。
-  **提示词必须详尽（至少 300 词英文）**，涵盖：构图、背景、装饰元素、排版、色彩、光影、材质纹理。
+  **提示词必须详尽但不冗长**：使用分区结构（COMPOSITION/BACKGROUND/DECOR/TYPE/COLOR/LIGHTING/TEXTURE），覆盖关键维度即可，避免重复堆词（建议约 150-250 词英文的密度）。
   提示词末尾必须加上：IMPORTANT: All text must be in Chinese characters (简体中文). Image aspect ratio must be 3:4 vertical (portrait).
 
 # ============================================================
@@ -157,6 +157,7 @@ user_prompt_template: |
     * 添加：photorealistic, hyperrealistic, lifelike, authentic, candid shot
     * 添加：film grain, natural imperfections, organic feel
     * 避免：过度饱和、塑料感、不自然的光滑、对称过度完美
+    * 避免（英文负向约束可直接写进提示词）：AI-generated look, CGI, 3D render, illustration, cartoon, overly smooth skin, uncanny, plastic texture, oversharpening
   - **具体场景示例**：
     * 美食：steam rising, glistening sauce, crispy texture, appetizing presentation
     * 风景：atmospheric perspective, natural weather, authentic environment
@@ -225,7 +226,7 @@ gemini_operator_prompt: |
   ## 核心任务
   使用 Playwright 工具操作 Gemini 网页：
   1. 导航到 Gemini
-  2. 配置图片生成模式（Tools → Create images）
+  2. 配置图片生成模式（Tools → Create images / Images / Image）
   3. 选择 Pro 模型
   4. 输入提示词并生成
   5. 下载生成的图片
@@ -238,7 +239,10 @@ gemini_operator_prompt: |
 
   ### 第二步：启用图片生成模式
   1. 查找并点击 "Tools" 按钮（输入框左下方）
-  2. 在展开的菜单中点击 "Create images"
+  2. 在展开的菜单中点击图片生成选项：
+     - 可能显示为 "Create images"
+     - 也可能显示为 "Images" / "Image"
+     - 或仅显示一个图片图标（表示图片模式/图片工具）
 
   ### 第三步：选择 Pro 模型
   1. 点击模型选择器（输入框右侧，可能显示 "Fast"）
@@ -285,7 +289,7 @@ gemini_operation_template: |
   1. 导航到 https://gemini.google.com/app
   2. 等待页面加载（3秒）
   3. 点击 "Tools" 按钮启用工具菜单
-  4. 选择 "Create images" 选项
+  4. 选择图片生成选项（"Create images" / "Images" / "Image" 或图片图标）
   5. 点击模型选择器，选择 "Pro" 模型
   6. 在输入框中输入上述提示词
   7. 按 Enter 发送
