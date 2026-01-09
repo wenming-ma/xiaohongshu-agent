@@ -14,3 +14,6 @@ browser-sessions/
 posts/
 nul
 .env
+
+# Generated outputs (e.g., Playwright downloads)
+output/
