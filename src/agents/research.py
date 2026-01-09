@@ -18,8 +18,9 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.messages import (
     ModelRequest, UserPromptPart, ToolReturnPart, ModelResponse,
-    TextPart, ToolCallPart
+    TextPart, ToolCallPart, ThinkingPart
 )
+from typing import Any
 from ..models.schemas import ResearchResult
 from ..utils.model_factory import get_model
 from ..utils.retry_handler import with_retry
@@ -140,6 +141,8 @@ class ResearchAgent:
         self._output_dir = output_dir
         # 历史迭代结果（用于合并）
         self._iteration_results: list[ResearchResult] = []
+        # 最近一次“进度快照”文本，避免重复注入
+        self._last_progress_snapshot: str | None = None
         
         # 准备初始提示词
         initial_prompt = get_user_prompt(
@@ -284,6 +287,18 @@ class ResearchAgent:
                             message_history, saved_file
                         )
 
+                        # 注入“截至目前累计成果”的进度快照，帮助下一轮基于已有数据继续补齐
+                        progress_snapshot = self._build_progress_snapshot(
+                            topic=topic,
+                            tracked_stats=tracked_stats,
+                            saved_file=saved_file,
+                        )
+                        if progress_snapshot and progress_snapshot != self._last_progress_snapshot:
+                            message_history.append(
+                                ModelRequest(parts=[UserPromptPart(content=progress_snapshot)])
+                            )
+                            self._last_progress_snapshot = progress_snapshot
+
                         # 注入反馈到消息历史
                         feedback_message = ModelRequest(
                             parts=[UserPromptPart(content=feedback)]
@@ -412,6 +427,79 @@ class ResearchAgent:
 
         return merged_result
 
+    def _build_progress_snapshot(
+        self,
+        *,
+        topic: str,
+        tracked_stats: dict[str, Any],
+        saved_file: str,
+        max_items: int = 8,
+    ) -> str:
+        """
+        构建“截至目前已收集内容”的短摘要，注入到下一轮对话里，避免模型重复劳动。
+
+        目标：信息密度高、长度可控（尽量 < ~2000 chars）。
+        """
+        if not self._iteration_results:
+            return ""
+
+        # 合并（去重）——尽量用轻量逻辑，避免引入额外依赖
+        seen_key_infos: set[str] = set()
+        seen_cases: set[str] = set()
+        seen_keywords: set[str] = set()
+
+        merged_key_infos: list[dict[str, Any]] = []
+        merged_cases: list[dict[str, Any]] = []
+
+        for res in self._iteration_results:
+            for info in res.key_infos:
+                key = json.dumps(info, sort_keys=True, ensure_ascii=False)
+                if key not in seen_key_infos:
+                    seen_key_infos.add(key)
+                    merged_key_infos.append(info)
+            for case in res.cases:
+                key = json.dumps(case, sort_keys=True, ensure_ascii=False)
+                if key not in seen_cases:
+                    seen_cases.add(key)
+                    merged_cases.append(case)
+            for kw in res.keywords:
+                if kw:
+                    seen_keywords.add(str(kw))
+
+        # 选取展示（控制长度）
+        def _short(obj: Any, limit: int = 120) -> str:
+            s = str(obj)
+            return s if len(s) <= limit else s[: limit - 12] + "...[truncated]"
+
+        key_infos_preview = "\n".join(
+            f"- {_short(item)}" for item in merged_key_infos[:max_items]
+        ) or "- (none)"
+        cases_preview = "\n".join(
+            f"- {_short(item)}" for item in merged_cases[:max_items]
+        ) or "- (none)"
+        keywords_preview = ", ".join(list(seen_keywords)[: max_items]) or "(none)"
+
+        tracked_urls = tracked_stats.get("post_detail_urls") or []
+        if isinstance(tracked_urls, list):
+            tracked_urls_preview = "\n".join(f"- {u}" for u in tracked_urls[-max_items:]) or "- (none)"
+        else:
+            tracked_urls_preview = f"- {_short(tracked_urls)}"
+
+        return (
+            f"【进度快照｜截至目前累计成果】\n"
+            f"- topic: {topic}\n"
+            f"- tracked_post_count: {tracked_stats.get('post_detail_count', 0)}\n"
+            f"- saved_json: {saved_file}\n\n"
+            f"已提取关键信息（示例，最多{max_items}条）：\n"
+            f"{key_infos_preview}\n\n"
+            f"已提取案例（示例，最多{max_items}条）：\n"
+            f"{cases_preview}\n\n"
+            f"已提取关键词（示例，最多{max_items}个）： {keywords_preview}\n\n"
+            f"已进入的帖子详情页（最近{max_items}个）：\n"
+            f"{tracked_urls_preview}\n\n"
+            f"请在此基础上继续探索补齐缺口，不要重复收集同类信息。"
+        )
+
     def _save_iteration_result(
         self,
         result,
@@ -469,7 +557,8 @@ class ResearchAgent:
         1. ToolReturnPart: 前3行 + [简化说明] + 后3行（最后一个保留完整）
         2. ToolCallPart: 简化大型参数（最后一个保留完整）
         3. TextPart: 截断超长内容（>500字符）
-        4. 其他（ThinkingPart 等）: 保留原样
+        4. ThinkingPart: 历史省略，仅保留最新一次
+        5. 其他: 保留原样
 
         Args:
             message_history: 原始消息历史
@@ -480,9 +569,10 @@ class ResearchAgent:
         """
         summary_text = f"[saved to {saved_file}, truncated]"
 
-        # 1. 找出最后一个 ToolReturnPart 和 ToolCallPart 的位置
+        # 1. 找出最后一个 ToolReturnPart / ToolCallPart / ThinkingPart 的位置
         last_tool_return_pos = None  # (msg_idx, part_idx)
         last_tool_call_pos = None    # (msg_idx, part_idx)
+        last_thinking_pos = None     # (msg_idx, part_idx)
 
         for msg_idx, msg in enumerate(message_history):
             if isinstance(msg, ModelRequest):
@@ -493,6 +583,8 @@ class ResearchAgent:
                 for part_idx, part in enumerate(msg.parts):
                     if isinstance(part, ToolCallPart):
                         last_tool_call_pos = (msg_idx, part_idx)
+                    elif isinstance(part, ThinkingPart):
+                        last_thinking_pos = (msg_idx, part_idx)
 
         # 2. 遍历并简化（保留最后一个工具调用/返回的完整内容）
         simplified = []
@@ -525,6 +617,12 @@ class ResearchAgent:
             elif isinstance(msg, ModelResponse):
                 new_parts = []
                 for part_idx, part in enumerate(msg.parts):
+                    if isinstance(part, ThinkingPart):
+                        # 历史思考过程省略，只保留最新一次（用于理解当前上下文）
+                        is_last = (msg_idx, part_idx) == last_thinking_pos
+                        if is_last:
+                            new_parts.append(part)
+                        continue
                     if isinstance(part, ToolCallPart):
                         # 检查是否是最后一个 ToolCallPart
                         is_last = (msg_idx, part_idx) == last_tool_call_pos
