@@ -9,10 +9,16 @@
 4. 两个都通过 → 返回结果
 5. 任一失败 → 注入反馈，继续循环（保持消息历史）
 """
+import json
 import logfire
+from datetime import datetime
+from pathlib import Path
+from dataclasses import replace
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
-from pydantic_ai.messages import ModelRequest, UserPromptPart
+from pydantic_ai.messages import (
+    ModelRequest, UserPromptPart, ToolReturnPart, ModelResponse
+)
 from ..models.schemas import ResearchResult
 from ..utils.model_factory import get_model
 from ..utils.retry_handler import with_retry
@@ -102,7 +108,12 @@ class ResearchAgent:
             return await self.generator.run(message_history=message_history)
         return await self.generator.run(prompt, message_history=message_history)
 
-    async def research(self, topic: str, target_audience: str) -> ResearchResult:
+    async def research(
+        self,
+        topic: str,
+        target_audience: str,
+        output_dir: Path | None = None
+    ) -> ResearchResult:
         """
         执行研究任务
 
@@ -119,10 +130,16 @@ class ResearchAgent:
         Args:
             topic: 研究主题
             target_audience: 目标受众
+            output_dir: 输出目录（用于保存中间结果）
 
         Returns:
             ResearchResult: 研究结果（已通过验证）
         """
+        # 设置输出目录
+        self._output_dir = output_dir
+        # 历史迭代结果（用于合并）
+        self._iteration_results: list[ResearchResult] = []
+        
         # 准备初始提示词
         initial_prompt = get_user_prompt(
             "research",
@@ -245,11 +262,26 @@ class ResearchAgent:
                                 depth_score=depth_result.score,
                                 review_score=review_result.score
                             )
-                            return result
+                            # 保存并合并所有迭代结果
+                            return self._finalize_result(
+                                result, topic, iteration + 1, tracked_stats
+                            )
 
                         # 5. 构建反馈，继续循环
                         feedback = self._combine_feedback(depth_result, review_result)
                         print(f"\n⚠️  验证未通过，注入反馈继续探索...")
+
+                        # 保存本轮研究结果到 JSON 文件，并记录到历史
+                        saved_file = self._save_iteration_result(
+                            result, topic, iteration + 1, tracked_stats
+                        )
+                        self._iteration_results.append(result)
+                        print(f"   📁 本轮数据已保存至: {saved_file}")
+
+                        # 简化消息历史（替换工具调用结果为简短说明）
+                        message_history = self._simplify_message_history(
+                            message_history, saved_file
+                        )
 
                         # 注入反馈到消息历史
                         feedback_message = ModelRequest(
@@ -270,7 +302,247 @@ class ResearchAgent:
                     topic=topic,
                     max_iterations=self.max_iterations
                 )
-                return result
+                # 保存并合并所有迭代结果
+                return self._finalize_result(
+                    result, topic, self.max_iterations, tracked_stats
+                )
+
+    def _finalize_result(
+        self,
+        current_result: ResearchResult,
+        topic: str,
+        iteration: int,
+        tracked_stats: dict
+    ) -> ResearchResult:
+        """
+        保存当前轮次结果并合并所有历史数据
+
+        Args:
+            current_result: 当前轮次的研究结果
+            topic: 研究主题
+            iteration: 当前迭代次数
+            tracked_stats: 追踪统计信息
+
+        Returns:
+            合并后的研究结果
+        """
+        # 1. 保存当前轮次结果到 JSON
+        saved_file = self._save_iteration_result(
+            current_result, topic, iteration, tracked_stats
+        )
+        print(f"   📁 本轮数据已保存至: {saved_file}")
+
+        # 2. 如果没有历史数据，直接返回当前结果
+        if not self._iteration_results:
+            return current_result
+
+        # 3. 合并所有历史结果 + 当前结果
+        all_results = self._iteration_results + [current_result]
+        
+        # 合并列表字段（去重）
+        merged_key_infos = []
+        merged_cases = []
+        merged_keywords = set()
+        merged_post_sources = []
+        seen_key_infos = set()
+        seen_cases = set()
+        seen_sources = set()
+
+        for res in all_results:
+            # 合并 key_infos（按内容去重）
+            for info in res.key_infos:
+                info_key = json.dumps(info, sort_keys=True, ensure_ascii=False)
+                if info_key not in seen_key_infos:
+                    seen_key_infos.add(info_key)
+                    merged_key_infos.append(info)
+            
+            # 合并 cases（按内容去重）
+            for case in res.cases:
+                case_key = json.dumps(case, sort_keys=True, ensure_ascii=False)
+                if case_key not in seen_cases:
+                    seen_cases.add(case_key)
+                    merged_cases.append(case)
+            
+            # 合并 keywords
+            merged_keywords.update(res.keywords)
+            
+            # 合并 post_sources（按 URL 去重）
+            for source in res.post_sources:
+                source_url = source.get("url", json.dumps(source, sort_keys=True))
+                if source_url not in seen_sources:
+                    seen_sources.add(source_url)
+                    merged_post_sources.append(source)
+
+        # 4. 拼接所有 summary
+        merged_summary = "\n\n---\n\n".join(
+            f"【第{i+1}轮研究】\n{res.summary}"
+            for i, res in enumerate(all_results)
+            if res.summary
+        )
+
+        # 5. 计算 credibility 平均值
+        credibility_map = {"low": 1, "medium": 2, "high": 3}
+        credibility_reverse = {1: "low", 2: "medium", 3: "high"}
+        credibility_scores = [
+            credibility_map.get(res.credibility, 2)
+            for res in all_results
+        ]
+        avg_credibility = round(sum(credibility_scores) / len(credibility_scores))
+        merged_credibility = credibility_reverse.get(avg_credibility, "medium")
+
+        # 6. 构建合并后的结果
+        merged_result = ResearchResult(
+            summary=merged_summary,
+            key_infos=merged_key_infos,
+            cases=merged_cases,
+            keywords=list(merged_keywords),
+            credibility=merged_credibility,
+            data_points=len(merged_key_infos) + len(merged_cases),
+            posts_researched=tracked_stats.get("post_detail_count", 0),
+            post_sources=merged_post_sources,
+            comment_data_ratio=current_result.comment_data_ratio
+        )
+
+        print(f"   📊 合并历史数据：")
+        print(f"      - 关键信息: {len(merged_key_infos)} 条（来自 {len(all_results)} 轮）")
+        print(f"      - 案例: {len(merged_cases)} 个")
+        print(f"      - 关键词: {len(merged_keywords)} 个")
+        print(f"      - 帖子来源: {len(merged_post_sources)} 个")
+
+        return merged_result
+
+    def _save_iteration_result(
+        self,
+        result,
+        topic: str,
+        iteration: int,
+        tracked_stats: dict
+    ) -> str:
+        """
+        保存本轮研究结果到 JSON 文件
+
+        Args:
+            result: 研究结果
+            topic: 研究主题
+            iteration: 当前迭代次数
+            tracked_stats: 追踪统计信息
+
+        Returns:
+            保存的文件路径
+        """
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        filename = f"research_{timestamp}.json"
+        
+        # 保存到指定的输出目录（如 posts/当前工作区/）
+        if self._output_dir:
+            output_dir = self._output_dir
+        else:
+            # 回退到默认 output 目录
+            output_dir = Path("output")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        filepath = output_dir / filename
+
+        # 构建保存数据
+        data = {
+            "topic": topic,
+            "iteration": iteration,
+            "timestamp": timestamp,
+            "tracked_stats": tracked_stats,
+            "result": result.model_dump() if hasattr(result, "model_dump") else str(result)
+        }
+
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        return str(filepath)
+
+    def _simplify_message_history(
+        self,
+        message_history: list,
+        saved_file: str
+    ) -> list:
+        """
+        简化消息历史，将所有工具调用结果替换为简短说明
+
+        保留格式：前3行 + [简化说明] + 后3行
+        这样可以大幅减少 token 消耗，同时保留足够的上下文。
+
+        Args:
+            message_history: 原始消息历史
+            saved_file: 保存的文件路径
+
+        Returns:
+            简化后的消息历史
+        """
+        simplified = []
+        summary_text = f"[工具执行结果已保存至 {saved_file}，此处已简化]"
+
+        for msg in message_history:
+            if isinstance(msg, ModelRequest):
+                # 替换 ToolReturnPart 为简短说明
+                new_parts = []
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        # 简化工具返回内容：前3行 + 说明 + 后3行
+                        simplified_content = self._truncate_content(
+                            part.content, summary_text
+                        )
+                        new_parts.append(ToolReturnPart(
+                            tool_name=part.tool_name,
+                            tool_call_id=part.tool_call_id,
+                            content=simplified_content,
+                            timestamp=part.timestamp
+                        ))
+                    else:
+                        new_parts.append(part)
+                simplified.append(replace(msg, parts=new_parts))
+            elif isinstance(msg, ModelResponse):
+                # ModelResponse 保持不变（包含模型的工具调用请求）
+                simplified.append(msg)
+            else:
+                simplified.append(msg)
+
+        return simplified
+
+    def _truncate_content(self, content: any, summary_text: str) -> str:
+        """
+        截断内容：保留前3行有效内容 + 简化说明 + 后3行有效内容
+
+        Args:
+            content: 原始内容（可能是字符串、字典或其他类型）
+            summary_text: 简化说明文本
+
+        Returns:
+            截断后的字符串
+        """
+        # 转换为字符串
+        if content is None:
+            return summary_text
+        if isinstance(content, dict):
+            text = json.dumps(content, ensure_ascii=False, indent=2)
+        else:
+            text = str(content)
+
+        # 过滤空行，只保留有实际内容的行
+        all_lines = text.split('\n')
+        non_empty_lines = [line for line in all_lines if line.strip()]
+
+        # 如果有效行数较少，无需截断
+        if len(non_empty_lines) <= 8:
+            return text
+
+        # 取前3行和后3行有效内容
+        head_lines = non_empty_lines[:3]
+        tail_lines = non_empty_lines[-3:]
+
+        # 避免首尾重叠（当内容很短时）
+        if len(non_empty_lines) <= 6:
+            return '\n'.join(non_empty_lines)
+
+        head = '\n'.join(head_lines)
+        tail = '\n'.join(tail_lines)
+
+        return f"{head}\n\n{summary_text}\n\n{tail}"
 
     def _combine_feedback(self, depth_result, review_result) -> str:
         """合并两个验证器的反馈"""
@@ -287,5 +559,5 @@ class ResearchAgent:
         return (
             f"**验证未通过，请继续探索**\n\n"
             f"{combined}\n\n"
-            f"**请根据上述反馈继续研究，进入更多帖子并收集更多数据。**"
+            f"**请基于已搜索的内容发散思维，尝试不同关键词组合和细分角度，进入更多帖子详情页收集数据。**"
         )

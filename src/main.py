@@ -72,7 +72,7 @@ async def run_workflow(topic: str, audience: str, generate_image: bool = True) -
         research_agent = ResearchAgent()
         print("   ✅ ResearchAgent 已创建（包含 Playwright MCP 工具）")
 
-        research = await research_agent.research(topic, audience)
+        research = await research_agent.research(topic, audience, output_dir=project_dir)
 
         # 保存研究结果
         save_json(project_dir / "research.json", research.model_dump())

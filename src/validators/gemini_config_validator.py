@@ -40,10 +40,11 @@ class GeminiConfigValidator(ExternalValidator):
     def agent(self) -> Agent:
         """延迟初始化 Agent（首次使用时创建）"""
         if self._agent is None:
-            from ..utils.model_factory import get_model
+            # 截屏分析需要视觉模型（Claude），MiniMax 不支持图片理解
+            from ..utils.anthropic_provider import get_anthropic_model
             from ..config.settings import RetryConfig
             self._agent = Agent(
-                model=get_model(),
+                model=get_anthropic_model(),
                 output_type=GeminiConfigReview,
                 instrument=True,
                 retries=RetryConfig.AGENT_RETRIES,  # Agent 内部重试

@@ -3,7 +3,7 @@ MCP 工具调用追踪器
 用于跟踪 playwright_navigate 调用，统计帖子详情页访问次数
 """
 import re
-from typing import Any, List
+from typing import Any, List, Callable
 from pydantic_ai import RunContext, WrapperToolset, ToolsetTool
 
 class NavigateTracker(WrapperToolset):
@@ -30,6 +30,18 @@ class NavigateTracker(WrapperToolset):
         # 实例级存储，避免复杂共享/深拷贝逻辑
         self._visited_urls_storage: List[str] = []
         self._post_detail_urls_storage: List[str] = []
+
+    def visit_and_replace(self, visitor: Callable) -> "NavigateTracker":
+        """
+        关键：避免 pydantic-ai 在构建运行时 toolset 时对 WrapperToolset 进行 dataclasses.replace()
+        产生“新实例”，导致追踪数据写入到克隆实例而外部读取仍是旧实例（表现为追踪数量始终为 0）。
+
+        我们通过“就地更新 wrapped 并返回 self”来保持同一实例的追踪状态可见。
+        """
+        # 让 visitor 继续作用于底层 toolset（通常是 MCPServerStdio 等 leaf toolset）
+        if hasattr(self.wrapped, "visit_and_replace"):
+            self.wrapped = self.wrapped.visit_and_replace(visitor)  # type: ignore[attr-defined]
+        return self
 
     @property
     def _visited_urls(self) -> List[str]:

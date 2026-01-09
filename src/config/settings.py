@@ -17,9 +17,9 @@ class RetryConfig:
     """
 
     # 方法层重试（@with_retry 装饰器）
-    MAX_RETRIES = 8            # 最大重试次数（更耐心，避免中途重启）
-    INITIAL_DELAY = 1.0        # 初始延迟（秒），后续按 2^attempt 增长
-    MAX_TOTAL_WAIT = 900       # 总最大等待时间（秒），防止无限等待
+    MAX_RETRIES = 12           # 最大重试次数（网络不稳定时更耐心）
+    INITIAL_DELAY = 2.0        # 初始延迟（秒），后续按 2^attempt 增长
+    MAX_TOTAL_WAIT = 1800      # 总最大等待时间（30分钟），防止无限等待
 
     # HTTP 层重试（AsyncTenacityTransport）
     HTTP_MAX_RETRIES = 8       # HTTP 最大重试次数（加大容忍度）
@@ -27,7 +27,7 @@ class RetryConfig:
     HTTP_TOTAL_MAX_WAIT = 600  # 总最大等待（秒）
 
     # Agent 内部重试（工具验证/输出验证）
-    AGENT_RETRIES = 3          # pydantic-ai Agent 重试（官方默认 1）
+    AGENT_RETRIES = 5          # pydantic-ai Agent 重试（增加容错）
     MCP_RETRIES = 5            # MCP 工具重试
 
 
@@ -143,7 +143,7 @@ class ResearchConfig:
     """研究相关配置"""
 
     # 帖子数量要求
-    MIN_POSTS_RESEARCHED = 23      # 最少研究帖子数
+    MIN_POSTS_RESEARCHED = 5      # 最少研究帖子数
 
     # 数据质量要求
     MIN_KEY_INFOS = 15            # 最少关键信息数量
@@ -151,5 +151,5 @@ class ResearchConfig:
     MIN_COMMENT_DATA_RATIO = 0.3  # 评论区数据最低占比（30%）
 
     # 验证配置
-    VALIDATION_MAX_RETRIES = 50    # 验证失败最大重试次数
+    VALIDATION_MAX_RETRIES = 15    # 验证失败最大重试次数
     VALIDATION_PASS_SCORE = 70    # 验证通过分数阈值

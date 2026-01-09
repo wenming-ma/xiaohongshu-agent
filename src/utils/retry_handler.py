@@ -12,7 +12,7 @@ import traceback
 import sys
 from datetime import datetime
 
-from pydantic_ai.exceptions import ModelHTTPError, ModelAPIError
+from pydantic_ai.exceptions import ModelHTTPError, ModelAPIError, UnexpectedModelBehavior
 from httpx import HTTPStatusError, TimeoutException, ConnectError, ReadError
 from anthropic import APIConnectionError, APIStatusError
 
@@ -27,6 +27,7 @@ TRANSIENT_EXCEPTIONS = (
     # pydantic-ai 错误
     ModelHTTPError,         # HTTP 层错误（如 429、5xx）
     ModelAPIError,          # API 错误（含 Connection error）
+    UnexpectedModelBehavior,  # 模型输出验证失败（空响应等，可重试）
     
     # httpx 错误
     HTTPStatusError,        # HTTP 状态错误（如 429、5xx）
