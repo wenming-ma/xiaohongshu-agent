@@ -56,7 +56,7 @@ class ImageConfig:
     # 详情图动态数量配置
     ENTITIES_PER_DETAIL = 6         # 每张详情图显示的实体数量
     MIN_DETAIL_IMAGES = 1           # 最少详情图数量
-    MAX_DETAIL_IMAGES = 5           # 最多详情图数量（可显示 30 个实体）
+    MAX_DETAIL_IMAGES = 8           # 最多详情图数量（1封面+8详情=9张，小红书上限）
 
     # 压缩参数
     COMPRESS_QUALITY_START = 95    # 压缩起始质量
@@ -143,7 +143,7 @@ class ResearchConfig:
     """研究相关配置"""
 
     # 帖子数量要求
-    MIN_POSTS_RESEARCHED = 5      # 最少研究帖子数
+    MIN_POSTS_RESEARCHED = 33      # 最少研究帖子数
 
     # 数据质量要求
     MIN_KEY_INFOS = 15            # 最少关键信息数量
