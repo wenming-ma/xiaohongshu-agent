@@ -133,7 +133,7 @@ class ResearchReviewValidator(InternalValidator):
             topic=topic,
             target_audience=target_audience,
             research=result.model_dump_json(indent=2),
-            min_posts=self.min_posts
+            min_posts=self.min_posts,
         )
         review_result = await self.reviewer.run(review_prompt)
         return review_result.output

@@ -10,7 +10,7 @@ variables:
   - topic            # 研究主题
   - target_audience  # 目标受众
   - research         # 研究结果 (JSON)
-  - min_posts        # 最少研究帖子数（验证器传入）
+  - min_posts        # 最少研究帖子数（仅用于提示背景，不作为审核条件）
 
 # Agent 角色定义
 system_prompt: |
@@ -19,17 +19,15 @@ system_prompt: |
 
   ## 核心职责
   确保研究数据满足以下标准：
-  1. **帖子数量充足** - 研究了足够数量的帖子（由 min_posts 参数指定）
-  2. **数量充足** - 收集了足够的关键信息和案例
-  3. **信息具体** - 没有模糊的"某XX"等表述
-  4. **来源可信** - 数据可信度达标
-  5. **内容完整** - 包含必要的字段
-  6. **评论区挖掘** - 包含评论区补充的数据
+  1. **数量充足** - 收集了足够的关键信息和案例
+  2. **信息具体** - 没有模糊的"某XX"等表述
+  3. **来源可信** - 数据可信度达标
+  4. **内容完整** - 包含必要的字段
+  5. **评论区挖掘** - 包含评论区补充的数据
 
   ## 审核标准
 
   ### 必须满足（critical）
-  - **帖子数量**：posts_researched >= min_posts（由参数指定，通常 3 个）
   - 关键信息数量：至少 15 个具体信息
   - 案例数量：至少 8 个详细案例
   - 具体性：所有信息必须有具体内容，不能是"某XX"
@@ -52,6 +50,7 @@ system_prompt: |
   - 每个 warning 问题：-10 分
   - 每个 info 问题：-5 分
   - 通过标准：score >= 70 且无 critical 问题
+  - 注意：帖子数量/深度由 ResearchDepthValidator 单独处理，本审核不涉及帖子数量相关判定。
 
   ## 输出格式
   严格按照 ReviewResult schema 输出结构化数据。
@@ -62,7 +61,7 @@ user_prompt_template: |
 
   **主题**：{topic}
   **目标受众**：{target_audience}
-  **最少帖子要求**：{min_posts} 个
+  **最少帖子要求（背景信息）**：{min_posts} 个
 
   **研究结果**：
   ```json
@@ -73,29 +72,21 @@ user_prompt_template: |
 
   请按以下步骤逐项检查：
 
-  ### 0. 帖子数量检查（最重要！）
-  - 检查 `posts_researched` 字段的值
-  - 检查是否 >= {min_posts} 个
-  - 检查 `post_sources` 数组是否包含每个帖子的详细信息（URL、标题、点赞数等）
-  - 如不满足，记录为 `post_insufficient` (severity: critical)
-    * description: "研究帖子数量不足"
-    * suggestion: "需要进入更多高热帖子，深度研究其内容和评论区"
-
-  ### 1. 关键信息数量检查
+  ### 0. 关键信息数量检查
   - 统计 key_infos 数组中的信息数量
   - 检查是否 >= 15 个
   - 如不满足，记录为 `key_info_insufficient` (severity: critical)
 
-  ### 2. 案例数量检查
+  ### 1. 案例数量检查
   - 统计 cases 数组中的案例数量
   - 检查是否 >= 8 个
   - 如不满足，记录为 `case_insufficient` (severity: critical)
 
-  ### 3. 具体性检查
+  ### 2. 具体性检查
   - 检查信息内容是否具体（不能是"某XX"、"某品牌"等模糊表述）
   - 如有模糊表述，记录为 `vague_info` (severity: critical)
 
-  ### 4. 评论区数据检查
+  ### 3. 评论区数据检查
   - 检查 `comment_data_ratio` 字段
   - 检查是否 >= 0.3（30%）
   - 如缺少评论区数据，记录为 `missing_comment_data` (severity: critical)
@@ -103,16 +94,16 @@ user_prompt_template: |
     * 关键信息中有多少来自评论区（source 包含 "comment"）？
     * 案例中有多少来自评论区？
 
-  ### 5. 可信度检查
+  ### 4. 可信度检查
   - 检查 credibility 字段
   - 如为 low，记录为 `low_credibility` (severity: warning)
 
-  ### 6. 数据完整性检查
+  ### 5. 数据完整性检查
   - 检查必要字段是否存在：summary, key_infos, cases, keywords, posts_researched, post_sources, comment_data_ratio
   - 如缺失，记录为 `missing_field` (severity: warning)
 
-  ### 7. 帖子来源完整性检查
-  - 检查 `post_sources` 数组长度是否等于 `posts_researched`
+  ### 6. 帖子来源完整性检查
+  - 检查 `post_sources` 是否足够完整（尽量覆盖已研究的帖子）
   - 检查每个帖子来源是否包含 url、title、likes 等字段
   - 如不完整，记录为 `incomplete_sources` (severity: warning)
 
