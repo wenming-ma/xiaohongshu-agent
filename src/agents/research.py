@@ -17,7 +17,8 @@ from dataclasses import replace
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.messages import (
-    ModelRequest, UserPromptPart, ToolReturnPart, ModelResponse
+    ModelRequest, UserPromptPart, ToolReturnPart, ModelResponse,
+    TextPart, ToolCallPart
 )
 from ..models.schemas import ResearchResult
 from ..utils.model_factory import get_model
@@ -462,10 +463,13 @@ class ResearchAgent:
         saved_file: str
     ) -> list:
         """
-        简化消息历史，将所有工具调用结果替换为简短说明
+        简化消息历史，大幅减少 token 消耗
 
-        保留格式：前3行 + [简化说明] + 后3行
-        这样可以大幅减少 token 消耗，同时保留足够的上下文。
+        优化策略：
+        1. ToolReturnPart: 前3行 + [简化说明] + 后3行（最后一个保留完整）
+        2. ToolCallPart: 简化大型参数（最后一个保留完整）
+        3. TextPart: 截断超长内容（>500字符）
+        4. 其他（ThinkingPart 等）: 保留原样
 
         Args:
             message_history: 原始消息历史
@@ -474,35 +478,115 @@ class ResearchAgent:
         Returns:
             简化后的消息历史
         """
-        simplified = []
-        summary_text = f"[工具执行结果已保存至 {saved_file}，此处已简化]"
+        summary_text = f"[saved to {saved_file}, truncated]"
 
-        for msg in message_history:
+        # 1. 找出最后一个 ToolReturnPart 和 ToolCallPart 的位置
+        last_tool_return_pos = None  # (msg_idx, part_idx)
+        last_tool_call_pos = None    # (msg_idx, part_idx)
+
+        for msg_idx, msg in enumerate(message_history):
             if isinstance(msg, ModelRequest):
-                # 替换 ToolReturnPart 为简短说明
-                new_parts = []
-                for part in msg.parts:
+                for part_idx, part in enumerate(msg.parts):
                     if isinstance(part, ToolReturnPart):
-                        # 简化工具返回内容：前3行 + 说明 + 后3行
-                        simplified_content = self._truncate_content(
-                            part.content, summary_text
-                        )
-                        new_parts.append(ToolReturnPart(
-                            tool_name=part.tool_name,
-                            tool_call_id=part.tool_call_id,
-                            content=simplified_content,
-                            timestamp=part.timestamp
-                        ))
+                        last_tool_return_pos = (msg_idx, part_idx)
+            elif isinstance(msg, ModelResponse):
+                for part_idx, part in enumerate(msg.parts):
+                    if isinstance(part, ToolCallPart):
+                        last_tool_call_pos = (msg_idx, part_idx)
+
+        # 2. 遍历并简化（保留最后一个工具调用/返回的完整内容）
+        simplified = []
+
+        for msg_idx, msg in enumerate(message_history):
+            if isinstance(msg, ModelRequest):
+                new_parts = []
+                for part_idx, part in enumerate(msg.parts):
+                    if isinstance(part, ToolReturnPart):
+                        # 检查是否是最后一个 ToolReturnPart
+                        is_last = (msg_idx, part_idx) == last_tool_return_pos
+                        if is_last:
+                            # 保留完整内容
+                            new_parts.append(part)
+                        else:
+                            # 简化：前3行 + 说明 + 后3行
+                            simplified_content = self._truncate_content(
+                                part.content, summary_text
+                            )
+                            new_parts.append(ToolReturnPart(
+                                tool_name=part.tool_name,
+                                tool_call_id=part.tool_call_id,
+                                content=simplified_content,
+                                timestamp=part.timestamp
+                            ))
                     else:
                         new_parts.append(part)
                 simplified.append(replace(msg, parts=new_parts))
+            
             elif isinstance(msg, ModelResponse):
-                # ModelResponse 保持不变（包含模型的工具调用请求）
-                simplified.append(msg)
+                new_parts = []
+                for part_idx, part in enumerate(msg.parts):
+                    if isinstance(part, ToolCallPart):
+                        # 检查是否是最后一个 ToolCallPart
+                        is_last = (msg_idx, part_idx) == last_tool_call_pos
+                        if is_last:
+                            # 保留完整参数
+                            new_parts.append(part)
+                        else:
+                            # 简化工具调用参数
+                            simplified_args = self._simplify_tool_args(part.args)
+                            new_parts.append(ToolCallPart(
+                                tool_name=part.tool_name,
+                                tool_call_id=part.tool_call_id,
+                                args=simplified_args
+                            ))
+                    elif isinstance(part, TextPart):
+                        # 截断超长的模型文本响应
+                        if len(part.content) > 500:
+                            truncated = part.content[:400] + "\n...[truncated]..."
+                            new_parts.append(TextPart(content=truncated))
+                        else:
+                            new_parts.append(part)
+                    else:
+                        new_parts.append(part)
+                
+                if new_parts:
+                    simplified.append(replace(msg, parts=new_parts))
             else:
                 simplified.append(msg)
 
         return simplified
+
+    def _simplify_tool_args(self, args: dict | str) -> dict | str:
+        """
+        简化工具调用参数（移除大型数据如 HTML snapshot）
+
+        Args:
+            args: 工具参数（字典或 JSON 字符串）
+
+        Returns:
+            简化后的参数
+        """
+        if isinstance(args, str):
+            # JSON 字符串，尝试解析
+            try:
+                args = json.loads(args)
+            except (json.JSONDecodeError, TypeError):
+                # 无法解析，直接截断
+                if len(args) > 200:
+                    return args[:150] + "...[truncated]..."
+                return args
+
+        if isinstance(args, dict):
+            simplified = {}
+            for key, value in args.items():
+                if isinstance(value, str) and len(value) > 200:
+                    # 截断长字符串
+                    simplified[key] = value[:100] + f"...[{len(value)} chars truncated]..."
+                else:
+                    simplified[key] = value
+            return simplified
+        
+        return args
 
     def _truncate_content(self, content: any, summary_text: str) -> str:
         """
