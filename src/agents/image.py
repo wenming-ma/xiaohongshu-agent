@@ -9,13 +9,14 @@
 - @GeminiConfigValidator: 每张图片生成后验证 Gemini 配置（Create images + Pro）
 - @ImageQualityValidator: 验证图片质量（字迹清晰、风格匹配）
 """
+import json
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any, Tuple
 from pydantic_ai import Agent, Tool
 from pydantic_ai.mcp import MCPServerStdio
-from ..models.schemas import ImageResult, GeneratedImage, XHSContent, ResearchResult
+from ..models.schemas import ImageResult, GeneratedImage, XHSContent, ResearchResult, ImageGroupingPlan
 from ..utils.model_factory import get_model
 from ..utils.download_manager import DownloadManager
 from ..utils.retry_handler import with_retry
@@ -69,6 +70,15 @@ class ImageAgent:
             output_type=str,
             instrument=True,
             system_prompt=(get_system_prompt("image"),),
+        )
+
+        # 语义分组 Agent（将 key_infos 分组后再分发到详情图）
+        self.grouping_agent = Agent(
+            model=model,
+            output_type=ImageGroupingPlan,
+            instrument=True,
+            retries=RetryConfig.AGENT_RETRIES,
+            system_prompt=(get_system_prompt("image_grouping"),),
         )
 
         # Gemini 操作 Agent
@@ -144,6 +154,166 @@ class ImageAgent:
 
         return types
 
+    async def _semantic_group_key_infos(
+        self,
+        *,
+        topic: str,
+        research: ResearchResult,
+        max_group_size: int,
+    ) -> List[Dict[str, Any]]:
+        """
+        使用 LLM 对 key_infos 做语义分组，然后进行确定性归一化（去重/补漏/拆分/合并）。
+
+        Returns:
+            list of group dicts: {title: str, indices: list[int]}
+        """
+        key_infos = research.key_infos or []
+        n = len(key_infos)
+        if n == 0:
+            return []
+
+        # 构造精简输入，降低 token，提升稳定性
+        compact_items: list[dict[str, Any]] = []
+        for i, info in enumerate(key_infos):
+            name = info.get("name") or info.get("title") or ""
+            desc = info.get("description") or info.get("detail") or info.get("desc") or ""
+            compact_items.append(
+                {
+                    "index": i,
+                    "type": info.get("type"),
+                    "name": name,
+                    "text": (f"{name}: {desc}".strip(": ").strip())[:240],
+                }
+            )
+
+        user_prompt = get_user_prompt(
+            "image_grouping",
+            topic=topic,
+            key_infos_json=json.dumps(compact_items, ensure_ascii=False, indent=2),
+            max_group_size=max_group_size,
+        )
+
+        grouping_result = await self.grouping_agent.run(user_prompt)
+        plan: ImageGroupingPlan = grouping_result.output
+        groups = self._normalize_grouping_plan(plan, n, max_group_size)
+        self._validate_groups(groups, n, max_group_size)
+        return groups
+
+    def _normalize_grouping_plan(
+        self,
+        plan: ImageGroupingPlan,
+        n_key_infos: int,
+        max_group_size: int,
+        min_group_size: int | None = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        归一化分组计划：
+        - indices 去重（保留首次出现）
+        - 剔除越界 indices
+        - 补齐缺失 indices 到“其他”
+        - 大组拆分
+        - 小组尽量合并（减少 Gemini 补全/幻觉风险）
+        - 最终保证覆盖且不重复
+        """
+        if min_group_size is None:
+            # key_infos 足够多时，尽量每组 >= 3；否则放宽
+            min_group_size = 3 if n_key_infos >= 8 else 1
+
+        raw_groups = plan.groups or []
+        seen: set[int] = set()
+        normalized: list[dict[str, Any]] = []
+
+        for g in raw_groups:
+            title = (g.title or "").strip() or "其他"
+            indices: list[int] = []
+            for idx in (g.indices or []):
+                if not isinstance(idx, int):
+                    continue
+                if idx < 0 or idx >= n_key_infos:
+                    continue
+                if idx in seen:
+                    continue
+                seen.add(idx)
+                indices.append(idx)
+            if indices:
+                indices.sort()
+                normalized.append({"title": title, "indices": indices})
+
+        # 补齐缺失
+        missing = [i for i in range(n_key_infos) if i not in seen]
+        if missing:
+            normalized.append({"title": "其他补充", "indices": missing})
+
+        if not normalized:
+            # 彻底失败时：退化为单组
+            return [{"title": "要点汇总", "indices": list(range(n_key_infos))}]
+
+        # 大组拆分
+        split_groups: list[dict[str, Any]] = []
+        for g in normalized:
+            idxs = g["indices"]
+            if len(idxs) <= max_group_size:
+                split_groups.append(g)
+            else:
+                chunks = [idxs[i : i + max_group_size] for i in range(0, len(idxs), max_group_size)]
+                for ci, chunk in enumerate(chunks, start=1):
+                    split_groups.append({"title": f"{g['title']}（续{ci}）", "indices": chunk})
+
+        # 小组合并（尽量往前合并）
+        merged: list[dict[str, Any]] = []
+        for g in split_groups:
+            if not merged:
+                merged.append(g)
+                continue
+            if len(g["indices"]) < min_group_size:
+                prev = merged[-1]
+                if len(prev["indices"]) + len(g["indices"]) <= max_group_size:
+                    prev["indices"].extend(g["indices"])
+                    prev["indices"].sort()
+                    # 标题保持 prev，不强行拼接避免变长
+                    continue
+            merged.append(g)
+
+        # 最终覆盖校验
+        all_indices: list[int] = []
+        for g in merged:
+            all_indices.extend(g["indices"])
+        if set(all_indices) != set(range(n_key_infos)) or len(all_indices) != n_key_infos:
+            # 兜底：按顺序切片（稳定且可控）
+            fallback: list[dict[str, Any]] = []
+            idxs = list(range(n_key_infos))
+            chunks = [idxs[i : i + max_group_size] for i in range(0, len(idxs), max_group_size)]
+            for i, chunk in enumerate(chunks, start=1):
+                fallback.append({"title": f"要点清单（{i}/{len(chunks)}）", "indices": chunk})
+            return fallback
+
+        return merged
+
+    def _validate_groups(self, groups: List[Dict[str, Any]], n_key_infos: int, max_group_size: int) -> None:
+        """
+        运行时校验：覆盖且不重复、每组大小不超过限制。
+        失败应抛异常，由上层触发 fallback。
+        """
+        all_indices: list[int] = []
+        for g in groups:
+            idxs = g.get("indices", [])
+            if not isinstance(idxs, list):
+                raise ValueError("group.indices must be a list")
+            if len(idxs) == 0:
+                raise ValueError("group.indices is empty")
+            if len(idxs) > max_group_size:
+                raise ValueError("group too large after normalization")
+            for idx in idxs:
+                if not isinstance(idx, int):
+                    raise ValueError("index must be int")
+                if idx < 0 or idx >= n_key_infos:
+                    raise ValueError("index out of range")
+                all_indices.append(idx)
+        if len(all_indices) != n_key_infos:
+            raise ValueError("coverage mismatch (count)")
+        if set(all_indices) != set(range(n_key_infos)):
+            raise ValueError("coverage mismatch (set)")
+
     async def generate_image(
         self,
         content: XHSContent,
@@ -170,9 +340,28 @@ class ImageAgent:
         Returns:
             ImageResult: 图片结果（包含多张图片）
         """
-        # 动态计算图片类型
-        image_types = self._get_image_types(research)
         key_info_count = len(research.key_infos)
+
+        # 动态计算图片类型（cover + 语义分组后的 detail_N）
+        # 失败时回退到原始“按数量切片”的分发逻辑
+        try:
+            groups = await self._semantic_group_key_infos(
+                topic=topic,
+                research=research,
+                max_group_size=ImageConfig.ENTITIES_PER_DETAIL,
+            )
+            image_types: list[dict[str, Any]] = [{"type": "cover", "desc": "封面图 - 大标题风格，突出主题"}]
+            for i, g in enumerate(groups, start=1):
+                image_types.append(
+                    {
+                        "type": f"detail_{i}",
+                        "desc": f"详情图{i} - 语义分组：{g['title']}",
+                        "group_title": g["title"],
+                        "indices": g["indices"],
+                    }
+                )
+        except Exception:
+            image_types = self._get_image_types(research)  # type: ignore[assignment]
 
         print(f"   🎨 开始生成 {len(image_types)} 张配图（{key_info_count} 个关键信息）...")
 
@@ -243,10 +432,14 @@ class ImageAgent:
             # 封面图：只需标题和主题
             body_excerpt = content.body[:150]
         else:
-            # 详情图：提取对应的关键信息
-            start = image_type_info.get("info_start", 0)
-            end = image_type_info.get("info_end", len(research.key_infos))
-            key_infos = research.key_infos[start:end]
+            # 详情图：优先使用语义分组的 indices；否则使用原切片字段 info_start/info_end
+            indices = image_type_info.get("indices")
+            if isinstance(indices, list) and indices:
+                key_infos = [research.key_infos[i] for i in indices if 0 <= i < len(research.key_infos)]
+            else:
+                start = image_type_info.get("info_start", 0)
+                end = image_type_info.get("info_end", len(research.key_infos))
+                key_infos = research.key_infos[start:end]
 
             if key_infos:
                 # 构建关键信息列表
@@ -254,7 +447,11 @@ class ImageAgent:
                     f"{i+1}. {info.get('name', '未知')}: {info.get('description', info.get('detail', ''))}"
                     for i, info in enumerate(key_infos)
                 ])
-                body_excerpt = f"本图需要展示以下 {len(key_infos)} 个关键信息：\n{infos_text}"
+                group_title = image_type_info.get("group_title")
+                if group_title:
+                    body_excerpt = f"本图主题板块：{group_title}\n本图需要展示以下 {len(key_infos)} 个关键信息：\n{infos_text}"
+                else:
+                    body_excerpt = f"本图需要展示以下 {len(key_infos)} 个关键信息：\n{infos_text}"
             else:
                 # 无关键信息时使用正文
                 body_excerpt = content.body[:300]

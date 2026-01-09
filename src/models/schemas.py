@@ -215,6 +215,32 @@ class ReviewResult(BaseModel):
         }
 
 
+# ==================== 图片语义分组（ImageAgent） ====================
+
+
+class ImageGroupingGroup(BaseModel):
+    """图片详情图分组（语义组）"""
+
+    title: str = Field(description="分组标题（用于该组详情图的板块标题）")
+    indices: List[int] = Field(
+        default_factory=list,
+        description="该组包含的 key_infos 下标（0-based），必须覆盖且不重复",
+    )
+    rationale: Optional[str] = Field(
+        default=None,
+        description="可选：分组理由（用于调试/可观测性）",
+    )
+
+
+class ImageGroupingPlan(BaseModel):
+    """LLM 输出：key_infos 的语义分组计划"""
+
+    groups: List[ImageGroupingGroup] = Field(
+        default_factory=list,
+        description="语义分组列表",
+    )
+
+
 # ==================== 专用验证器模型 ====================
 
 
