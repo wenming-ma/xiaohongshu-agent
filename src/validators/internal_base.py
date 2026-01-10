@@ -94,16 +94,19 @@ class InternalValidator(ABC):
                 score=validation_result.score
             )
         else:
-            logger.warning(f"[{self.validator_name}] 验证未通过")
+            logger.warning(f"[{self.validator_name}] 验证未通过 (评分: {validation_result.score:.1f}/100)")
             if validation_result.feedback:
-                # 只打印第一行反馈
-                first_line = validation_result.feedback.split('\n')[0]
-                logger.warning(f"  - {first_line[:80]}...")
+                # 提取关键反馈信息（显示前5行有意义的内容）
+                lines = [line.strip() for line in validation_result.feedback.split('\n') if line.strip()]
+                for line in lines[:5]:
+                    # 移除 markdown 加粗符号，保留内容
+                    clean_line = line.replace('**', '')
+                    logger.warning(f"  {clean_line[:120]}")
             # 记录到 Logfire
             logfire.warn(
                 f'{self.validator_name} failed',
                 validator=self.validator_name,
                 passed=False,
                 score=validation_result.score,
-                feedback_preview=validation_result.feedback[:200] if validation_result.feedback else None
+                feedback_preview=validation_result.feedback[:500] if validation_result.feedback else None
             )
