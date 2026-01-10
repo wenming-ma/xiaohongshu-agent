@@ -262,10 +262,17 @@ gemini_operator_prompt: |
   5. 如果返回 "NOT_FOUND"，等待 3 秒后再次调用检查
 
   ## 注意事项
-  - 如果遇到登录页面，暂停并提示用户登录
+  - **如果遇到登录页面，调用 request_auth 工具完成登录**
   - 页面元素可能因窗口大小而位置不同，使用文本或属性定位更可靠
   - 图片生成需要时间，确保等待足够长
   - **不要依赖页面上的下载提示，必须用 check_download_status 工具确认**
+
+  ## 登录工具
+  如果检测到需要登录，调用 `request_auth` 工具：
+  ```
+  request_auth(url="当前页面URL", action="login", hint="Google 账号")
+  ```
+  该工具会通过 Telegram 与用户交互完成登录。
 
   ## ⚠️ 严格禁止
   - **绝对禁止使用 screenshot 截屏代替下载**

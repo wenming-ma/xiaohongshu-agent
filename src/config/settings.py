@@ -2,6 +2,7 @@
 统一配置管理
 所有可调参数集中在此文件
 """
+import os
 from pathlib import Path
 
 
@@ -91,8 +92,10 @@ class PathConfig:
     PROJECT_DIR = Path('posts')
 
     # 浏览器会话
-    BROWSER_SESSION_XHS = './browser-sessions/xiaohongshu'
-    BROWSER_SESSION_GEMINI = './browser-sessions/gemini'
+    # NOTE: 所有 Agent 共用同一个 USER_DATA_DIR，以复用登录状态（cookies/localStorage）。
+    BROWSER_SESSION_SHARED = './browser-sessions/shared'
+    BROWSER_SESSION_XHS = BROWSER_SESSION_SHARED
+    BROWSER_SESSION_GEMINI = BROWSER_SESSION_SHARED
 
 
 # ==================== API 配置 ====================
@@ -151,7 +154,7 @@ class ResearchConfig:
     """研究相关配置"""
 
     # 帖子数量要求
-    MIN_POSTS_RESEARCHED = 27      # 最少研究帖子数
+    MIN_POSTS_RESEARCHED = 21      # 最少研究帖子数
 
     # 数据质量要求
     MIN_KEY_INFOS = 15            # 最少关键信息数量
@@ -161,3 +164,30 @@ class ResearchConfig:
     # 验证配置
     VALIDATION_MAX_RETRIES = 15    # 验证失败最大重试次数
     VALIDATION_PASS_SCORE = 70    # 验证通过分数阈值
+
+
+# ==================== Telegram 配置 ====================
+class TelegramConfig:
+    """Telegram Bot 配置"""
+    
+    BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+    CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")  # 你的 Telegram ID（可选，不限制）
+
+
+# ==================== 用户信息配置 ====================
+class UserProfileConfig:
+    """
+    用户常用账号信息 - 用于自动登录/注册
+    
+    这些信息会包含在 LoginAgent 的系统提示词中，
+    便于自动填写注册/登录表单。
+    """
+    
+    # 基本信息
+    PHONE = os.getenv("USER_PHONE")           # 手机号
+    EMAIL = os.getenv("USER_EMAIL")           # 邮箱
+    USERNAME = os.getenv("USER_USERNAME")     # 常用用户名
+    
+    # 备用信息
+    PHONE_ALT = os.getenv("USER_PHONE_ALT")   # 备用手机号
+    EMAIL_ALT = os.getenv("USER_EMAIL_ALT")   # 备用邮箱

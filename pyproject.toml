@@ -28,6 +28,8 @@ dependencies = [
     # 图片压缩
     "Pillow>=10.0.0",
     "openai>=2.14.0",
+    # Telegram Bot
+    "aiogram>=3.0.0",
 ]
 
 [tool.uv.sources]

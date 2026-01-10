@@ -29,6 +29,7 @@ from ..utils.logger import get_logger
 from ..validators import ResearchDepthValidator, ResearchReviewValidator
 from ..config.settings import RetryConfig, ResearchConfig, PathConfig, TimeoutConfig
 from prompts import get_system_prompt, get_user_prompt
+from .login import LoginAgent
 
 logger = get_logger(__name__)
 
@@ -54,7 +55,7 @@ class ResearchAgent:
         # 注意：使用 @latest 避免 npx 缓存导致的版本问题
         self.mcp_server = MCPServerStdio(
             command='npx',
-            args=['-y', '@playwright/mcp@latest'],
+            args=['-y', '@playwright/mcp@latest', '--output-dir', str(PathConfig.DOWNLOADS_DIR)],
             env={
                 'HEADLESS': 'false',  # 显示浏览器窗口
                 'BROWSER_TYPE': 'chromium',
@@ -66,6 +67,9 @@ class ResearchAgent:
             timeout=TimeoutConfig.MCP_INIT_TIMEOUT,
         )
 
+        # LoginAgent - 用于处理登录/注册（复用同一个 Playwright MCP/浏览器会话）
+        self.login_agent = LoginAgent(mcp_server=self.mcp_server)
+
         # 导航追踪器 - 包装 MCP Server 以追踪帖子详情页访问
         self.navigate_tracker = NavigateTracker(self.mcp_server)
 
@@ -74,6 +78,7 @@ class ResearchAgent:
             model=model,
             output_type=ResearchResult,
             toolsets=[self.navigate_tracker],
+            tools=[self.login_agent.get_tool()],  # 登录/注册工具
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(get_system_prompt("research"),),

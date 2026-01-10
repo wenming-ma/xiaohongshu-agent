@@ -13,6 +13,7 @@ from ..utils.retry_handler import with_retry
 from ..utils.logger import get_logger
 from ..config.settings import RetryConfig, PathConfig, TimeoutConfig, PublishConfig
 from prompts import get_system_prompt, get_user_prompt
+from .login import LoginAgent
 
 logger = get_logger(__name__)
 
@@ -29,7 +30,7 @@ class PublisherAgent:
         # 创建 Playwright MCP Server 实例（复用小红书浏览器会话）
         self.mcp_server = MCPServerStdio(
             command='npx',
-            args=['-y', '@playwright/mcp@latest'],
+            args=['-y', '@playwright/mcp@latest', '--output-dir', str(PathConfig.DOWNLOADS_DIR)],
             env={
                 'HEADLESS': 'false',  # 显示浏览器窗口
                 'BROWSER_TYPE': 'chromium',
@@ -41,11 +42,15 @@ class PublisherAgent:
             timeout=TimeoutConfig.MCP_INIT_TIMEOUT,
         )
 
+        # LoginAgent - 用于处理登录/注册（复用同一个 Playwright MCP/浏览器会话）
+        self.login_agent = LoginAgent(mcp_server=self.mcp_server)
+
         # Publisher Agent（结构化输出：直接返回 PublishResult）
         self.publisher = Agent(
             model=model,
             output_type=PublishResult,
             toolsets=[self.mcp_server],
+            tools=[self.login_agent.get_tool()],  # 登录/注册工具
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(get_system_prompt("publisher"),),

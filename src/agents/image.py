@@ -38,6 +38,7 @@ from ..utils.logger import get_logger
 from ..validators import GeminiConfigValidator, ImageQualityValidator
 from ..config.settings import RetryConfig, ImageConfig, PathConfig, TimeoutConfig, APIConfig
 from prompts import get_system_prompt, get_user_prompt, get_prompt_field
+from .login import LoginAgent
 
 logger = get_logger(__name__)
 
@@ -106,6 +107,9 @@ class ImageAgent:
             process_tool_call=ImageAgent._block_browser_close,  # 拦截 browser_close 调用
         )
 
+        # LoginAgent - 用于处理登录/注册（复用同一个 Playwright MCP/浏览器会话）
+        self.login_agent = LoginAgent(mcp_server=self.mcp_server)
+
         # ==================== 6. Agents ====================
         # 获取带 HTTP 重试的 Model（根据配置选择 Anthropic 或 OpenRouter）
         model = get_model()
@@ -141,7 +145,10 @@ class ImageAgent:
             model=model,
             output_type=GeminiOperationResult,
             toolsets=[self.mcp_server],
-            tools=[Tool(self._check_download_status, takes_ctx=False)],
+            tools=[
+                Tool(self._check_download_status, takes_ctx=False),
+                self.login_agent.get_tool(),  # 登录/注册工具
+            ],
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(get_prompt_field("image", "gemini_operator_prompt"),),
