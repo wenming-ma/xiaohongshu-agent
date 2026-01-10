@@ -21,6 +21,32 @@ from .logger import get_logger
 
 logger = get_logger(__name__)
 
+def _is_permanent_http_status(status_code: int | None) -> bool:
+    """
+    判断 HTTP 状态码是否属于“永久性错误”（重试无意义）。
+
+    - 4xx 通常是参数/鉴权/权限/策略问题，重试不会成功
+    - 例外：408/429 属于暂时性错误，仍可重试
+    """
+    if status_code is None:
+        return False
+    return 400 <= status_code < 500 and status_code not in (408, 429)
+
+
+def _log_openrouter_data_policy_hint(e: ModelHTTPError) -> None:
+    """针对 OpenRouter free 模型的 data policy 404 给出可操作提示。"""
+    try:
+        body = getattr(e, "body", None) or {}
+        message = (body.get("message") or "") if isinstance(body, dict) else str(body)
+        if "No endpoints found matching your data policy" in message:
+            logger.error(
+                "OpenRouter data policy 阻止了该 free 模型的调用；请到 https://openrouter.ai/settings/privacy "
+                "调整隐私/数据策略（允许 free 模型发布），或改用非 free 模型。"
+            )
+    except Exception:
+        # 不应因为日志提示影响主流程
+        return
+
 
 # ==================== 暂时性错误（可重试）====================
 # 这些错误是暂时的，重试后可能成功
@@ -149,6 +175,13 @@ def with_retry(max_retries: int = None, initial_delay: float = None, max_total_w
                     raise
                     
                 except TRANSIENT_EXCEPTIONS as e:
+                    # 4xx 通常是永久性错误（如鉴权/权限/策略/参数问题），不应重试
+                    if isinstance(e, ModelHTTPError) and _is_permanent_http_status(getattr(e, "status_code", None)):
+                        _log_openrouter_data_policy_hint(e)
+                        raise
+                    if isinstance(e, HTTPStatusError) and _is_permanent_http_status(getattr(e.response, "status_code", None)):
+                        raise
+
                     # 暂时性错误：可以重试
                     last_exception = e
                     

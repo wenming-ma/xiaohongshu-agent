@@ -32,7 +32,7 @@ from ..models.schemas import (
     ImageTypeSpec,
     ImageGenContext,
 )
-from ..utils.model_factory import get_model
+from ..utils.minimax_provider import get_minimax_model
 from ..utils.openrouter_provider import get_openrouter_model
 from ..utils.download_manager import DownloadManager
 from ..utils.retry_handler import with_retry
@@ -114,8 +114,8 @@ class ImageAgent:
         self.login_agent = LoginAgent(mcp_server=self.mcp_server)
 
         # ==================== 6. Agents ====================
-        # 获取带 HTTP 重试的 Model（根据配置选择 Anthropic 或 OpenRouter）
-        model = get_model()
+        # 图片工作流的文本模型统一使用 MiniMax（提示词生成/分组/页面操作编排）
+        model = get_minimax_model()
 
         # 提示词生成 Agent（使用依赖注入传递验证反馈）
         self.prompt_generator = Agent(
@@ -148,9 +148,9 @@ class ImageAgent:
             system_prompt=(get_system_prompt("image_grouping"),),
         )
 
-        # 分组审核 Agent（使用 OpenRouter 模型，验证分组是否合理，失败则触发重新分组）
+        # 分组审核 Agent（使用 MiniMax 模型，验证分组是否合理，失败则触发重新分组）
         self.grouping_reviewer = Agent(
-            model=get_openrouter_model("google/gemma-3-27b-it:free"),
+            model=get_minimax_model(),
             output_type=ImageGroupingReviewResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,

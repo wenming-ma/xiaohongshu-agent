@@ -21,6 +21,7 @@ from ..models.schemas import ImageQualityReview
 from ..utils.image_compression import compress_image_for_review
 from ..utils.openrouter_provider import get_openrouter_model
 from ..utils.logger import get_logger
+from ..config.settings import APIConfig
 from prompts import get_system_prompt, get_user_prompt
 
 logger = get_logger(__name__)
@@ -49,7 +50,7 @@ class ImageQualityValidator(ExternalValidator):
         if self._agent is None:
             from ..config.settings import RetryConfig
             self._agent = Agent(
-                model=get_openrouter_model("google/gemma-3-27b-it:free"),
+                model=get_openrouter_model(APIConfig.OPENROUTER_IMAGE_MODEL),
                 output_type=ImageQualityReview,
                 instrument=True,
                 retries=RetryConfig.AGENT_RETRIES,  # Agent 内部重试

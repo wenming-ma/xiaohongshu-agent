@@ -115,6 +115,10 @@ class APIConfig:
     # 不支持视觉的模型（如 z-ai/glm-4.7）会报 404 错误
     OPENROUTER_MODEL = "minimax/minimax-m2.1"
 
+    # 图片审核（视觉理解）使用的 OpenRouter 模型
+    # 注意：OpenRouter 的 `:free` 模型可能受账号 privacy/data policy 影响而 404
+    OPENROUTER_IMAGE_MODEL = os.getenv("OPENROUTER_IMAGE_MODEL", "qwen/qwen-2.5-vl-7b-instruct:free")
+
     # MiniMax 模型配置（Anthropic 兼容格式 - 官方推荐）
     # 可用模型：
     #   - "MiniMax-M2.1" （最新旗舰模型，支持 Tool Use & Interleaved Thinking）

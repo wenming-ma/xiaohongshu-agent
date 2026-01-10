@@ -16,6 +16,7 @@ from ..models.schemas import ImageReadResult
 from ..utils.image_compression import compress_image_for_review
 from ..utils.logger import get_logger
 from ..config.settings import RetryConfig
+from ..config.settings import APIConfig
 from prompts import get_system_prompt, get_user_prompt
 
 logger = get_logger(__name__)
@@ -29,7 +30,7 @@ class ImageReaderAgent:
         from ..utils.openrouter_provider import get_openrouter_model
 
         self._agent = Agent(
-            model=get_openrouter_model("google/gemma-3-27b-it:free"),
+            model=get_openrouter_model(APIConfig.OPENROUTER_IMAGE_MODEL),
             output_type=ImageReadResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
