@@ -104,8 +104,9 @@ class APIConfig:
 
     # Claude 模型（Anthropic 直连）
     DEFAULT_MODEL = "claude-sonnet-4-20250514"
+    CLAUDE_IMAGE_MODEL = os.getenv("CLAUDE_IMAGE_MODEL", "claude-sonnet-4-20250514")
 
-    # OpenRouter 模型配置
+    # OpenRouter 模型配置（已废弃，保留用于参考）
     # 注意：研究阶段需要处理截屏，必须使用支持视觉的模型
     # 已验证可用的模型：
     #   - "anthropic/claude-3-haiku" （稳定，代码能力强，支持视觉）⭐推荐
@@ -115,7 +116,7 @@ class APIConfig:
     # 不支持视觉的模型（如 z-ai/glm-4.7）会报 404 错误
     OPENROUTER_MODEL = "minimax/minimax-m2.1"
 
-    # 图片审核（视觉理解）使用的 OpenRouter 模型
+    # 图片审核（视觉理解）使用的 OpenRouter 模型（已废弃）
     # 注意：OpenRouter 的 `:free` 模型可能受账号 privacy/data policy 影响而 404
     OPENROUTER_IMAGE_MODEL = os.getenv("OPENROUTER_IMAGE_MODEL", "qwen/qwen-2.5-vl-7b-instruct:free")
 
@@ -158,7 +159,7 @@ class ResearchConfig:
     """研究相关配置"""
 
     # 帖子数量要求
-    MIN_POSTS_RESEARCHED = 3      # 最少研究帖子数
+    MIN_POSTS_RESEARCHED = 17      # 最少研究帖子数
 
     # 数据质量要求
     MIN_KEY_INFOS = 15            # 最少关键信息数量

@@ -33,7 +33,6 @@ from ..models.schemas import (
     ImageGenContext,
 )
 from ..utils.minimax_provider import get_minimax_model
-from ..utils.openrouter_provider import get_openrouter_model
 from ..utils.download_manager import DownloadManager
 from ..utils.retry_handler import with_retry
 from ..utils.logger import get_logger

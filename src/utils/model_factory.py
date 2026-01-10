@@ -5,9 +5,9 @@
 支持的提供者：
 - anthropic: 使用 Anthropic API 直连 Claude 模型
 - openrouter: 使用 OpenRouter 中转，支持多种模型（GLM, Claude, GPT 等）
-- minimax: 使用 MiniMax API（OpenAI 兼容格式），支持 MiniMax-Text-01、abab 系列模型
+- minimax: 使用 MiniMax API（Anthropic 兼容格式），支持 MiniMax-M2.1、MiniMax-Text-01 等模型
 
-注意：视觉任务（图片理解/截图审核）请使用 openrouter_provider.get_openrouter_model(...)
+注意：视觉任务（图片理解/截图审核）请使用 anthropic_provider.get_anthropic_model(APIConfig.CLAUDE_IMAGE_MODEL)
 """
 from pydantic_ai.models import Model
 from ..config.settings import APIConfig

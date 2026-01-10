@@ -26,11 +26,11 @@ class ImageReaderAgent:
     """读图 Agent（输出结构化的 ImageReadResult），并提供 Tool 包装。"""
 
     def __init__(self):
-        # 视觉任务使用 OpenRouter 视觉模型（避免直连 Claude）
-        from ..utils.openrouter_provider import get_openrouter_model
+        # 视觉任务使用 Claude 视觉模型
+        from ..utils.anthropic_provider import get_anthropic_model
 
         self._agent = Agent(
-            model=get_openrouter_model(APIConfig.OPENROUTER_IMAGE_MODEL),
+            model=get_anthropic_model(APIConfig.CLAUDE_IMAGE_MODEL),
             output_type=ImageReadResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
