@@ -137,6 +137,14 @@ class APIConfig:
     # 北京地域：https://dashscope.aliyuncs.com/compatible-mode/v1
     QWEN_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
+    # SageHub 模型配置（Claude 中转服务，OpenAI 兼容格式）
+    # 可用视觉模型（全部支持视觉）：
+    #   - "claude-opus-4-5-20251101" （最强模型，推荐）
+    #   - "claude-sonnet-4-5-20250929" （性价比高）
+    #   - "claude-haiku-4-5-20251001" （最快最便宜）
+    SAGEHUB_MODEL = os.getenv("SAGEHUB_MODEL", "claude-sonnet-4-5-20250929")
+    SAGEHUB_BASE_URL = "https://api.sagehub.cc/v1"
+
     # 模型提供者选择："anthropic" 或 "openrouter" 或 "minimax"
     # minimax 使用 Anthropic 兼容 API，支持 Tool Use
     MODEL_PROVIDER = "minimax"
