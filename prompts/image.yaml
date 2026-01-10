@@ -270,11 +270,27 @@ gemini_operator_prompt: |
   ## ⚠️ 严格禁止
   - **绝对禁止使用 screenshot 截屏代替下载**
   - **必须通过点击下载按钮获取原图**
-  - 如果下载按钮找不到或点击失败，返回 "FAILED: 下载失败" 而不是截屏
+  - 如果下载按钮找不到或点击失败，返回失败结果而不是截屏
 
-  ## 输出格式
-  - 下载成功（check_download_status 返回 DOWNLOADED）：返回 "SUCCESS"
-  - 下载失败：返回 "FAILED: 具体原因"
+  ## 输出格式（JSON）
+  任务完成后，必须返回以下 JSON 格式：
+
+  成功时：
+  ```json
+  {
+    "success": true,
+    "message": "图片下载成功"
+  }
+  ```
+
+  失败时：
+  ```json
+  {
+    "success": false,
+    "message": "下载失败",
+    "error_detail": "具体失败原因，如：找不到下载按钮"
+  }
+  ```
 
 # ============================================================
 # Gemini 操作 Agent 的用户提示词模板
@@ -304,8 +320,17 @@ gemini_operation_template: |
   - 不要依赖页面提示判断下载是否完成，必须用 check_download_status 确认
   - 禁止使用 screenshot 截屏代替下载
 
-  ## 输出
-  - check_download_status 返回 "DOWNLOADED" → 返回 "SUCCESS"
-  - 下载失败或超时 → 返回 "FAILED: 原因"
+  ## 输出格式（JSON）
+  完成后返回 JSON：
+
+  成功（check_download_status 返回 DOWNLOADED）：
+  ```json
+  {"success": true, "message": "图片下载成功"}
+  ```
+
+  失败或超时：
+  ```json
+  {"success": false, "message": "下载失败", "error_detail": "超时/找不到按钮/等具体原因"}
+  ```
 
   开始操作!

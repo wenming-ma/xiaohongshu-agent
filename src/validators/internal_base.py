@@ -13,6 +13,9 @@
 from abc import ABC, abstractmethod
 from typing import Any
 import logfire
+from ..utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class InternalValidationResult:
@@ -80,9 +83,9 @@ class InternalValidator(ABC):
     def _log_result(self, validation_result: InternalValidationResult) -> None:
         """记录验证结果（同时输出到控制台和 Logfire）"""
         if validation_result.passed:
-            print(f"   ✅ [{self.validator_name}] 验证通过")
+            logger.info(f"[{self.validator_name}] 验证通过")
             if validation_result.score > 0:
-                print(f"      - 评分: {validation_result.score:.1f}/100")
+                logger.info(f"  - 评分: {validation_result.score:.1f}/100")
             # 记录到 Logfire
             logfire.info(
                 f'{self.validator_name} passed',
@@ -91,11 +94,11 @@ class InternalValidator(ABC):
                 score=validation_result.score
             )
         else:
-            print(f"   ⚠️  [{self.validator_name}] 验证未通过")
+            logger.warning(f"[{self.validator_name}] 验证未通过")
             if validation_result.feedback:
                 # 只打印第一行反馈
                 first_line = validation_result.feedback.split('\n')[0]
-                print(f"      - {first_line[:80]}...")
+                logger.warning(f"  - {first_line[:80]}...")
             # 记录到 Logfire
             logfire.warn(
                 f'{self.validator_name} failed',

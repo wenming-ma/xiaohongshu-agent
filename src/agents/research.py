@@ -25,9 +25,12 @@ from ..models.schemas import ResearchResult
 from ..utils.model_factory import get_model
 from ..utils.retry_handler import with_retry
 from ..utils.navigate_tracker import NavigateTracker
+from ..utils.logger import get_logger
 from ..validators import ResearchDepthValidator, ResearchReviewValidator
 from ..config.settings import RetryConfig, ResearchConfig, PathConfig, TimeoutConfig
 from prompts import get_system_prompt, get_user_prompt
+
+logger = get_logger(__name__)
 
 
 class ResearchAgent:
@@ -89,20 +92,20 @@ class ResearchAgent:
 
     async def list_tools(self) -> None:
         """列出所有可用的 MCP 工具（用于验证）"""
-        print("\n   🔧 正在检查可用工具...")
+        logger.info("正在检查可用工具...")
 
         try:
             async with self.mcp_server as server:
                 tools = await server.list_tools()
-                print(f"\n   📋 发现 {len(tools)} 个 Playwright MCP 工具:")
+                logger.info(f"发现 {len(tools)} 个 Playwright MCP 工具:")
                 for tool in tools:
                     tool_name = f"{self.mcp_server.tool_prefix}_{tool.name}" if self.mcp_server.tool_prefix else tool.name
-                    print(f"      ✅ {tool_name}")
+                    logger.debug(f"  - {tool_name}")
                     if hasattr(tool, 'description') and tool.description:
-                        print(f"         {tool.description[:80]}...")
+                        logger.debug(f"    {tool.description[:80]}...")
         except Exception as e:
-            print(f"   ⚠️  无法列出工具: {e}")
-            print(f"   提示: 工具将在首次 Agent 调用时自动发现")
+            logger.warning(f"无法列出工具: {e}")
+            logger.info("工具将在首次 Agent 调用时自动发现")
 
     @with_retry(max_retries=RetryConfig.MAX_RETRIES, initial_delay=RetryConfig.INITIAL_DELAY)
     async def _run_generator(self, prompt, message_history):
@@ -142,7 +145,7 @@ class ResearchAgent:
         self._output_dir = output_dir
         # 历史迭代结果（用于合并）
         self._iteration_results: list[ResearchResult] = []
-        # 最近一次“进度快照”文本，避免重复注入
+        # 最近一次"进度快照"文本，避免重复注入
         self._last_progress_snapshot: str | None = None
         
         # 准备初始提示词
@@ -160,9 +163,9 @@ class ResearchAgent:
         # 重置导航追踪器（强制清空，避免自动 reset 跳过）
         self.navigate_tracker.reset(force=True)
 
-        print(f"\n📚 开始研究：{topic}")
-        print(f"   目标受众：{target_audience}")
-        print(f"   最大迭代次数：{self.max_iterations}")
+        logger.info(f"开始研究：{topic}")
+        logger.info(f"目标受众：{target_audience}")
+        logger.info(f"最大迭代次数：{self.max_iterations}")
 
         # 使用 logfire span 追踪整个研究过程
         with logfire.span(
@@ -173,9 +176,9 @@ class ResearchAgent:
         ) as research_span:
             async with self.mcp_server:  # 浏览器保持打开
                 for iteration in range(self.max_iterations):
-                    print(f"\n{'='*50}")
-                    print(f"🔄 第 {iteration + 1}/{self.max_iterations} 轮研究")
-                    print(f"{'='*50}")
+                    logger.info("=" * 50)
+                    logger.info(f"第 {iteration + 1}/{self.max_iterations} 轮研究")
+                    logger.info("=" * 50)
 
                     # 使用 logfire span 追踪每次迭代
                     with logfire.span(
@@ -206,12 +209,12 @@ class ResearchAgent:
                         tracked_stats = self.navigate_tracker.get_stats()
                         tracked_post_count = tracked_stats["post_detail_count"]
 
-                        print(f"\n📊 本轮研究结果：")
-                        print(f"   - 帖子数量（追踪）: {tracked_post_count}")
-                        print(f"   - 帖子数量（自报）: {result.posts_researched}")
-                        print(f"   - 关键信息数量: {len(result.key_infos)}")
-                        print(f"   - 案例数量: {len(result.cases)}")
-                        print(f"   - 评论区数据占比: {result.comment_data_ratio:.0%}")
+                        logger.info("本轮研究结果：")
+                        logger.info(f"  - 帖子数量（追踪）: {tracked_post_count}")
+                        logger.info(f"  - 帖子数量（自报）: {result.posts_researched}")
+                        logger.info(f"  - 关键信息数量: {len(result.key_infos)}")
+                        logger.info(f"  - 案例数量: {len(result.cases)}")
+                        logger.info(f"  - 评论区数据占比: {result.comment_data_ratio:.0%}")
 
                         # 记录迭代结果到 span
                         iteration_span.set_attribute('tracked_post_count', tracked_post_count)
@@ -229,14 +232,14 @@ class ResearchAgent:
                         }
 
                         # 2. 验证帖子数量（使用追踪数据）
-                        print(f"\n🔍 验证研究深度...")
+                        logger.info("验证研究深度...")
                         with logfire.span('research:validate_depth'):
                             depth_result = await self.depth_validator.validate(
                                 result, validation_context
                             )
 
                         # 3. 验证数据质量
-                        print(f"🔍 验证数据质量...")
+                        logger.info("验证数据质量...")
                         with logfire.span('research:validate_quality'):
                             review_result = await self.review_validator.validate(
                                 result, validation_context
@@ -250,9 +253,9 @@ class ResearchAgent:
 
                         # 4. 两个都通过？
                         if depth_result.passed and review_result.passed:
-                            print(f"\n✅ 研究验证全部通过！")
-                            print(f"   - 深度验证评分: {depth_result.score:.1f}/100")
-                            print(f"   - 质量验证评分: {review_result.score:.1f}/100")
+                            logger.info("研究验证全部通过！")
+                            logger.info(f"  - 深度验证评分: {depth_result.score:.1f}/100")
+                            logger.info(f"  - 质量验证评分: {review_result.score:.1f}/100")
                             
                             # 记录最终结果到研究 span
                             research_span.set_attribute('final_iteration', iteration + 1)
@@ -274,21 +277,21 @@ class ResearchAgent:
 
                         # 5. 构建反馈，继续循环
                         feedback = self._combine_feedback(depth_result, review_result)
-                        print(f"\n⚠️  验证未通过，注入反馈继续探索...")
+                        logger.warning("验证未通过，注入反馈继续探索...")
 
                         # 保存本轮研究结果到 JSON 文件，并记录到历史
                         saved_file = self._save_iteration_result(
                             result, topic, iteration + 1, tracked_stats
                         )
                         self._iteration_results.append(result)
-                        print(f"   📁 本轮数据已保存至: {saved_file}")
+                        logger.info(f"本轮数据已保存至: {saved_file}")
 
                         # 简化消息历史（替换工具调用结果为简短说明）
                         message_history = self._simplify_message_history(
                             message_history, saved_file
                         )
 
-                        # 注入“截至目前累计成果”的进度快照，帮助下一轮基于已有数据继续补齐
+                        # 注入"截至目前累计成果"的进度快照，帮助下一轮基于已有数据继续补齐
                         progress_snapshot = self._build_progress_snapshot(
                             topic=topic,
                             tracked_stats=tracked_stats,
@@ -307,7 +310,7 @@ class ResearchAgent:
                         message_history.append(feedback_message)
 
                 # 达到最大迭代次数
-                print(f"\n⚠️  达到最大迭代次数 ({self.max_iterations})，返回当前结果")
+                logger.warning(f"达到最大迭代次数 ({self.max_iterations})，返回当前结果")
                 
                 # 记录超时结果
                 research_span.set_attribute('final_iteration', self.max_iterations)
@@ -347,7 +350,7 @@ class ResearchAgent:
         saved_file = self._save_iteration_result(
             current_result, topic, iteration, tracked_stats
         )
-        print(f"   📁 本轮数据已保存至: {saved_file}")
+        logger.info(f"本轮数据已保存至: {saved_file}")
 
         # 2. 如果没有历史数据，直接返回当前结果
         if not self._iteration_results:
@@ -420,11 +423,11 @@ class ResearchAgent:
             comment_data_ratio=current_result.comment_data_ratio
         )
 
-        print(f"   📊 合并历史数据：")
-        print(f"      - 关键信息: {len(merged_key_infos)} 条（来自 {len(all_results)} 轮）")
-        print(f"      - 案例: {len(merged_cases)} 个")
-        print(f"      - 关键词: {len(merged_keywords)} 个")
-        print(f"      - 帖子来源: {len(merged_post_sources)} 个")
+        logger.info("合并历史数据：")
+        logger.info(f"  - 关键信息: {len(merged_key_infos)} 条（来自 {len(all_results)} 轮）")
+        logger.info(f"  - 案例: {len(merged_cases)} 个")
+        logger.info(f"  - 关键词: {len(merged_keywords)} 个")
+        logger.info(f"  - 帖子来源: {len(merged_post_sources)} 个")
 
         return merged_result
 
@@ -437,7 +440,7 @@ class ResearchAgent:
         max_items: int = 10,
     ) -> str:
         """
-        构建“截至目前已收集内容”的短摘要，注入到下一轮对话里，避免模型重复劳动。
+        构建"截至目前已收集内容"的短摘要，注入到下一轮对话里，避免模型重复劳动。
 
         目标：信息密度高、长度可控（尽量 < ~2000 chars）。
         """

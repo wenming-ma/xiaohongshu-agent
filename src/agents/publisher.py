@@ -10,8 +10,11 @@ from pydantic_ai.mcp import MCPServerStdio
 from ..models.schemas import XHSContent, PublishResult
 from ..utils.model_factory import get_model
 from ..utils.retry_handler import with_retry
+from ..utils.logger import get_logger
 from ..config.settings import RetryConfig, PathConfig, TimeoutConfig, PublishConfig
 from prompts import get_system_prompt, get_user_prompt
+
+logger = get_logger(__name__)
 
 
 class PublisherAgent:
@@ -38,10 +41,10 @@ class PublisherAgent:
             timeout=TimeoutConfig.MCP_INIT_TIMEOUT,
         )
 
-        # Publisher Agent（执行发布操作）
+        # Publisher Agent（结构化输出：直接返回 PublishResult）
         self.publisher = Agent(
             model=model,
-            output_type=str,  # 返回发布状态描述
+            output_type=PublishResult,
             toolsets=[self.mcp_server],
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
@@ -66,25 +69,18 @@ class PublisherAgent:
         Returns:
             PublishResult: 发布结果
         """
-        print(f"\n   📤 准备发布到小红书...")
-        print(f"   - 标题: {content.title}")
-        print(f"   - 图片数量: {len(images)} 张")
+        logger.info("准备发布到小红书: %s (%d 张图片)", content.title, len(images))
 
         try:
             # 验证图片顺序（第一张必须是 cover）
             if images:
-                first_image_name = images[0].stem  # 获取文件名（不含扩展名）
+                first_image_name = images[0].stem
                 if not first_image_name.startswith('cover'):
-                    print(f"   ⚠️  警告：第一张图片不是封面图！")
-                    print(f"      当前第一张：{first_image_name}")
-                    print(f"      预期第一张：cover")
-                    # 注：不自动修正，让用户知道问题
+                    logger.warning("第一张图片不是封面图: %s", first_image_name)
 
-            # 打印图片上传顺序（供确认）
-            print(f"\n   📋 图片上传顺序：")
+            # 记录图片上传顺序
             for i, img in enumerate(images):
-                image_type = img.stem  # cover, detail_1, detail_2...
-                print(f"      {i+1}. {image_type} → {img.name}")
+                logger.debug("图片 %d: %s", i + 1, img.name)
 
             # 构建用户提示词（带类型标注）
             image_paths_str = "\n".join([
@@ -104,38 +100,25 @@ class PublisherAgent:
             )
 
             # 执行发布（Agent 会使用 Playwright MCP 工具）
-            print(f"\n   🤖 Agent 开始执行发布流程...")
+            logger.info("Agent 开始执行发布流程...")
 
             async with self.mcp_server:
                 result = await self.publisher.run(user_prompt)
-                status_message = result.output
+                publish_result: PublishResult = result.output
 
-            print(f"\n   📋 Agent 执行结果:")
-            print(f"   {status_message}")
-
-            # 判断是否成功（基于 Agent 输出）
-            success_keywords = ["成功", "SUCCESS", "发布完成", "published"]
-            is_success = any(keyword in status_message for keyword in success_keywords)
-
-            if is_success:
-                # 尝试从输出中提取发布链接（如果有）
-                post_url = self._extract_url_from_message(status_message)
-
-                return PublishResult(
-                    published=True,
-                    platform="xiaohongshu",
-                    publish_time=datetime.now().isoformat(),
-                    post_url=post_url,
-                    error_message="",
-                    retry_count=0
-                )
+            # Agent 直接返回结构化的 PublishResult
+            if publish_result.published:
+                logger.info("发布成功: %s", publish_result.post_url or "已发布")
             else:
+                logger.warning("发布失败: %s", publish_result.error_message)
                 # 发布失败，触发重试
-                raise RuntimeError(f"发布失败: {status_message}")
+                raise RuntimeError(f"发布失败: {publish_result.error_message}")
+
+            return publish_result
 
         except Exception as e:
             error_msg = str(e)
-            print(f"\n   ❌ 发布异常: {error_msg}")
+            logger.error("发布异常: %s", error_msg)
 
             # 返回失败结果（包含元数据供手动重试）
             return PublishResult(
@@ -148,29 +131,3 @@ class PublisherAgent:
                 content_snapshot=content.model_dump(),
                 image_paths=[str(img) for img in images]
             )
-
-    def _extract_url_from_message(self, message: str) -> str:
-        """
-        从 Agent 输出消息中提取小红书链接
-
-        Args:
-            message: Agent 输出消息
-
-        Returns:
-            str: 提取的 URL，如果没有则返回空字符串
-        """
-        import re
-
-        # 匹配小红书链接模式
-        patterns = [
-            r'https?://www\.xiaohongshu\.com/explore/[a-zA-Z0-9]+',
-            r'https?://www\.xiaohongshu\.com/discovery/item/[a-zA-Z0-9]+',
-            r'https?://creator\.xiaohongshu\.com/publish/success\?id=[a-zA-Z0-9]+'
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, message)
-            if match:
-                return match.group(0)
-
-        return ""

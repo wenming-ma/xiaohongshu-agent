@@ -12,6 +12,9 @@ from functools import wraps
 import asyncio
 from typing import Any, Callable, TypeVar
 import logfire
+from ..utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 T = TypeVar('T')
 
@@ -117,13 +120,13 @@ class ExternalValidator(ABC):
                         result = await func(agent_instance, *args, **kwargs)
 
                         # 2. 获取验证目标
-                        print(f"         🔍 [{self.validator_name}] 准备验证...")
+                        logger.debug(f"[{self.validator_name}] 准备验证...")
                         target = await self.get_validation_target(
                             agent_instance, result, kwargs
                         )
 
                         # 3. 执行验证
-                        print(f"         🔍 [{self.validator_name}] 开始分析...")
+                        logger.debug(f"[{self.validator_name}] 开始分析...")
                         review = await self.validate(target, kwargs)
 
                         # 记录验证结果到 span
@@ -141,7 +144,7 @@ class ExternalValidator(ABC):
                             # 验证通过，删除临时截屏（如果存在）
                             if self._temp_screenshot and self._temp_screenshot.exists():
                                 self._temp_screenshot.unlink()
-                                print(f"         🗑️  [{self.validator_name}] 已删除临时截屏")
+                                logger.debug(f"[{self.validator_name}] 已删除临时截屏")
                             return result
 
                         # 4. 验证失败
@@ -172,8 +175,8 @@ class ExternalValidator(ABC):
                     except Exception as e:
                         # 记录其他异常（如网络错误、Agent 调用失败等）
                         span.set_attribute('error', str(e)[:200])
-                        print(f"         ❌ [{self.validator_name}] 验证异常: {type(e).__name__}")
-                        print(f"            {str(e)[:200]}")
+                        logger.error(f"[{self.validator_name}] 验证异常: {type(e).__name__}")
+                        logger.error(f"  {str(e)[:200]}")
                         raise
 
             raise last_error
@@ -182,9 +185,9 @@ class ExternalValidator(ABC):
 
     def _log_success(self, review: Any) -> None:
         """记录验证成功"""
-        print(f"         ✅ [{self.validator_name}] 验证通过")
+        logger.info(f"[{self.validator_name}] 验证通过")
 
     def _log_retry(self, reason: str, attempt: int, delay: float) -> None:
         """记录重试信息"""
-        print(f"         ⚠️ [{self.validator_name}] {reason}")
-        print(f"   🔄 {delay:.0f}s 后重试 ({attempt + 1}/{self.max_retries})...")
+        logger.warning(f"[{self.validator_name}] {reason}")
+        logger.info(f"{delay:.0f}s 后重试 ({attempt + 1}/{self.max_retries})...")

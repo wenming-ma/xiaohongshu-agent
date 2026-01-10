@@ -8,8 +8,11 @@ from pydantic_ai.messages import ModelRequest, UserPromptPart
 from ..models.schemas import ResearchResult, XHSContent, ReviewResult
 from ..utils.model_factory import get_model
 from ..utils.retry_handler import with_retry
+from ..utils.logger import get_logger
 from ..config.settings import RetryConfig, ReviewConfig
 from prompts import get_system_prompt, get_user_prompt
+
+logger = get_logger(__name__)
 
 
 class ContentAgent:
@@ -91,7 +94,7 @@ class ContentAgent:
                     topic=topic,
                     research_data=research.model_dump_json(indent=2)
                 )
-                print("   ✍️  开始创作内容...")
+                logger.info("开始创作内容...")
             else:
                 # 将审核反馈注入消息历史
                 feedback_message = (
@@ -112,7 +115,7 @@ class ContentAgent:
                     UserPromptPart(feedback_message)
                 ]))
                 prompt = "请根据反馈修订内容，确保数量一致、数据准确。"
-                print(f"   🔄 根据反馈修订内容 (第{i+1}轮)...")
+                logger.info(f"根据反馈修订内容 (第{i+1}轮)...")
 
             # 执行生成
             run_result = await self.generator.run(prompt, message_history=messages)
@@ -120,21 +123,21 @@ class ContentAgent:
             messages.extend(run_result.new_messages())  # 保留历史
 
             # 2. 审核
-            print(f"   🔍 审核内容 (第{i+1}轮)...")
+            logger.info(f"审核内容 (第{i+1}轮)...")
             review = await self._review(content, research)
 
             # 3. 通过则返回
             if review.passed:
-                print(f"   ✅ 内容审核通过 (第{i+1}轮)")
-                print(f"      - 标题: {content.title}")
-                print(f"      - 评分: {review.score:.1f}/100")
+                logger.info(f"内容审核通过 (第{i+1}轮)")
+                logger.info(f"  - 标题: {content.title}")
+                logger.info(f"  - 评分: {review.score:.1f}/100")
                 return content
 
             # 未通过，打印反馈
-            print(f"   ⚠️  内容审核未通过 (第{i+1}轮): {review.summary}")
+            logger.warning(f"内容审核未通过 (第{i+1}轮): {review.summary}")
             for issue in review.issues:
-                print(f"      - [{issue.severity}] {issue.description}")
+                logger.warning(f"  - [{issue.severity}] {issue.description}")
 
         # 达到最大迭代次数
-        print(f"   ⚠️  达到最大迭代次数 ({self.max_iterations})，返回当前结果")
+        logger.warning(f"达到最大迭代次数 ({self.max_iterations})，返回当前结果")
         return content

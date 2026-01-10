@@ -17,6 +17,9 @@ from httpx import HTTPStatusError, TimeoutException, ConnectError, ReadError
 from anthropic import APIConnectionError, APIStatusError
 
 from ..config.settings import RetryConfig
+from .logger import get_logger
+
+logger = get_logger(__name__)
 
 
 # ==================== 暂时性错误（可重试）====================
@@ -79,7 +82,7 @@ def _format_exception_details(e: Exception, func_name: str, args: tuple, kwargs:
     
     return f"""
 {'='*60}
-❌ 永久性错误 - 不可重试
+永久性错误 - 不可重试
 {'='*60}
 时间: {timestamp}
 函数: {func_name}
@@ -91,13 +94,6 @@ def _format_exception_details(e: Exception, func_name: str, args: tuple, kwargs:
 {full_traceback}
 {'='*60}
 """
-
-
-def _format_retry_info(e: Exception, func_name: str, attempt: int, max_retries: int, delay: float) -> str:
-    """格式化重试信息"""
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    return f"""   🔄 [{timestamp}] {type(e).__name__}: {e}
-      函数: {func_name} | 重试: {attempt + 1}/{max_retries} | 等待: {delay:.1f}s"""
 
 
 def with_retry(max_retries: int = None, initial_delay: float = None, max_total_wait: float = None):
@@ -149,7 +145,7 @@ def with_retry(max_retries: int = None, initial_delay: float = None, max_total_w
                 except PERMANENT_EXCEPTIONS as e:
                     # 永久性错误：记录详细日志，直接抛出
                     error_details = _format_exception_details(e, func_name, args, kwargs)
-                    print(error_details, file=sys.stderr)
+                    logger.error(error_details)
                     raise
                     
                 except TRANSIENT_EXCEPTIONS as e:
@@ -157,7 +153,7 @@ def with_retry(max_retries: int = None, initial_delay: float = None, max_total_w
                     last_exception = e
                     
                     if attempt == max_retries:
-                        print(f"\n   ❌ 重试次数耗尽 ({max_retries} 次)，最后错误: {type(e).__name__}: {e}")
+                        logger.error(f"重试次数耗尽 ({max_retries} 次)，最后错误: {type(e).__name__}: {e}")
                         raise
                     
                     # 计算延迟时间（指数退避，但不超过单次最大等待）
@@ -165,22 +161,23 @@ def with_retry(max_retries: int = None, initial_delay: float = None, max_total_w
                     
                     # 检查是否超过总等待时间
                     if total_wait_time + delay > max_total_wait:
-                        print(f"\n   ⏱️  总等待时间将超过上限 ({max_total_wait}s)，停止重试")
+                        logger.warning(f"总等待时间将超过上限 ({max_total_wait}s)，停止重试")
                         raise
                     
                     total_wait_time += delay
                     
                     # 打印重试信息
-                    retry_info = _format_retry_info(e, func_name, attempt, max_retries, delay)
-                    print(retry_info)
+                    timestamp = datetime.now().strftime("%H:%M:%S")
+                    logger.warning(f"[{timestamp}] {type(e).__name__}: {e}")
+                    logger.info(f"函数: {func_name} | 重试: {attempt + 1}/{max_retries} | 等待: {delay:.1f}s")
                     
                     await asyncio.sleep(delay)
                     
                 except Exception as e:
                     # 未知异常：记录详细日志，直接抛出
                     error_details = _format_exception_details(e, func_name, args, kwargs)
-                    print(error_details, file=sys.stderr)
-                    print(f"\n   ⚠️  未知异常类型，不进行重试: {type(e).__name__}")
+                    logger.error(error_details)
+                    logger.warning(f"未知异常类型，不进行重试: {type(e).__name__}")
                     raise
                     
             raise last_exception

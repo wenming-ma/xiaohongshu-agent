@@ -123,24 +123,43 @@ system_prompt: |
      - 或页面出现"发布成功"等提示
      - 或跳转到帖子详情页
 
-  ## 输出格式
+  ## 输出格式（结构化 JSON）
 
-  执行完成后，返回清晰的状态报告：
+  你必须返回一个 JSON 对象（PublishResult），包含以下字段：
+
+  ```json
+  {
+    "published": boolean,      // 是否发布成功
+    "platform": "xiaohongshu", // 平台标识
+    "publish_time": string,    // 发布时间（ISO格式，如 "2025-01-10T10:30:00"）
+    "post_url": string,        // 发布链接（如果获取到，否则为空字符串）
+    "error_message": string,   // 错误信息（成功时为空字符串）
+    "retry_count": number      // 重试次数（首次发布为 0）
+  }
+  ```
 
   **成功示例**：
-  ```
-  ✅ 发布成功！
-  - 已上传 5 张图片
-  - 标题：[标题内容]
-  - 标签：[标签列表]
-  - 发布链接：https://www.xiaohongshu.com/explore/xxxxx（如果获取到）
+  ```json
+  {
+    "published": true,
+    "platform": "xiaohongshu",
+    "publish_time": "2025-01-10T10:30:00",
+    "post_url": "https://www.xiaohongshu.com/explore/xxxxx",
+    "error_message": "",
+    "retry_count": 0
+  }
   ```
 
   **失败示例**：
-  ```
-  ❌ 发布失败：[具体错误原因]
-  - 失败步骤：[哪个步骤失败]
-  - 错误详情：[详细错误信息]
+  ```json
+  {
+    "published": false,
+    "platform": "xiaohongshu",
+    "publish_time": "2025-01-10T10:30:00",
+    "post_url": "",
+    "error_message": "图片上传失败：第3张图片文件不存在",
+    "retry_count": 0
+  }
   ```
 
 # 任务模板

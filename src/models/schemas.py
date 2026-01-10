@@ -3,7 +3,35 @@ Pydantic 数据模型
 定义研究结果和内容的数据结构
 """
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, TypedDict
+
+
+# ==================== TypedDict 类型定义 ====================
+
+
+class GroupSpec(TypedDict):
+    """语义分组规格（用于 ImageAgent 内部传递）"""
+    title: str
+    indices: list[int]
+
+
+class CompactKeyInfo(TypedDict):
+    """精简的 key_info 表示（用于 LLM 输入，降低 token）"""
+    index: int
+    type: str | None
+    name: str
+    text: str
+
+
+class ImageTypeSpec(TypedDict, total=False):
+    """图片生成规格（cover 或 detail_N）"""
+    type: str           # "cover" 或 "detail_N"
+    desc: str           # 图片描述
+    group_title: str    # 仅 detail：分组标题
+    indices: list[int]  # 仅 detail：key_info 索引列表
+
+
+# ==================== Pydantic 模型 ====================
 
 
 class ResearchResult(BaseModel):
@@ -258,6 +286,17 @@ class ImageGroupingReviewResult(BaseModel):
     summary: str = Field(
         default="",
         description="审核总结",
+    )
+
+
+class GeminiOperationResult(BaseModel):
+    """Gemini 操作结果（用于 gemini_operator Agent）"""
+
+    success: bool = Field(description="操作是否成功完成")
+    status: str = Field(description="状态描述（成功/失败原因）")
+    downloaded_file: Optional[str] = Field(
+        default=None,
+        description="下载的文件名（如果有）"
     )
 
 

@@ -18,7 +18,10 @@ from pydantic_ai import Agent, BinaryContent
 from .external_base import ExternalValidator
 from ..models.schemas import GeminiConfigReview
 from ..utils.image_compression import compress_image_for_review
+from ..utils.logger import get_logger
 from prompts import get_system_prompt, get_user_prompt
+
+logger = get_logger(__name__)
 
 
 class GeminiConfigValidator(ExternalValidator):
@@ -79,7 +82,7 @@ class GeminiConfigValidator(ExternalValidator):
         )
 
         screenshot_path = agent_instance.downloads_dir / filename
-        print(f"         📸 [{self.validator_name}] 截屏: {screenshot_path.name}")
+        logger.debug(f"[{self.validator_name}] 截屏: {screenshot_path.name}")
 
         # 保存截屏路径，验证通过后删除
         self._temp_screenshot = screenshot_path
@@ -128,4 +131,4 @@ class GeminiConfigValidator(ExternalValidator):
 
     def _log_success(self, review: GeminiConfigReview) -> None:
         """记录验证成功（覆盖基类方法以显示更多信息）"""
-        print(f"         ✅ [{self.validator_name}] 配置正确 (Create images: ✓, Pro: ✓)")
+        logger.info(f"[{self.validator_name}] 配置正确 (Create images: OK, Pro: OK)")

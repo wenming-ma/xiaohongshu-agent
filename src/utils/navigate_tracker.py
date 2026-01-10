@@ -5,6 +5,10 @@ MCP 工具调用追踪器
 import re
 from typing import Any, List, Callable
 from pydantic_ai import RunContext, WrapperToolset, ToolsetTool
+from .logger import get_logger
+
+logger = get_logger(__name__)
+
 
 class NavigateTracker(WrapperToolset):
     """
@@ -34,9 +38,9 @@ class NavigateTracker(WrapperToolset):
     def visit_and_replace(self, visitor: Callable) -> "NavigateTracker":
         """
         关键：避免 pydantic-ai 在构建运行时 toolset 时对 WrapperToolset 进行 dataclasses.replace()
-        产生“新实例”，导致追踪数据写入到克隆实例而外部读取仍是旧实例（表现为追踪数量始终为 0）。
+        产生"新实例"，导致追踪数据写入到克隆实例而外部读取仍是旧实例（表现为追踪数量始终为 0）。
 
-        我们通过“就地更新 wrapped 并返回 self”来保持同一实例的追踪状态可见。
+        我们通过"就地更新 wrapped 并返回 self"来保持同一实例的追踪状态可见。
         """
         # 让 visitor 继续作用于底层 toolset（通常是 MCPServerStdio 等 leaf toolset）
         if hasattr(self.wrapped, "visit_and_replace"):
@@ -110,7 +114,7 @@ class NavigateTracker(WrapperToolset):
         # 检查是否是帖子详情页
         if self._is_post_detail_url(url) and url not in self._post_detail_urls:
             self._post_detail_urls.append(url)
-            print(f"   [追踪] 帖子详情页: {url[:80]}...")
+            logger.debug(f"[追踪] 帖子详情页: {url[:80]}...")
 
     def _track_from_result(self, result: Any) -> None:
         """从工具返回内容里提取 URL（用于 click/snapshot 后的页面状态）"""

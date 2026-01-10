@@ -61,6 +61,11 @@ class ImageConfig:
     # 语义分组审核
     GROUPING_REVIEW_MAX_RETRIES = 3  # 分组审核失败后最大重试次数
 
+    # 语义分组参数
+    MAX_GROUP_SIZE_CAP = 16          # 可读性上限（每组最大条数）
+    COMPACT_TEXT_MAX_LEN = 240       # compact key_info 文本最大长度
+    MIN_GROUP_SIZE_THRESHOLD = 8     # key_infos >= 此值时，min_group_size=3
+
     # 压缩参数
     COMPRESS_QUALITY_START = 95    # 压缩起始质量
     COMPRESS_QUALITY_MIN = 20      # 压缩最低质量

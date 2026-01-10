@@ -21,7 +21,10 @@ from pydantic_ai import Agent
 from .internal_base import InternalValidator, InternalValidationResult
 from ..models.schemas import ResearchResult, ReviewResult
 from ..config.settings import RetryConfig
+from ..utils.logger import get_logger
 from prompts import get_system_prompt, get_user_prompt
+
+logger = get_logger(__name__)
 
 
 class ResearchReviewValidator(InternalValidator):
@@ -159,8 +162,8 @@ class ResearchReviewValidator(InternalValidator):
     def _log_result(self, validation_result: InternalValidationResult) -> None:
         """记录验证结果（覆盖基类方法以显示评分）"""
         if validation_result.passed:
-            print(f"   ✅ [{self.validator_name}] 数据质量验证通过")
-            print(f"      - 评分: {validation_result.score:.1f}/100")
+            logger.info(f"[{self.validator_name}] 数据质量验证通过")
+            logger.info(f"  - 评分: {validation_result.score:.1f}/100")
         else:
-            print(f"   ⚠️  [{self.validator_name}] 数据质量验证未通过")
-            print(f"      - 评分: {validation_result.score:.1f}/100")
+            logger.warning(f"[{self.validator_name}] 数据质量验证未通过")
+            logger.warning(f"  - 评分: {validation_result.score:.1f}/100")

@@ -10,6 +10,9 @@ from typing import Optional
 from PIL import Image
 
 from ..config.settings import ImageConfig
+from .logger import get_logger
+
+logger = get_logger(__name__)
 
 
 async def compress_image_for_review(
@@ -72,7 +75,7 @@ def _compress_sync(image_path: Path, max_size_mb: float) -> bytes:
         size_mb = len(buffer.getvalue()) / (1024 * 1024)
 
         if size_mb <= max_size_mb:
-            print(f"      📦 图片压缩: {image_path.name} -> {size_mb:.2f}MB (质量: {quality})")
+            logger.debug(f"图片压缩: {image_path.name} -> {size_mb:.2f}MB (质量: {quality})")
             return buffer.getvalue()
 
         quality -= ImageConfig.COMPRESS_QUALITY_STEP
@@ -90,6 +93,6 @@ def _compress_sync(image_path: Path, max_size_mb: float) -> bytes:
     img.save(buffer, format='JPEG', quality=ImageConfig.COMPRESS_QUALITY_MIN, optimize=True)
 
     final_size_mb = len(buffer.getvalue()) / (1024 * 1024)
-    print(f"      📦 图片压缩+缩放: {image_path.name} -> {final_size_mb:.2f}MB ({new_size[0]}x{new_size[1]})")
+    logger.debug(f"图片压缩+缩放: {image_path.name} -> {final_size_mb:.2f}MB ({new_size[0]}x{new_size[1]})")
 
     return buffer.getvalue()
