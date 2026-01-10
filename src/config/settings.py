@@ -60,7 +60,7 @@ class ImageConfig:
     MAX_DETAIL_IMAGES = 8           # 最多详情图数量（1封面+8详情=9张，小红书上限）
 
     # 语义分组审核
-    GROUPING_REVIEW_MAX_RETRIES = 3  # 分组审核失败后最大重试次数
+    GROUPING_REVIEW_MAX_RETRIES = 10  # 分组审核失败后最大重试次数
 
     # 语义分组参数
     MAX_GROUP_SIZE_CAP = 16          # 可读性上限（每组最大条数）
@@ -154,7 +154,7 @@ class ResearchConfig:
     """研究相关配置"""
 
     # 帖子数量要求
-    MIN_POSTS_RESEARCHED = 21      # 最少研究帖子数
+    MIN_POSTS_RESEARCHED = 5      # 最少研究帖子数
 
     # 数据质量要求
     MIN_KEY_INFOS = 15            # 最少关键信息数量

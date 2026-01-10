@@ -31,6 +31,7 @@ from ..config.settings import RetryConfig, ResearchConfig, PathConfig, TimeoutCo
 from prompts import get_system_prompt, get_user_prompt
 from .login import LoginAgent
 from .image_reader import ImageReaderAgent
+from .web_search import WebSearchAgent
 
 logger = get_logger(__name__)
 
@@ -74,6 +75,9 @@ class ResearchAgent:
         # 读图工具（Claude 视觉）：给 research/search 场景读取截图/图片文本
         self.image_reader_agent = ImageReaderAgent()
 
+        # Web 搜索工具（不依赖模型 provider 的 builtin web_search）
+        self.web_search_agent = WebSearchAgent()
+
         # 导航追踪器 - 包装 MCP Server 以追踪帖子详情页访问
         self.navigate_tracker = NavigateTracker(self.mcp_server)
 
@@ -85,6 +89,7 @@ class ResearchAgent:
             tools=[
                 self.login_agent.get_tool(),        # 登录/注册工具
                 self.image_reader_agent.get_tool(), # 读图工具（OCR/视觉理解）
+                self.web_search_agent.get_tool(),   # Web 搜索（用于扩展关键词/背景）
             ],
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
@@ -157,6 +162,8 @@ class ResearchAgent:
         self._output_dir = output_dir
         # 历史迭代结果（用于合并）
         self._iteration_results: list[ResearchResult] = []
+        # 历史保存文件（用于进度快照展示，便于下轮定位全部中间产物）
+        self._saved_iteration_files: list[str] = []
         # 最近一次"进度快照"文本，避免重复注入
         self._last_progress_snapshot: str | None = None
         
@@ -493,7 +500,8 @@ class ResearchAgent:
         cases_preview = "\n".join(
             f"- {_short(item)}" for item in merged_cases[:max_items]
         ) or "- (none)"
-        keywords_preview = ", ".join(list(seen_keywords)[: max_items]) or "(none)"
+        # 关键词：不限制数量（用户要求），但做稳定排序，方便对比与去重
+        keywords_preview = ", ".join(sorted(seen_keywords)) or "(none)"
 
         tracked_urls = tracked_stats.get("post_detail_urls") or []
         if isinstance(tracked_urls, list):
@@ -501,16 +509,34 @@ class ResearchAgent:
         else:
             tracked_urls_preview = f"- {_short(tracked_urls)}"
 
+        # 截至目前所有已保存的 JSON 文件（多文件指向）
+        saved_files = []
+        if hasattr(self, "_saved_iteration_files") and isinstance(self._saved_iteration_files, list):
+            saved_files = [str(p) for p in self._saved_iteration_files if p]
+        # 兜底：确保本轮 saved_file 一定在列表里
+        if saved_file and saved_file not in saved_files:
+            saved_files.append(saved_file)
+
+        # 为了长度可控：如果太多，只展示最近 max_items 个，但保留总数
+        if len(saved_files) > max_items:
+            saved_files_preview = "\n".join(f"- {p}" for p in saved_files[-max_items:])
+            saved_files_note = f"(total {len(saved_files)} files, showing last {max_items})"
+        else:
+            saved_files_preview = "\n".join(f"- {p}" for p in saved_files) or "- (none)"
+            saved_files_note = ""
+
         return (
             f"【进度快照｜仅供参考，请勿在输出中重复】\n"
             f"- topic: {topic}\n"
             f"- tracked_post_count: {tracked_stats.get('post_detail_count', 0)}\n"
-            f"- saved_json: {saved_file}\n\n"
+            f"- saved_json:\n"
+            f"{saved_files_preview}\n"
+            f"{(saved_files_note + chr(10)) if saved_files_note else ''}\n"
             f"已保存的关键信息（示例，最多{max_items}条）：\n"
             f"{key_infos_preview}\n\n"
             f"已保存的案例（示例，最多{max_items}条）：\n"
             f"{cases_preview}\n\n"
-            f"已保存的关键词（示例，最多{max_items}个）： {keywords_preview}\n\n"
+            f"已保存的关键词： {keywords_preview}\n\n"
             f"已进入的帖子详情页（最近{max_items}个）：\n"
             f"{tracked_urls_preview}\n\n"
             f"⚠️ 重要提醒：\n"
@@ -562,6 +588,11 @@ class ResearchAgent:
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
+        # 记录到“截至目前保存的文件”列表（用于进度快照）
+        if not hasattr(self, "_saved_iteration_files") or not isinstance(self._saved_iteration_files, list):
+            self._saved_iteration_files = []
+        self._saved_iteration_files.append(str(filepath))
+
         return str(filepath)
 
     def _simplify_message_history(
@@ -586,7 +617,8 @@ class ResearchAgent:
         Returns:
             简化后的消息历史
         """
-        summary_text = f"[saved to {saved_file}, truncated]"
+        # 用户要求：避免在简化摘要里输出长路径
+        summary_text = "... truncated ..."
 
         # 1. 找出最后一个 ToolReturnPart / ToolCallPart / ThinkingPart 的位置
         last_tool_return_pos = None  # (msg_idx, part_idx)

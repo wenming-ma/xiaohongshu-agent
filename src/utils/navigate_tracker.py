@@ -3,6 +3,7 @@ MCP 工具调用追踪器
 用于跟踪 playwright_navigate 调用，统计帖子详情页访问次数
 """
 import re
+from urllib.parse import urlsplit, urlunsplit
 from typing import Any, List, Callable
 from pydantic_ai import RunContext, WrapperToolset, ToolsetTool
 from .logger import get_logger
@@ -96,6 +97,33 @@ class NavigateTracker(WrapperToolset):
 
         return result
 
+    def _normalize_url(self, url: str) -> str:
+        """
+        规范化 URL：
+        - 去掉 query / fragment（如 xsec_token 等），减少长度并提升去重稳定性
+        - 仅保留 scheme://netloc/path
+        """
+        if not url:
+            return url
+        try:
+            parts = urlsplit(url)
+            # 如果没有 scheme/netloc（例如工具返回的相对路径），保持原样
+            if not parts.scheme or not parts.netloc:
+                # 仍然尽量去掉 query/fragment
+                if "?" in url:
+                    url = url.split("?", 1)[0]
+                if "#" in url:
+                    url = url.split("#", 1)[0]
+                return url
+            return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+        except Exception:
+            # 保守兜底：字符串切割
+            if "?" in url:
+                url = url.split("?", 1)[0]
+            if "#" in url:
+                url = url.split("#", 1)[0]
+            return url
+
     def _track_navigation(self, url: str) -> None:
         """
         追踪导航 URL
@@ -103,6 +131,7 @@ class NavigateTracker(WrapperToolset):
         Args:
             url: 导航目标 URL
         """
+        url = self._normalize_url(url)
         if not url:
             return
 

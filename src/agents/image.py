@@ -514,13 +514,19 @@ class ImageAgent:
         # 尽量从末尾往前合并，保留前面主题性更强的标题
         i = len(merged) - 2
         while len(merged) > max_groups and i >= 0:
+            # merged 在循环中会 pop，必须确保 i+1 仍然有效
+            if i + 1 >= len(merged):
+                i = len(merged) - 2
+                continue
             a = merged[i]
             b = merged[i + 1]
             if can_merge(a, b):
                 a["indices"].extend(b["indices"])
                 a["indices"].sort()
                 merged.pop(i + 1)
-                # 合并后，继续尝试从同一位置往前合并
+                # 合并后列表变短，i 可能变成最后一个索引，需回退到合法区间
+                i = min(i, len(merged) - 2)
+                # 合并后，继续尝试从当前位置往前合并
             else:
                 i -= 1
 
@@ -670,44 +676,76 @@ class ImageAgent:
         review_feedback: str | None = None
         groups: list[GroupSpec] = []
 
-        for attempt in range(max_review_retries):
-            # 1) 语义分组
-            groups = await self._semantic_group_key_infos(
-                topic=topic,
-                research=research,
-                max_group_size=target_group_size,
-                target_groups=target_groups,
-                review_feedback=review_feedback,
+        # 没有 key_infos 时不需要分组（避免后续调整逻辑对空列表做索引）
+        if len(research.key_infos or []) == 0:
+            return []
+
+        # 语义分组是“锦上添花”，不要让它成为配图的硬失败点：
+        # - 若 LLM/Provider 层异常：降级为确定性切块分组（不依赖 LLM）
+        # - 若审核一直不过：使用最后一次分组继续生成（并打印 warning）
+        try:
+            for attempt in range(max_review_retries):
+                # 1) 语义分组
+                groups = await self._semantic_group_key_infos(
+                    topic=topic,
+                    research=research,
+                    max_group_size=target_group_size,
+                    target_groups=target_groups,
+                    review_feedback=review_feedback,
+                )
+                # 2) 确定性调整
+                groups = self._adjust_groups_to_target_count(
+                    groups,
+                    target_groups=target_groups,
+                    max_group_size_cap=max_group_size_cap,
+                )
+                groups = self._cap_groups_to_max_images(
+                    groups,
+                    max_groups=max_detail_images,
+                    max_group_size_cap=max_group_size_cap,
+                )
+                # 3) 审核分组
+                review = await self._review_groups(
+                    topic=topic,
+                    compact_items=compact_items,
+                    groups=groups,
+                    target_groups=len(groups),
+                    max_group_size=target_group_size,
+                )
+                if review.passed:
+                    logger.info("分组审核通过 (score=%.1f)", review.score)
+                    return groups
+                review_feedback = f"score={review.score}; issues={review.issues}; summary={review.summary}"
+                logger.warning(
+                    "分组审核未通过 (attempt=%d/%d): %s",
+                    attempt + 1, max_review_retries, review.summary
+                )
+        except Exception:
+            n_key_infos = len(research.key_infos or [])
+            logger.exception(
+                "语义分组阶段异常，降级为确定性分组 (key_infos=%d, target_groups=%d, target_group_size=%d)",
+                n_key_infos, target_groups, target_group_size
             )
-            # 2) 确定性调整
-            groups = self._adjust_groups_to_target_count(
-                groups,
-                target_groups=target_groups,
-                max_group_size_cap=max_group_size_cap,
-            )
-            groups = self._cap_groups_to_max_images(
-                groups,
+            if n_key_infos <= 0:
+                return []
+            # 兜底：按顺序切片，不依赖 LLM
+            idxs = list(range(n_key_infos))
+            chunk_size = max(1, min(target_group_size, max_group_size_cap))
+            chunks = [idxs[i : i + chunk_size] for i in range(0, len(idxs), chunk_size)]
+            fallback_groups: list[GroupSpec] = [
+                {"title": f"要点清单（{i}/{len(chunks)}）", "indices": chunk}
+                for i, chunk in enumerate(chunks, start=1)
+                if chunk
+            ]
+            return self._cap_groups_to_max_images(
+                fallback_groups,
                 max_groups=max_detail_images,
                 max_group_size_cap=max_group_size_cap,
             )
-            # 3) 审核分组
-            review = await self._review_groups(
-                topic=topic,
-                compact_items=compact_items,
-                groups=groups,
-                target_groups=len(groups),
-                max_group_size=target_group_size,
-            )
-            if review.passed:
-                logger.info("分组审核通过 (score=%.1f)", review.score)
-                return groups
-            review_feedback = f"score={review.score}; issues={review.issues}; summary={review.summary}"
-            logger.warning(
-                "分组审核未通过 (attempt=%d/%d): %s",
-                attempt + 1, max_review_retries, review.summary
-            )
 
-        raise RuntimeError(f"分组审核失败（已重试 {max_review_retries} 次）: {review_feedback}")
+        # 走到这里表示“审核一直没过”，但我们仍然可以用最后一次分组继续生成
+        logger.warning("分组审核失败（已重试 %d 次），将使用最后一次分组继续生成: %s", max_review_retries, review_feedback)
+        return groups
 
     @staticmethod
     def _build_image_types(groups: list[GroupSpec]) -> list[ImageTypeSpec]:

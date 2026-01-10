@@ -133,7 +133,8 @@ async def run_workflow(topic: str, audience: str, generate_image: bool = True) -
                 logger.info(f"  - 生成时间: {image_result.generated_at}")
 
             except Exception as e:
-                logger.warning(f"配图生成失败: {e}")
+                # 打印完整堆栈，避免只看到一句 “list index out of range”
+                logger.exception("配图生成失败")
                 logger.warning("继续完成其他步骤...")
         else:
             logger.info("跳过配图生成（--no-image）")

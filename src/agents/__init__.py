@@ -14,6 +14,7 @@ from .research import ResearchAgent
 from .publisher import PublisherAgent
 from .login import LoginAgent
 from .image_reader import ImageReaderAgent
+from .web_search import WebSearchAgent
 
 __all__ = [
     "ImageAgent",
@@ -22,4 +23,5 @@ __all__ = [
     "PublisherAgent",
     "LoginAgent",
     "ImageReaderAgent",
+    "WebSearchAgent",
 ]
