@@ -646,7 +646,8 @@ class ImageAgent:
         max_detail_images = ImageConfig.MAX_DETAIL_IMAGES
         max_review_retries = ImageConfig.GROUPING_REVIEW_MAX_RETRIES
 
-        messages = []  # 消息历史（用于保留完整的对话上下文）
+        messages: list[ModelMessage] = []  # 消息历史（用于保留完整的对话上下文）
+        message_rounds: list[list[ModelMessage]] = []  # 按轮保存消息，便于裁剪上下文
         groups: list[GroupSpec] = []
 
         # 没有 key_infos 时不需要分组（避免后续调整逻辑对空列表做索引）
@@ -688,16 +689,32 @@ class ImageAgent:
                         f"- 每组建议大小：{target_group_size} 条\n"
                     )
 
-                    messages.append(ModelRequest(parts=[
+                    feedback_message = ModelRequest(parts=[
                         UserPromptPart(review_feedback)
-                    ]))
+                    ])
                     user_prompt = "请根据上述反馈重新分组，确保覆盖完整且分组语义一致。"
                     logger.info(f"根据反馈重新分组 (第{attempt+1}轮)...")
 
+                # 仅保留最近 3 轮历史，避免上下文过长
+                if message_rounds:
+                    kept_rounds = message_rounds[-3:]
+                    messages = [msg for round_msgs in kept_rounds for msg in round_msgs]
+                else:
+                    messages = []
+
                 # 执行分组（传递消息历史）
-                grouping_result = await self.grouping_agent.run(user_prompt, message_history=messages)
+                if attempt == 0:
+                    grouping_result = await self.grouping_agent.run(user_prompt, message_history=messages)
+                    round_messages = list(grouping_result.new_messages())
+                else:
+                    grouping_result = await self.grouping_agent.run(
+                        user_prompt,
+                        message_history=messages + [feedback_message],
+                    )
+                    round_messages = [feedback_message] + list(grouping_result.new_messages())
+
                 plan: ImageGroupingPlan = grouping_result.output
-                messages.extend(grouping_result.new_messages())  # 保留历史
+                message_rounds.append(round_messages)
 
                 # 归一化分组
                 groups = self._normalize_grouping_plan(plan, len(compact_items), target_group_size)
@@ -737,6 +754,13 @@ class ImageAgent:
                 "语义分组阶段异常，降级为确定性分组 (key_infos=%d, target_groups=%d, target_group_size=%d)",
                 n_key_infos, target_groups, target_group_size
             )
+            if groups:
+                logger.warning("语义分组异常，使用最近一次分组结果继续生成 (groups=%d)", len(groups))
+                return self._cap_groups_to_max_images(
+                    groups,
+                    max_groups=max_detail_images,
+                    max_group_size_cap=max_group_size_cap,
+                )
             if n_key_infos <= 0:
                 return []
             # 兜底：按顺序切片，不依赖 LLM
