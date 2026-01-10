@@ -10,6 +10,7 @@
 - @ImageQualityValidator: 验证图片质量（字迹清晰、风格匹配）
 """
 import json
+import math
 import time
 from datetime import datetime
 from pathlib import Path
@@ -48,7 +49,7 @@ class ImageAgent:
         # 注：验证截屏由 @GeminiConfigValidator 装饰器处理
         self.mcp_server = MCPServerStdio(
             command='npx',
-            args=['-y', '@playwright/mcp', '--output-dir', str(self.downloads_dir)],
+            args=['-y', '@playwright/mcp@latest', '--output-dir', str(self.downloads_dir)],
             env={
                 'HEADLESS': 'false',
                 'BROWSER_TYPE': 'chromium',
@@ -314,6 +315,64 @@ class ImageAgent:
         if set(all_indices) != set(range(n_key_infos)):
             raise ValueError("coverage mismatch (set)")
 
+    def _cap_groups_to_max_images(
+        self,
+        groups: List[Dict[str, Any]],
+        *,
+        max_groups: int,
+        max_group_size_cap: int,
+    ) -> List[Dict[str, Any]]:
+        """
+        确保 detail 组数量不超过 max_groups。
+
+        策略：从尾部开始合并相邻组，允许每组最多 max_group_size_cap 条（比 ENTITIES_PER_DETAIL 更宽松），
+        以满足“图片数量上限”这一硬约束；若仍无法满足，则退化为均匀切块。
+        """
+        if len(groups) <= max_groups:
+            return groups
+
+        merged = [dict(title=g.get("title", "要点"), indices=list(g.get("indices", []))) for g in groups]
+
+        def can_merge(a: dict, b: dict) -> bool:
+            return len(a["indices"]) + len(b["indices"]) <= max_group_size_cap
+
+        # 尽量从末尾往前合并，保留前面主题性更强的标题
+        i = len(merged) - 2
+        while len(merged) > max_groups and i >= 0:
+            a = merged[i]
+            b = merged[i + 1]
+            if can_merge(a, b):
+                a["indices"].extend(b["indices"])
+                a["indices"].sort()
+                merged.pop(i + 1)
+                # 合并后，继续尝试从同一位置往前合并
+            else:
+                i -= 1
+
+        if len(merged) <= max_groups:
+            return merged
+
+        # 兜底：均匀切块（保证数量上限）
+        all_indices: list[int] = []
+        for g in groups:
+            all_indices.extend(g.get("indices", []))
+        all_indices = sorted(all_indices)
+        if not all_indices:
+            return groups[:max_groups]
+
+        chunk_size = math.ceil(len(all_indices) / max_groups)
+        chunk_size = min(max_group_size_cap, max(1, chunk_size))
+        chunks = [all_indices[i : i + chunk_size] for i in range(0, len(all_indices), chunk_size)]
+        # 如果仍超过 max_groups（因为 cap 导致 chunk_size 变小），再压一次
+        while len(chunks) > max_groups:
+            # 合并最后两个 chunk
+            last = chunks.pop()
+            chunks[-1].extend(last)
+        capped: list[dict[str, Any]] = []
+        for idx, chunk in enumerate(chunks[:max_groups], start=1):
+            capped.append({"title": f"要点清单（{idx}/{min(len(chunks), max_groups)}）", "indices": chunk})
+        return capped
+
     async def generate_image(
         self,
         content: XHSContent,
@@ -345,10 +404,23 @@ class ImageAgent:
         # 动态计算图片类型（cover + 语义分组后的 detail_N）
         # 失败时回退到原始“按数量切片”的分发逻辑
         try:
+            max_detail_images = ImageConfig.MAX_DETAIL_IMAGES
+            # 为了不超过图片数量上限，允许每张 detail 承载更多要点（必要时）
+            # 例如：key_infos=60, max_detail_images=8 => 目标每张约8条
+            target_group_size = math.ceil(key_info_count / max_detail_images) if max_detail_images > 0 else ImageConfig.ENTITIES_PER_DETAIL
+            target_group_size = max(ImageConfig.ENTITIES_PER_DETAIL, target_group_size)
+            # 可读性上限：避免每张过多要点导致字太小（必要时仍会兜底切块）
+            max_group_size_cap = max(10, ImageConfig.ENTITIES_PER_DETAIL)
+
             groups = await self._semantic_group_key_infos(
                 topic=topic,
                 research=research,
-                max_group_size=ImageConfig.ENTITIES_PER_DETAIL,
+                max_group_size=target_group_size,
+            )
+            groups = self._cap_groups_to_max_images(
+                groups,
+                max_groups=max_detail_images,
+                max_group_size_cap=max_group_size_cap,
             )
             image_types: list[dict[str, Any]] = [{"type": "cover", "desc": "封面图 - 大标题风格，突出主题"}]
             for i, g in enumerate(groups, start=1):

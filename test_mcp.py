@@ -5,7 +5,7 @@ from pydantic_ai.mcp import MCPServerStdio
 async def test_mcp():
     mcp = MCPServerStdio(
         command='npx',
-        args=['-y', '@playwright/mcp'],
+        args=['-y', '@playwright/mcp@latest'],
         env={
             'HEADLESS': 'false',
             'BROWSER_TYPE': 'chromium',

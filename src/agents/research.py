@@ -48,9 +48,10 @@ class ResearchAgent:
         model = get_model()
 
         # Playwright MCP Server 实例
+        # 注意：使用 @latest 避免 npx 缓存导致的版本问题
         self.mcp_server = MCPServerStdio(
             command='npx',
-            args=['-y', '@playwright/mcp'],
+            args=['-y', '@playwright/mcp@latest'],
             env={
                 'HEADLESS': 'false',  # 显示浏览器窗口
                 'BROWSER_TYPE': 'chromium',
@@ -433,7 +434,7 @@ class ResearchAgent:
         topic: str,
         tracked_stats: dict[str, Any],
         saved_file: str,
-        max_items: int = 8,
+        max_items: int = 10,
     ) -> str:
         """
         构建“截至目前已收集内容”的短摘要，注入到下一轮对话里，避免模型重复劳动。
@@ -486,18 +487,21 @@ class ResearchAgent:
             tracked_urls_preview = f"- {_short(tracked_urls)}"
 
         return (
-            f"【进度快照｜截至目前累计成果】\n"
+            f"【进度快照｜仅供参考，请勿在输出中重复】\n"
             f"- topic: {topic}\n"
             f"- tracked_post_count: {tracked_stats.get('post_detail_count', 0)}\n"
             f"- saved_json: {saved_file}\n\n"
-            f"已提取关键信息（示例，最多{max_items}条）：\n"
+            f"已保存的关键信息（示例，最多{max_items}条）：\n"
             f"{key_infos_preview}\n\n"
-            f"已提取案例（示例，最多{max_items}条）：\n"
+            f"已保存的案例（示例，最多{max_items}条）：\n"
             f"{cases_preview}\n\n"
-            f"已提取关键词（示例，最多{max_items}个）： {keywords_preview}\n\n"
+            f"已保存的关键词（示例，最多{max_items}个）： {keywords_preview}\n\n"
             f"已进入的帖子详情页（最近{max_items}个）：\n"
             f"{tracked_urls_preview}\n\n"
-            f"请在此基础上继续探索补齐缺口，不要重复收集同类信息。"
+            f"⚠️ 重要提醒：\n"
+            f"- 以上历史数据已自动保存到文件，系统会自动合并所有轮次\n"
+            f"- 本轮你只需输出【新收集】的数据，不要重复输出历史数据\n"
+            f"- 请继续探索新帖子，收集新的关键信息和案例"
         )
 
     def _save_iteration_result(
@@ -741,5 +745,9 @@ class ResearchAgent:
         return (
             f"**验证未通过，请继续探索**\n\n"
             f"{combined}\n\n"
-            f"**请基于已搜索的内容发散思维，尝试不同关键词组合和细分角度，进入更多帖子详情页收集数据。**"
+            f"**重要提醒**：\n"
+            f"- 上一轮收集的数据已自动保存，系统会自动合并所有轮次结果\n"
+            f"- 本轮你只需输出【本轮新收集】的关键信息和案例\n"
+            f"- 不要在输出中重复之前轮次已收集的内容\n\n"
+            f"**请基于已搜索的内容发散思维，尝试不同关键词组合和细分角度，进入更多帖子详情页收集【新的】数据。**"
         )

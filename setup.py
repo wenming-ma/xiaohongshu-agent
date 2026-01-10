@@ -38,7 +38,7 @@ def install_mcp_server() -> bool:
     print("🌐 检查 Playwright MCP Server...")
     try:
         subprocess.run(
-            ["npx", "-y", "@playwright/mcp", "--version"],
+            ["npx", "-y", "@playwright/mcp@latest", "--version"],
             check=True,
             capture_output=True
         )

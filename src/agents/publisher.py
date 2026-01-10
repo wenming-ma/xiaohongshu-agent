@@ -26,7 +26,7 @@ class PublisherAgent:
         # 创建 Playwright MCP Server 实例（复用小红书浏览器会话）
         self.mcp_server = MCPServerStdio(
             command='npx',
-            args=['-y', '@playwright/mcp'],
+            args=['-y', '@playwright/mcp@latest'],
             env={
                 'HEADLESS': 'false',  # 显示浏览器窗口
                 'BROWSER_TYPE': 'chromium',
