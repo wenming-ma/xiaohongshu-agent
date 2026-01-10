@@ -12,7 +12,7 @@ import os
 from httpx import AsyncClient, HTTPStatusError, Timeout
 from tenacity import retry_if_exception_type, stop_after_attempt, wait_exponential
 from openai import AsyncOpenAI
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
 from ..config.settings import RetryConfig as AppRetryConfig, APIConfig
 
@@ -61,38 +61,29 @@ def _create_retrying_http_client() -> AsyncClient:
 
 def get_sagehub_model(
     model_name: str = None
-) -> OpenAIModel:
+) -> OpenAIChatModel:
     """
-    获取配置好重试机制的 SageHub Model（使用 OpenAI 兼容 API）
+    获取配置好的 SageHub Model（使用 OpenAI 兼容 API）
 
-    使用双层重试机制：
-    - HTTP 层：AsyncTenacityTransport（支持 Retry-After，精细重试单次调用）
-    - 方法层：@with_retry 装饰器（兜底重试整个工作流）
+    注意：OpenAIChatModel 会通过环境变量获取配置：
+    - OPENAI_API_KEY: API 密钥（我们用 SAGEHUB_API_KEY）
+    - OPENAI_BASE_URL: Base URL
 
     Args:
         model_name: 模型名称，默认使用配置中的 SAGEHUB_MODEL
 
     Returns:
-        OpenAIModel 实例（使用 SageHub OpenAI 兼容 API）
+        OpenAIChatModel 实例
     """
-    global _shared_client
     model_name = model_name or APIConfig.SAGEHUB_MODEL
 
-    if _shared_client is None:
-        api_key = os.getenv("SAGEHUB_API_KEY")
-        if not api_key:
-            raise ValueError("SAGEHUB_API_KEY 环境变量未设置")
+    api_key = os.getenv("SAGEHUB_API_KEY")
+    if not api_key:
+        raise ValueError("SAGEHUB_API_KEY 环境变量未设置")
 
-        # 创建带智能重试的 HTTP 客户端
-        http_client = _create_retrying_http_client()
+    # 临时设置 OPENAI_ 环境变量，让 OpenAIChatModel 使用
+    os.environ["OPENAI_API_KEY"] = api_key
+    os.environ["OPENAI_BASE_URL"] = APIConfig.SAGEHUB_BASE_URL
 
-        # 创建 OpenAI 客户端（使用 SageHub 的 base_url）
-        _shared_client = AsyncOpenAI(
-            api_key=api_key,
-            base_url=APIConfig.SAGEHUB_BASE_URL,
-            http_client=http_client,
-            timeout=300.0,  # 5分钟超时
-        )
-
-    # 使用共享的客户端创建 Model
-    return OpenAIModel(model_name, openai_client=_shared_client)
+    # 创建 Model（会自动使用环境变量）
+    return OpenAIChatModel(model_name)
