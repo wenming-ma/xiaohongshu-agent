@@ -26,6 +26,7 @@ from ..utils.model_factory import get_model
 from ..utils.retry_handler import with_retry
 from ..utils.navigate_tracker import NavigateTracker
 from ..utils.logger import get_logger
+from ..utils.tool_feedback import build_toolset_with_telegram_feedback
 from ..validators import ResearchDepthValidator, ResearchReviewValidator
 from ..config.settings import RetryConfig, ResearchConfig, PathConfig, TimeoutConfig
 from prompts import get_system_prompt, get_user_prompt
@@ -82,14 +83,19 @@ class ResearchAgent:
         self.navigate_tracker = NavigateTracker(self.mcp_server)
 
         # 研究生成 Agent（使用追踪器包装的工具集）
+        function_tools = [
+            self.login_agent.get_tool(),        # 登录/注册工具
+            self.image_reader_agent.get_tool(), # 读图工具（OCR/视觉理解）
+            self.web_search_agent.get_tool(),   # Web 搜索（用于扩展关键词/背景）
+        ]
         self.generator = Agent(
             model=model,
             output_type=ResearchResult,
-            toolsets=[self.navigate_tracker],
-            tools=[
-                self.login_agent.get_tool(),        # 登录/注册工具
-                self.image_reader_agent.get_tool(), # 读图工具（OCR/视觉理解）
-                self.web_search_agent.get_tool(),   # Web 搜索（用于扩展关键词/背景）
+            toolsets=[
+                build_toolset_with_telegram_feedback(
+                    toolsets=[self.navigate_tracker],
+                    tools=function_tools,
+                )
             ],
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,

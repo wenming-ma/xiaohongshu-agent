@@ -37,6 +37,7 @@ from ..utils.anthropic_provider import get_anthropic_model
 from ..utils.download_manager import DownloadManager
 from ..utils.retry_handler import with_retry
 from ..utils.logger import get_logger
+from ..utils.tool_feedback import build_toolset_with_telegram_feedback
 from ..validators import GeminiConfigValidator, ImageQualityValidator
 from ..config.settings import RetryConfig, ImageConfig, PathConfig, TimeoutConfig, APIConfig
 from prompts import get_system_prompt, get_user_prompt, get_prompt_field
@@ -157,13 +158,18 @@ class ImageAgent:
         )
 
         # Gemini 操作 Agent（结构化输出）
+        function_tools = [
+            Tool(self._check_download_status, takes_ctx=False),
+            self.login_agent.get_tool(),  # 登录/注册工具
+        ]
         self.gemini_operator = Agent(
             model=model,
             output_type=GeminiOperationResult,
-            toolsets=[self.mcp_server],
-            tools=[
-                Tool(self._check_download_status, takes_ctx=False),
-                self.login_agent.get_tool(),  # 登录/注册工具
+            toolsets=[
+                build_toolset_with_telegram_feedback(
+                    toolsets=[self.mcp_server],
+                    tools=function_tools,
+                )
             ],
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,

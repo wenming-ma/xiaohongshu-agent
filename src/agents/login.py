@@ -31,6 +31,7 @@ from ..config.settings import (
 )
 from ..utils.model_factory import get_model
 from ..utils.telegram_notifier import get_telegram_notifier
+from ..utils.tool_feedback import build_toolset_with_telegram_feedback
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -100,16 +101,21 @@ class LoginAgent:
         system_prompt = self._build_system_prompt()
         
         # 登录操作 Agent
+        function_tools = [
+            Tool(self._send_telegram_message, takes_ctx=False),
+            Tool(self._send_telegram_image, takes_ctx=False),
+            Tool(self._send_current_page_screenshot, takes_ctx=False),
+            Tool(self._wait_for_user_reply, takes_ctx=False),
+            Tool(self._ask_user, takes_ctx=False),
+        ]
         self.auth_agent = Agent(
             model=model,
             output_type=AuthResult,
-            toolsets=[self.mcp_server],
-            tools=[
-                Tool(self._send_telegram_message, takes_ctx=False),
-                Tool(self._send_telegram_image, takes_ctx=False),
-                Tool(self._send_current_page_screenshot, takes_ctx=False),
-                Tool(self._wait_for_user_reply, takes_ctx=False),
-                Tool(self._ask_user, takes_ctx=False),
+            toolsets=[
+                build_toolset_with_telegram_feedback(
+                    toolsets=[self.mcp_server],
+                    tools=function_tools,
+                )
             ],
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,

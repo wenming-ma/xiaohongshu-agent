@@ -172,6 +172,7 @@ class TelegramConfig:
     
     BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")  # 你的 Telegram ID（可选，不限制）
+    TOOL_FEEDBACK_ENABLED = os.getenv("TELEGRAM_TOOL_FEEDBACK_ENABLED", "0").lower() in ("1", "true", "yes", "on")
 
 
 # ==================== 用户信息配置 ====================

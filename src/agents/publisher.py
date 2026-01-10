@@ -11,6 +11,7 @@ from ..models.schemas import XHSContent, PublishResult
 from ..utils.model_factory import get_model
 from ..utils.retry_handler import with_retry
 from ..utils.logger import get_logger
+from ..utils.tool_feedback import build_toolset_with_telegram_feedback
 from ..config.settings import RetryConfig, PathConfig, TimeoutConfig, PublishConfig
 from prompts import get_system_prompt, get_user_prompt
 from .login import LoginAgent
@@ -46,11 +47,16 @@ class PublisherAgent:
         self.login_agent = LoginAgent(mcp_server=self.mcp_server)
 
         # Publisher Agent（结构化输出：直接返回 PublishResult）
+        function_tools = [self.login_agent.get_tool()]  # 登录/注册工具
         self.publisher = Agent(
             model=model,
             output_type=PublishResult,
-            toolsets=[self.mcp_server],
-            tools=[self.login_agent.get_tool()],  # 登录/注册工具
+            toolsets=[
+                build_toolset_with_telegram_feedback(
+                    toolsets=[self.mcp_server],
+                    tools=function_tools,
+                )
+            ],
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(get_system_prompt("publisher"),),

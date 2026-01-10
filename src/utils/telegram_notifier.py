@@ -65,8 +65,8 @@ class TelegramNotifier:
             # 后台轮询任务
             self._polling_task: Optional[asyncio.Task] = None
 
-            # 状态消息（用 edit 而不是刷屏）
-            self._status_message_id: Optional[int] = None
+            # 状态消息（用 edit 而不是刷屏）；按 key 维护多条状态，避免不同模块互相覆盖
+            self._status_message_ids: dict[str, int] = {}
         
         TelegramNotifier._initialized = True
         logger.info("TelegramNotifier 初始化完成")
@@ -160,13 +160,14 @@ class TelegramNotifier:
                 logger.error(f"重试发送失败: {e2}")
                 return None
 
-    async def upsert_status(self, text: str, chat_id: Optional[str] = None) -> Optional[int]:
+    async def upsert_status(self, text: str, chat_id: Optional[str] = None, *, key: str = "default") -> Optional[int]:
         """
         发送或更新“状态消息”（尽量复用同一条消息，避免刷屏）。
 
         Args:
             text: 状态内容
             chat_id: 目标聊天 ID（可选）
+            key: 状态消息 key（用于区分不同模块的状态消息）
 
         Returns:
             状态消息 ID，失败返回 None
@@ -180,19 +181,21 @@ class TelegramNotifier:
             logger.warning("未指定 chat_id，无法发送状态")
             return None
 
+        status_message_id = self._status_message_ids.get(key)
+
         # 优先编辑已有状态消息
-        if self._status_message_id is not None:
+        if status_message_id is not None:
             try:
                 await self.bot.edit_message_text(
                     chat_id=target_chat,
-                    message_id=self._status_message_id,
+                    message_id=status_message_id,
                     text=text,
                 )
-                return self._status_message_id
+                return status_message_id
             except Exception as e:
                 # 编辑失败（比如消息太旧/已被删除），退化为重新发一条
                 logger.debug(f"编辑状态消息失败，改为新发: {type(e).__name__}: {str(e)[:120]}")
-                self._status_message_id = None
+                self._status_message_ids.pop(key, None)
 
         # 新发一条状态消息
         try:
@@ -200,7 +203,7 @@ class TelegramNotifier:
                 chat_id=target_chat,
                 text=text,
             )
-            self._status_message_id = message.message_id
+            self._status_message_ids[key] = message.message_id
             return message.message_id
         except Exception as e:
             logger.error(f"发送状态消息失败: {type(e).__name__}: {str(e)[:200]}")
