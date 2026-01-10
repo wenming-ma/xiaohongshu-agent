@@ -18,3 +18,4 @@ nul
 # Generated outputs (e.g., Playwright downloads)
 output/
 workshop/
+test_*

@@ -30,8 +30,10 @@ from ..models.schemas import (
     GroupSpec,
     CompactKeyInfo,
     ImageTypeSpec,
+    ImageGenContext,
 )
 from ..utils.model_factory import get_model
+from ..utils.anthropic_provider import get_anthropic_model
 from ..utils.download_manager import DownloadManager
 from ..utils.retry_handler import with_retry
 from ..utils.logger import get_logger
@@ -114,13 +116,27 @@ class ImageAgent:
         # 获取带 HTTP 重试的 Model（根据配置选择 Anthropic 或 OpenRouter）
         model = get_model()
 
-        # 提示词生成 Agent
+        # 提示词生成 Agent（使用依赖注入传递验证反馈）
         self.prompt_generator = Agent(
             model=model,
             output_type=str,
+            deps_type=ImageGenContext,  # 依赖注入：验证反馈通过 deps 传递
             instrument=True,
-            system_prompt=(get_system_prompt("image"),),
         )
+
+        # 为 prompt_generator 注册动态 system_prompt
+        # 当 gen_ctx.validation_feedback 不为空时，会将反馈追加到系统提示词
+        @self.prompt_generator.system_prompt
+        async def _dynamic_system_prompt(ctx: RunContext[ImageGenContext]) -> str:
+            base_prompt = get_system_prompt("image")
+            if ctx.deps.validation_feedback:
+                return (
+                    base_prompt +
+                    "\n\n## 🚨 上次生成的图片问题（必须修复）\n"
+                    f"{ctx.deps.validation_feedback}\n\n"
+                    "请根据上述反馈调整提示词，确保生成的图片符合要求。"
+                )
+            return base_prompt
 
         # 语义分组 Agent（将 key_infos 分组后再分发到详情图）
         self.grouping_agent = Agent(
@@ -131,9 +147,9 @@ class ImageAgent:
             system_prompt=(get_system_prompt("image_grouping"),),
         )
 
-        # 分组审核 Agent（验证分组是否合理，失败则触发重新分组）
+        # 分组审核 Agent（使用 Claude 模型，验证分组是否合理，失败则触发重新分组）
         self.grouping_reviewer = Agent(
-            model=model,
+            model=get_anthropic_model(),
             output_type=ImageGroupingReviewResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
@@ -782,6 +798,10 @@ class ImageAgent:
         """
         在 MCP Server 上下文中逐张生成图片。
 
+        为每张图片创建独立的 ImageGenContext，用于依赖注入。
+        验证失败时，反馈会写入 gen_ctx.validation_feedback，
+        下次重试时 _generate_prompt 会读取该反馈并调整提示词。
+
         Args:
             content: 内容数据
             research: 研究数据
@@ -801,23 +821,33 @@ class ImageAgent:
 
                 logger.info("[%s] %s", image_type, image_desc)
 
-                # 生成 Gemini 提示词
-                logger.debug("生成图片描述提示词...")
-                prompt = await self._generate_prompt(content, research, topic, image_type_info)
-                logger.debug("提示词: %s...", prompt[:60])
+                # 为每张图片创建独立的上下文（每张图片的反馈独立）
+                gen_ctx = ImageGenContext(topic=topic, image_type=image_type)
 
                 # 使用 Playwright 操作 Gemini 生成图片
+                # 提示词生成现在在 _generate_via_gemini 内部完成
+                # 验证失败时会更新 gen_ctx.validation_feedback 并重试
                 logger.info("启动 Gemini 图片生成...")
                 image_path = await self._generate_via_gemini(
-                    prompt=prompt,
                     output_dir=output_dir,
                     image_type=image_type,
-                    topic=topic
+                    topic=topic,
+                    gen_ctx=gen_ctx,
+                    content=content,
+                    research=research,
+                    image_type_info=image_type_info,
+                )
+
+                # 获取最终使用的提示词（用于记录）
+                # 由于提示词在 _generate_via_gemini 内部生成，这里重新生成一次用于记录
+                # TODO: 考虑将最终提示词作为返回值的一部分
+                final_prompt = await self._generate_prompt(
+                    content, research, topic, image_type_info, gen_ctx
                 )
 
                 generated_images.append(GeneratedImage(
                     image_path=str(image_path),
-                    prompt_used=prompt,
+                    prompt_used=final_prompt,
                     image_type=image_type
                 ))
 
@@ -895,15 +925,20 @@ class ImageAgent:
         research: ResearchResult,
         topic: str,
         image_type_info: ImageTypeSpec,
+        gen_ctx: ImageGenContext,
     ) -> str:
         """
         生成 Gemini 图片提示词。
+
+        通过依赖注入传递 gen_ctx，其中的 validation_feedback 字段
+        会被动态 system_prompt 读取，用于指导重试时的提示词调整。
 
         Args:
             content: 内容数据
             research: 研究数据
             topic: 主题
             image_type_info: 图片类型信息
+            gen_ctx: 图片生成上下文（用于依赖注入）
 
         Returns:
             Gemini 图片生成提示词
@@ -941,7 +976,13 @@ class ImageAgent:
             image_desc=image_desc
         )
 
-        result = await self.prompt_generator.run(user_prompt)
+        # 如果有验证反馈，记录日志
+        if gen_ctx.validation_feedback:
+            logger.info("根据验证反馈重新生成提示词: %s", gen_ctx.validation_feedback[:100])
+
+        # 运行 Agent 时传入 deps（依赖注入）
+        # 动态 system_prompt 会自动读取 gen_ctx.validation_feedback
+        result = await self.prompt_generator.run(user_prompt, deps=gen_ctx)
         return result.output
 
     @with_retry(max_retries=RetryConfig.MAX_RETRIES, initial_delay=RetryConfig.INITIAL_DELAY)
@@ -949,10 +990,13 @@ class ImageAgent:
     @ImageQualityValidator(max_retries=2, initial_delay=5.0)
     async def _generate_via_gemini(
         self,
-        prompt: str,
         output_dir: Path,
-        image_type: str = "cover",
-        topic: str = ""
+        image_type: str,
+        topic: str,
+        gen_ctx: ImageGenContext,
+        content: XHSContent,
+        research: ResearchResult,
+        image_type_info: ImageTypeSpec,
     ) -> Path:
         """
         通过 Gemini 网页生成图片（带重试和验证）
@@ -962,13 +1006,17 @@ class ImageAgent:
         2. @GeminiConfigValidator: 验证 Gemini 配置（Create images + Pro）
         3. @ImageQualityValidator: 验证图片质量（字迹清晰、风格匹配）
 
-        失败时自动重试单张图片生成。
+        验证失败时，ExternalValidator 会更新 gen_ctx.validation_feedback，
+        下次重试时 _generate_prompt 会读取该反馈并调整提示词。
 
         Args:
-            prompt: 图片描述提示词
             output_dir: 输出目录
             image_type: 图片类型
             topic: 主题（用于风格验证）
+            gen_ctx: 图片生成上下文（用于依赖注入，验证反馈会写入此对象）
+            content: 内容数据
+            research: 研究数据
+            image_type_info: 图片类型信息
 
         Returns:
             Path: 图片保存路径
@@ -976,6 +1024,10 @@ class ImageAgent:
         # 记录开始时间（用于筛选新下载的文件）
         start_time = time.time()
         self._operation_start_time = start_time  # 供 check_download_status 工具使用
+
+        # 每次重试都重新生成提示词（gen_ctx.validation_feedback 会被更新）
+        prompt = await self._generate_prompt(content, research, topic, image_type_info, gen_ctx)
+        logger.debug("提示词: %s...", prompt[:60])
 
         # 从 YAML 读取操作提示词模板并填充变量
         operation_prompt = get_prompt_field(

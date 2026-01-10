@@ -138,7 +138,7 @@ class PublishConfig:
     """发布相关配置"""
 
     # 重试配置
-    MAX_RETRIES = 3            # 发布失败最大重试次数
+    MAX_RETRIES = 5            # 发布失败最大重试次数
     INITIAL_DELAY = 10.0       # 初始延迟（秒）
 
     # 超时配置
@@ -154,7 +154,7 @@ class ResearchConfig:
     """研究相关配置"""
 
     # 帖子数量要求
-    MIN_POSTS_RESEARCHED = 5      # 最少研究帖子数
+    MIN_POSTS_RESEARCHED = 17      # 最少研究帖子数
 
     # 数据质量要求
     MIN_KEY_INFOS = 15            # 最少关键信息数量

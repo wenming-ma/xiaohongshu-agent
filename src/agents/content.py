@@ -7,6 +7,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from ..models.schemas import ResearchResult, XHSContent, ReviewResult
 from ..utils.model_factory import get_model
+from ..utils.anthropic_provider import get_anthropic_model
 from ..utils.retry_handler import with_retry
 from ..utils.logger import get_logger
 from ..config.settings import RetryConfig, ReviewConfig
@@ -38,9 +39,9 @@ class ContentAgent:
             system_prompt=(get_system_prompt("content"),),
         )
 
-        # 审核 Agent（复用现有的 review 提示词）
+        # 审核 Agent（使用 Claude 模型，复用现有的 review 提示词）
         self.reviewer = Agent(
-            model=model,
+            model=get_anthropic_model(),
             output_type=ReviewResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,

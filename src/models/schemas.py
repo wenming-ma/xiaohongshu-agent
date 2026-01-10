@@ -2,8 +2,25 @@
 Pydantic 数据模型
 定义研究结果和内容的数据结构
 """
+from dataclasses import dataclass, field
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any, TypedDict
+
+
+# ==================== Dataclass 类型定义（用于依赖注入）====================
+
+
+@dataclass
+class ImageGenContext:
+    """
+    图片生成上下文（用于 Pydantic AI 依赖注入）
+
+    在验证失败重试时，ExternalValidator 会更新 validation_feedback 字段，
+    提示词生成 Agent 的动态 system_prompt 会读取该字段并加入提示词。
+    """
+    topic: str = ""
+    image_type: str = ""
+    validation_feedback: str = ""  # 验证失败时的反馈，用于指导下次生成
 
 
 # ==================== TypedDict 类型定义 ====================

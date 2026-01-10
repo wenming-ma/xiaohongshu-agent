@@ -6,6 +6,10 @@
 - validator_name: 验证器名称（用于日志）
 - validate(): 验证逻辑
 - get_validation_target(): 从函数结果中提取验证目标
+
+依赖注入机制：
+- 验证失败时，会尝试更新 kwargs 中的 gen_ctx.validation_feedback
+- 提示词生成 Agent 的动态 system_prompt 会读取该反馈并调整提示词
 """
 from abc import ABC, abstractmethod
 from functools import wraps
@@ -150,6 +154,14 @@ class ExternalValidator(ABC):
                         # 4. 验证失败
                         last_error = ValidationError(review.issues)
                         span.set_attribute('failure_reason', review.summary if hasattr(review, 'summary') else str(review.issues))
+
+                        # 更新 gen_ctx.validation_feedback 用于依赖注入
+                        # 提示词生成 Agent 的动态 system_prompt 会读取该反馈
+                        gen_ctx = kwargs.get('gen_ctx')
+                        if gen_ctx is not None and hasattr(gen_ctx, 'validation_feedback'):
+                            feedback = review.summary if hasattr(review, 'summary') else ', '.join(review.issues)
+                            gen_ctx.validation_feedback = feedback
+                            logger.info(f"[{self.validator_name}] 已更新验证反馈到 gen_ctx: {feedback[:100]}...")
                         
                         if attempt < self.max_retries:
                             delay = self.initial_delay * (2 ** attempt)
