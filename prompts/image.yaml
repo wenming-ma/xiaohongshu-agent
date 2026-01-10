@@ -271,6 +271,8 @@ gemini_operator_prompt: |
   - **绝对禁止使用 screenshot 截屏代替下载**
   - **必须通过点击下载按钮获取原图**
   - 如果下载按钮找不到或点击失败，返回失败结果而不是截屏
+  - **绝对禁止调用 browser_close 关闭浏览器**
+  - **浏览器会话需要保持打开状态以供后续验证**
 
   ## 输出格式（JSON）
   任务完成后，必须返回以下 JSON 格式：
@@ -319,6 +321,7 @@ gemini_operation_template: |
   ## ⚠️ 重要
   - 不要依赖页面提示判断下载是否完成，必须用 check_download_status 确认
   - 禁止使用 screenshot 截屏代替下载
+  - **禁止调用 browser_close 关闭浏览器**（浏览器需保持打开以供后续验证）
 
   ## 输出格式（JSON）
   完成后返回 JSON：

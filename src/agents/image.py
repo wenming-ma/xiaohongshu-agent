@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from pydantic_ai import Agent, Tool
+from pydantic_ai import Agent, Tool, RunContext
 from pydantic_ai.mcp import MCPServerStdio
 
 from ..models.schemas import (
@@ -45,6 +45,33 @@ logger = get_logger(__name__)
 class ImageAgent:
     """Gemini 图片生成 Agent"""
 
+    @staticmethod
+    async def _block_browser_close(
+        ctx: RunContext[Any],
+        call_tool,
+        name: str,
+        args: dict[str, Any]
+    ):
+        """
+        拦截并阻止关闭浏览器的工具调用。
+
+        浏览器需要保持打开状态，以便 @GeminiConfigValidator 装饰器
+        在图片生成后截屏验证 Gemini 配置。
+
+        Args:
+            ctx: 运行上下文
+            call_tool: 原始工具调用函数
+            name: 工具名称
+            args: 工具参数
+
+        Returns:
+            工具调用结果，或阻止消息
+        """
+        if name == 'browser_close':
+            logger.debug("拦截 browser_close 调用：浏览器需要保持打开状态以供验证")
+            return {"content": [{"type": "text", "text": "操作已跳过：浏览器需要保持打开状态以供后续验证。"}]}
+        return await call_tool(name, args, None)
+
     def __init__(self):
         """初始化图片生成 Agent"""
         # ==================== 1. 配置参数 ====================
@@ -63,6 +90,7 @@ class ImageAgent:
         # ==================== 5. MCP Server ====================
         # Playwright MCP - 控制浏览器生成图片
         # 注：验证截屏由 @GeminiConfigValidator 装饰器处理
+        # 注：process_tool_call 回调用于拦截 browser_close，确保截屏验证前浏览器保持打开
         self.mcp_server = MCPServerStdio(
             command='npx',
             args=['-y', '@playwright/mcp@latest', '--output-dir', str(self.downloads_dir)],
@@ -75,6 +103,7 @@ class ImageAgent:
             cache_tools=True,
             max_retries=RetryConfig.MCP_RETRIES,
             timeout=TimeoutConfig.MCP_INIT_TIMEOUT,  # 初始化超时（npx + Playwright 启动）
+            process_tool_call=ImageAgent._block_browser_close,  # 拦截 browser_close 调用
         )
 
         # ==================== 6. Agents ====================
