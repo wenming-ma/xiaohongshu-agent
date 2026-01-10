@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic_ai import Agent, Tool, RunContext
 from pydantic_ai.mcp import MCPServerStdio
+from pydantic_ai.messages import ModelRequest, UserPromptPart
 
 from ..models.schemas import (
     ImageResult,
@@ -220,55 +221,6 @@ class ImageAgent:
                 "text": text[:max_text_len],
             })
         return compact_items
-
-    async def _semantic_group_key_infos(
-        self,
-        *,
-        topic: str,
-        research: ResearchResult,
-        max_group_size: int,
-        target_groups: int,
-        review_feedback: str | None = None,
-    ) -> list[GroupSpec]:
-        """
-        使用 LLM 对 key_infos 做语义分组，然后进行确定性归一化（去重/补漏/拆分/合并）。
-
-        Args:
-            topic: 主题
-            research: 研究数据
-            max_group_size: 单组最大条数
-            target_groups: 目标分组数
-            review_feedback: 上一轮审核反馈（可选）
-
-        Returns:
-            归一化后的分组列表
-        """
-        key_infos = research.key_infos or []
-        n = len(key_infos)
-        if n == 0:
-            return []
-
-        compact_items = self._build_compact_items(key_infos)
-
-        user_prompt = get_user_prompt(
-            "image_grouping",
-            topic=topic,
-            key_infos_json=json.dumps(compact_items, ensure_ascii=False, indent=2),
-            max_group_size=max_group_size,
-            target_groups=target_groups,
-        )
-        if review_feedback:
-            user_prompt += (
-                "\n\n=== 上轮分组审核反馈（请修复）===\n"
-                f"{review_feedback}\n"
-                "请根据反馈重新分组，确保覆盖完整且分组语义一致。"
-            )
-
-        grouping_result = await self.grouping_agent.run(user_prompt)
-        plan: ImageGroupingPlan = grouping_result.output
-        groups = self._normalize_grouping_plan(plan, n, max_group_size)
-        self._validate_groups(groups, n, max_group_size)
-        return groups
 
     # ==================== 分组归一化辅助方法 ====================
 
@@ -694,26 +646,63 @@ class ImageAgent:
         max_detail_images = ImageConfig.MAX_DETAIL_IMAGES
         max_review_retries = ImageConfig.GROUPING_REVIEW_MAX_RETRIES
 
-        review_feedback: str | None = None
+        messages = []  # 消息历史（用于保留完整的对话上下文）
         groups: list[GroupSpec] = []
 
         # 没有 key_infos 时不需要分组（避免后续调整逻辑对空列表做索引）
         if len(research.key_infos or []) == 0:
             return []
 
-        # 语义分组是“锦上添花”，不要让它成为配图的硬失败点：
+        # 语义分组是"锦上添花"，不要让它成为配图的硬失败点：
         # - 若 LLM/Provider 层异常：降级为确定性切块分组（不依赖 LLM）
         # - 若审核一直不过：使用最后一次分组继续生成（并打印 warning）
         try:
             for attempt in range(max_review_retries):
                 # 1) 语义分组
-                groups = await self._semantic_group_key_infos(
-                    topic=topic,
-                    research=research,
-                    max_group_size=target_group_size,
-                    target_groups=target_groups,
-                    review_feedback=review_feedback,
-                )
+                if attempt == 0:
+                    # 首次分组：使用完整提示词
+                    user_prompt = get_user_prompt(
+                        "image_grouping",
+                        topic=topic,
+                        key_infos_json=json.dumps(compact_items, ensure_ascii=False, indent=2),
+                        max_group_size=target_group_size,
+                        target_groups=target_groups,
+                    )
+                    logger.info("开始语义分组...")
+                else:
+                    # 重新分组：将审核反馈注入消息历史
+                    review_feedback = (
+                        f"分组审核未通过，请根据反馈重新分组。\n\n"
+                        f"**审核评分**：{review.score:.1f}/100\n\n"
+                        f"**问题摘要**：{review.summary}\n\n"
+                        f"**具体问题**：\n"
+                    )
+                    for issue in review.issues:
+                        review_feedback += f"- {issue}\n"
+
+                    review_feedback += (
+                        f"\n**要求**：\n"
+                        f"- 确保覆盖所有 {len(compact_items)} 个关键信息\n"
+                        f"- 分组语义一致、逻辑清晰\n"
+                        f"- 目标分组数：{target_groups} 组\n"
+                        f"- 每组建议大小：{target_group_size} 条\n"
+                    )
+
+                    messages.append(ModelRequest(parts=[
+                        UserPromptPart(review_feedback)
+                    ]))
+                    user_prompt = "请根据上述反馈重新分组，确保覆盖完整且分组语义一致。"
+                    logger.info(f"根据反馈重新分组 (第{attempt+1}轮)...")
+
+                # 执行分组（传递消息历史）
+                grouping_result = await self.grouping_agent.run(user_prompt, message_history=messages)
+                plan: ImageGroupingPlan = grouping_result.output
+                messages.extend(grouping_result.new_messages())  # 保留历史
+
+                # 归一化分组
+                groups = self._normalize_grouping_plan(plan, len(compact_items), target_group_size)
+                self._validate_groups(groups, len(compact_items), target_group_size)
+
                 # 2) 确定性调整
                 groups = self._adjust_groups_to_target_count(
                     groups,
@@ -736,7 +725,8 @@ class ImageAgent:
                 if review.passed:
                     logger.info("分组审核通过 (score=%.1f)", review.score)
                     return groups
-                review_feedback = f"score={review.score}; issues={review.issues}; summary={review.summary}"
+
+                # 未通过，打印反馈
                 logger.warning(
                     "分组审核未通过 (attempt=%d/%d): %s",
                     attempt + 1, max_review_retries, review.summary
@@ -764,8 +754,11 @@ class ImageAgent:
                 max_group_size_cap=max_group_size_cap,
             )
 
-        # 走到这里表示“审核一直没过”，但我们仍然可以用最后一次分组继续生成
-        logger.warning("分组审核失败（已重试 %d 次），将使用最后一次分组继续生成: %s", max_review_retries, review_feedback)
+        # 走到这里表示"审核一直没过"，但我们仍然可以用最后一次分组继续生成
+        logger.warning(
+            "分组审核失败（已重试 %d 次），将使用最后一次分组继续生成 (最后评分: %.1f, 问题: %s)",
+            max_review_retries, review.score, review.summary
+        )
         return groups
 
     @staticmethod
