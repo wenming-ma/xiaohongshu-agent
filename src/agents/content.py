@@ -6,7 +6,6 @@
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from ..models.schemas import ResearchResult, XHSContent, ReviewResult
-from ..utils.model_factory import get_model
 from ..utils.minimax_provider import get_minimax_model
 from ..utils.retry_handler import with_retry
 from ..utils.logger import get_logger
@@ -28,8 +27,8 @@ class ContentAgent:
         """
         self.max_iterations = max_iterations or ReviewConfig.MAX_ITERATIONS
 
-        # 获取带 HTTP 重试的 Model（根据配置选择 Anthropic 或 OpenRouter）
-        model = get_model()
+        # 使用 MiniMax 模型
+        model = get_minimax_model()
 
         # 生成 Agent
         self.generator = Agent(

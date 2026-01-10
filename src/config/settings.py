@@ -127,6 +127,16 @@ class APIConfig:
     MINIMAX_MODEL = "MiniMax-M2.1"
     MINIMAX_BASE_URL = "https://api.minimax.io/anthropic"
 
+    # Qwen 模型配置（阿里云通义千问，OpenAI 兼容格式）
+    # 可用视觉模型：
+    #   - "qwen-vl-plus" （视觉理解模型，性价比高）
+    #   - "qwen-vl-max" （最强视觉理解模型）
+    # 模型列表：https://www.alibabacloud.com/help/zh/model-studio/models
+    QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen-vl-plus")
+    # 新加坡/弗吉尼亚地域：https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+    # 北京地域：https://dashscope.aliyuncs.com/compatible-mode/v1
+    QWEN_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+
     # 模型提供者选择："anthropic" 或 "openrouter" 或 "minimax"
     # minimax 使用 Anthropic 兼容 API，支持 Tool Use
     MODEL_PROVIDER = "minimax"

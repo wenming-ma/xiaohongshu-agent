@@ -19,7 +19,7 @@ from pydantic_ai import Agent, BinaryContent
 from .external_base import ExternalValidator
 from ..models.schemas import ImageQualityReview
 from ..utils.image_compression import compress_image_for_review
-from ..utils.anthropic_provider import get_anthropic_model
+from ..utils.qwen_provider import get_qwen_model
 from ..utils.logger import get_logger
 from ..config.settings import APIConfig
 from prompts import get_system_prompt, get_user_prompt
@@ -50,7 +50,7 @@ class ImageQualityValidator(ExternalValidator):
         if self._agent is None:
             from ..config.settings import RetryConfig
             self._agent = Agent(
-                model=get_anthropic_model(APIConfig.CLAUDE_IMAGE_MODEL),
+                model=get_qwen_model(APIConfig.QWEN_MODEL),
                 output_type=ImageQualityReview,
                 instrument=True,
                 retries=RetryConfig.AGENT_RETRIES,  # Agent 内部重试

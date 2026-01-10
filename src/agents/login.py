@@ -24,12 +24,12 @@ from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.usage import UsageLimits
 
 from ..config.settings import (
-    RetryConfig, 
-    PathConfig, 
+    RetryConfig,
+    PathConfig,
     TimeoutConfig,
     UserProfileConfig,
 )
-from ..utils.model_factory import get_model
+from ..utils.minimax_provider import get_minimax_model
 from ..utils.telegram_notifier import get_telegram_notifier
 from ..utils.tool_feedback import build_toolset_with_telegram_feedback
 from ..utils.logger import get_logger
@@ -95,8 +95,8 @@ class LoginAgent:
         }
 
         # ==================== 4. Agent ====================
-        model = get_model()
-        
+        model = get_minimax_model()
+
         # 系统提示词，包含用户信息
         system_prompt = self._build_system_prompt()
         

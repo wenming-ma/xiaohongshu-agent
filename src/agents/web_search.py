@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent, Tool
 
 from ..utils.logger import get_logger
-from ..utils.model_factory import get_model
+from ..utils.minimax_provider import get_minimax_model
 from ..config.settings import RetryConfig
 
 logger = get_logger(__name__)
@@ -420,7 +420,7 @@ class WebSearchAgent:
                 "- Avoid adding URLs or tracking tokens.\n"
             )
             self._expander_agent = Agent(
-                model=get_model(),
+                model=get_minimax_model(),
                 output_type=WebSearchExpansionResult,
                 instrument=True,
                 retries=RetryConfig.AGENT_RETRIES,
@@ -440,7 +440,7 @@ class WebSearchAgent:
                 "- Do NOT paste long webpage content; synthesize succinctly.\n"
             )
             self._synthesis_agent = Agent(
-                model=get_model(),
+                model=get_minimax_model(),
                 output_type=WebSearchSynthesisResult,
                 instrument=True,
                 retries=RetryConfig.AGENT_RETRIES,

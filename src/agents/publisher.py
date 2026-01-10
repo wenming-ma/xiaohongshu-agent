@@ -8,7 +8,7 @@ from datetime import datetime
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 from ..models.schemas import XHSContent, PublishResult
-from ..utils.model_factory import get_model
+from ..utils.minimax_provider import get_minimax_model
 from ..utils.retry_handler import with_retry
 from ..utils.logger import get_logger
 from ..utils.tool_feedback import build_toolset_with_telegram_feedback
@@ -25,8 +25,8 @@ class PublisherAgent:
     def __init__(self):
         """初始化发布 Agent"""
 
-        # 获取带 HTTP 重试的 Model（根据配置选择 Anthropic 或 OpenRouter）
-        model = get_model()
+        # 使用 MiniMax 模型
+        model = get_minimax_model()
 
         # 创建 Playwright MCP Server 实例（复用小红书浏览器会话）
         self.mcp_server = MCPServerStdio(
