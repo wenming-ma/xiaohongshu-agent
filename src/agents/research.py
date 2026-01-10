@@ -30,6 +30,7 @@ from ..validators import ResearchDepthValidator, ResearchReviewValidator
 from ..config.settings import RetryConfig, ResearchConfig, PathConfig, TimeoutConfig
 from prompts import get_system_prompt, get_user_prompt
 from .login import LoginAgent
+from .image_reader import ImageReaderAgent
 
 logger = get_logger(__name__)
 
@@ -70,6 +71,9 @@ class ResearchAgent:
         # LoginAgent - 用于处理登录/注册（复用同一个 Playwright MCP/浏览器会话）
         self.login_agent = LoginAgent(mcp_server=self.mcp_server)
 
+        # 读图工具（Claude 视觉）：给 research/search 场景读取截图/图片文本
+        self.image_reader_agent = ImageReaderAgent()
+
         # 导航追踪器 - 包装 MCP Server 以追踪帖子详情页访问
         self.navigate_tracker = NavigateTracker(self.mcp_server)
 
@@ -78,7 +82,10 @@ class ResearchAgent:
             model=model,
             output_type=ResearchResult,
             toolsets=[self.navigate_tracker],
-            tools=[self.login_agent.get_tool()],  # 登录/注册工具
+            tools=[
+                self.login_agent.get_tool(),        # 登录/注册工具
+                self.image_reader_agent.get_tool(), # 读图工具（OCR/视觉理解）
+            ],
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(get_system_prompt("research"),),

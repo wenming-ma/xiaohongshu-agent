@@ -383,6 +383,34 @@ class ImageQualityReview(BaseModel):
         }
 
 
+class ImageReadResult(BaseModel):
+    """图片读取结果 - OCR/视觉理解（给 Tool 使用）"""
+
+    extracted_text: str = Field(
+        default="",
+        description="从图片中提取的文字内容（尽量保留换行/列表/层级；看不清可留空并在 issues 说明）",
+    )
+    description: str = Field(
+        default="",
+        description="对图片整体内容的简短描述（不超过 3 句；无文字时尤为重要）",
+    )
+    language: str = Field(
+        default="unknown",
+        description="图片主要文字语言（如 zh/en/mixed/unknown）",
+    )
+    has_text: bool = Field(
+        default=False,
+        description="图片中是否存在可识别文字",
+    )
+    answer: str = Field(
+        default="",
+        description="若提供 question，可基于图片内容给出简短回答；否则为空",
+    )
+    issues: List[str] = Field(
+        default_factory=list,
+        description="识别问题（如模糊/遮挡/分辨率过低/字体过小/部分区域无法识别等）",
+    )
+
 class PublishResult(BaseModel):
     """小红书发布结果"""
 
