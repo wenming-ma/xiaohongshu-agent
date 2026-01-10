@@ -17,7 +17,14 @@ from pathlib import Path
 from typing import List, Dict, Optional, Any, Tuple
 from pydantic_ai import Agent, Tool
 from pydantic_ai.mcp import MCPServerStdio
-from ..models.schemas import ImageResult, GeneratedImage, XHSContent, ResearchResult, ImageGroupingPlan
+from ..models.schemas import (
+    ImageResult,
+    GeneratedImage,
+    XHSContent,
+    ResearchResult,
+    ImageGroupingPlan,
+    ImageGroupingReviewResult,
+)
 from ..utils.model_factory import get_model
 from ..utils.download_manager import DownloadManager
 from ..utils.retry_handler import with_retry
@@ -82,6 +89,15 @@ class ImageAgent:
             system_prompt=(get_system_prompt("image_grouping"),),
         )
 
+        # 分组审核 Agent（验证分组是否合理，失败则触发重新分组）
+        self.grouping_reviewer = Agent(
+            model=model,
+            output_type=ImageGroupingReviewResult,
+            instrument=True,
+            retries=RetryConfig.AGENT_RETRIES,
+            system_prompt=(get_system_prompt("image_grouping_review"),),
+        )
+
         # Gemini 操作 Agent
         self.gemini_operator = Agent(
             model=model,
@@ -114,46 +130,6 @@ class ImageAgent:
 
         return "NOT_FOUND: 下载目录中没有新文件"
 
-    def _get_image_types(self, research: ResearchResult) -> List[Dict]:
-        """
-        根据研究数据动态计算需要的图片类型
-
-        Args:
-            research: 研究结果（包含 key_infos 列表）
-
-        Returns:
-            图片类型列表，如 [cover, detail_1, detail_2, detail_3, ...]
-        """
-        # 1. 封面图（固定 1 张）
-        types = [{"type": "cover", "desc": "封面图 - 大标题风格，突出主题"}]
-
-        # 2. 计算详情图数量
-        key_info_count = len(research.key_infos)
-        if key_info_count == 0:
-            # 没有关键信息时至少生成 1 张详情图
-            detail_count = ImageConfig.MIN_DETAIL_IMAGES
-        else:
-            # 向上取整：(count + per - 1) // per
-            detail_count = max(
-                ImageConfig.MIN_DETAIL_IMAGES,
-                min(
-                    ImageConfig.MAX_DETAIL_IMAGES,
-                    (key_info_count + ImageConfig.ENTITIES_PER_DETAIL - 1) // ImageConfig.ENTITIES_PER_DETAIL
-                )
-            )
-
-        # 3. 生成详情图类型
-        for i in range(1, detail_count + 1):
-            start = (i - 1) * ImageConfig.ENTITIES_PER_DETAIL
-            end = min(i * ImageConfig.ENTITIES_PER_DETAIL, key_info_count)
-            types.append({
-                "type": f"detail_{i}",
-                "desc": f"详情图{i} - 清单式，显示第 {start + 1}-{end} 个关键信息",
-                "info_start": start,  # 0-based index
-                "info_end": end
-            })
-
-        return types
 
     async def _semantic_group_key_infos(
         self,
@@ -161,6 +137,8 @@ class ImageAgent:
         topic: str,
         research: ResearchResult,
         max_group_size: int,
+        target_groups: int,
+        review_feedback: str | None = None,
     ) -> List[Dict[str, Any]]:
         """
         使用 LLM 对 key_infos 做语义分组，然后进行确定性归一化（去重/补漏/拆分/合并）。
@@ -192,7 +170,14 @@ class ImageAgent:
             topic=topic,
             key_infos_json=json.dumps(compact_items, ensure_ascii=False, indent=2),
             max_group_size=max_group_size,
+            target_groups=target_groups,
         )
+        if review_feedback:
+            user_prompt += (
+                "\n\n=== 上轮分组审核反馈（请修复）===\n"
+                f"{review_feedback}\n"
+                "请根据反馈重新分组，确保覆盖完整且分组语义一致。"
+            )
 
         grouping_result = await self.grouping_agent.run(user_prompt)
         plan: ImageGroupingPlan = grouping_result.output
@@ -315,6 +300,26 @@ class ImageAgent:
         if set(all_indices) != set(range(n_key_infos)):
             raise ValueError("coverage mismatch (set)")
 
+    async def _review_groups(
+        self,
+        *,
+        topic: str,
+        compact_items: list[dict[str, Any]],
+        groups: list[dict[str, Any]],
+        target_groups: int,
+        max_group_size: int,
+    ) -> ImageGroupingReviewResult:
+        user_prompt = get_user_prompt(
+            "image_grouping_review",
+            topic=topic,
+            key_infos_json=json.dumps(compact_items, ensure_ascii=False, indent=2),
+            groups_json=json.dumps(groups, ensure_ascii=False, indent=2),
+            target_groups=target_groups,
+            max_group_size=max_group_size,
+        )
+        result = await self.grouping_reviewer.run(user_prompt)
+        return result.output
+
     def _cap_groups_to_max_images(
         self,
         groups: List[Dict[str, Any]],
@@ -373,6 +378,60 @@ class ImageAgent:
             capped.append({"title": f"要点清单（{idx}/{min(len(chunks), max_groups)}）", "indices": chunk})
         return capped
 
+    def _adjust_groups_to_target_count(
+        self,
+        groups: List[Dict[str, Any]],
+        *,
+        target_groups: int,
+        max_group_size_cap: int,
+    ) -> List[Dict[str, Any]]:
+        """
+        让组数量尽量接近 target_groups：
+        - 多了：合并相邻组（复用 _cap_groups_to_max_images 逻辑）
+        - 少了：拆分最大的组（标题追加“续”）
+        """
+        if target_groups <= 0:
+            return groups
+
+        adjusted = [dict(title=g.get("title", "要点"), indices=list(g.get("indices", []))) for g in groups]
+
+        # 1) 太多：先合并到不超过 target_groups
+        if len(adjusted) > target_groups:
+            adjusted = self._cap_groups_to_max_images(
+                adjusted,
+                max_groups=target_groups,
+                max_group_size_cap=max_group_size_cap,
+            )
+
+        # 2) 太少：拆分最大的组直到达到 target_groups（尽量不超过 cap）
+        def pick_largest_idx() -> int:
+            largest_i = 0
+            largest_len = -1
+            for i, g in enumerate(adjusted):
+                l = len(g["indices"])
+                if l > largest_len:
+                    largest_len = l
+                    largest_i = i
+            return largest_i
+
+        while len(adjusted) < target_groups:
+            i = pick_largest_idx()
+            g = adjusted[i]
+            idxs = g["indices"]
+            if len(idxs) <= 1:
+                break  # 没法再拆
+            mid = len(idxs) // 2
+            left = idxs[:mid]
+            right = idxs[mid:]
+            # 防止拆出来的某一边超过 cap（理论上不会，因为拆分只会变小）
+            if len(left) > max_group_size_cap or len(right) > max_group_size_cap:
+                break
+            title = g.get("title", "要点")
+            adjusted[i] = {"title": f"{title}（续1）", "indices": left}
+            adjusted.insert(i + 1, {"title": f"{title}（续2）", "indices": right})
+
+        return adjusted
+
     async def generate_image(
         self,
         content: XHSContent,
@@ -400,40 +459,80 @@ class ImageAgent:
             ImageResult: 图片结果（包含多张图片）
         """
         key_info_count = len(research.key_infos)
+        max_detail_images = ImageConfig.MAX_DETAIL_IMAGES
+        max_review_retries = ImageConfig.GROUPING_REVIEW_MAX_RETRIES
 
-        # 动态计算图片类型（cover + 语义分组后的 detail_N）
-        # 失败时回退到原始“按数量切片”的分发逻辑
-        try:
-            max_detail_images = ImageConfig.MAX_DETAIL_IMAGES
-            # 为了不超过图片数量上限，允许每张 detail 承载更多要点（必要时）
-            # 例如：key_infos=60, max_detail_images=8 => 目标每张约8条
-            target_group_size = math.ceil(key_info_count / max_detail_images) if max_detail_images > 0 else ImageConfig.ENTITIES_PER_DETAIL
-            target_group_size = max(ImageConfig.ENTITIES_PER_DETAIL, target_group_size)
-            # 可读性上限：避免每张过多要点导致字太小（必要时仍会兜底切块）
-            max_group_size_cap = max(10, ImageConfig.ENTITIES_PER_DETAIL)
+        # 计算目标分组数（不超过最大详情图数量）
+        target_groups = min(
+            max_detail_images,
+            max(ImageConfig.MIN_DETAIL_IMAGES, math.ceil(key_info_count / ImageConfig.ENTITIES_PER_DETAIL))
+        )
+        # 每组建议大小（确保所有 key_infos 能被覆盖）
+        target_group_size = math.ceil(key_info_count / target_groups) if target_groups > 0 else ImageConfig.ENTITIES_PER_DETAIL
+        target_group_size = max(ImageConfig.ENTITIES_PER_DETAIL, target_group_size)
+        # 可读性上限：避免每张过多要点导致字太小
+        max_group_size_cap = max(16, ImageConfig.ENTITIES_PER_DETAIL)
 
+        # 构造 compact_items（用于分组和审核）
+        compact_items: list[dict[str, Any]] = []
+        for i, info in enumerate(research.key_infos or []):
+            name = info.get("name") or info.get("title") or ""
+            desc = info.get("description") or info.get("detail") or info.get("desc") or ""
+            compact_items.append({
+                "index": i,
+                "type": info.get("type"),
+                "name": name,
+                "text": (f"{name}: {desc}".strip(": ").strip())[:240],
+            })
+
+        # 语义分组 + 审核（失败则带反馈重试）
+        review_feedback: str | None = None
+        groups: list[dict[str, Any]] = []
+        for attempt in range(max_review_retries):
+            # 1) 语义分组
             groups = await self._semantic_group_key_infos(
                 topic=topic,
                 research=research,
                 max_group_size=target_group_size,
+                target_groups=target_groups,
+                review_feedback=review_feedback,
+            )
+            # 2) 确定性调整：确保组数接近目标且不超过最大图片数
+            groups = self._adjust_groups_to_target_count(
+                groups,
+                target_groups=target_groups,
+                max_group_size_cap=max_group_size_cap,
             )
             groups = self._cap_groups_to_max_images(
                 groups,
                 max_groups=max_detail_images,
                 max_group_size_cap=max_group_size_cap,
             )
-            image_types: list[dict[str, Any]] = [{"type": "cover", "desc": "封面图 - 大标题风格，突出主题"}]
-            for i, g in enumerate(groups, start=1):
-                image_types.append(
-                    {
-                        "type": f"detail_{i}",
-                        "desc": f"详情图{i} - 语义分组：{g['title']}",
-                        "group_title": g["title"],
-                        "indices": g["indices"],
-                    }
-                )
-        except Exception:
-            image_types = self._get_image_types(research)  # type: ignore[assignment]
+            # 3) 审核分组（语义一致性/覆盖完整性）
+            review = await self._review_groups(
+                topic=topic,
+                compact_items=compact_items,
+                groups=groups,
+                target_groups=len(groups),  # 审核时用实际组数
+                max_group_size=target_group_size,
+            )
+            if review.passed:
+                print(f"   ✅ 分组审核通过（score={review.score}）")
+                break
+            review_feedback = f"score={review.score}; issues={review.issues}; summary={review.summary}"
+            print(f"   ⚠️ 分组审核未通过（attempt={attempt+1}/{max_review_retries}）: {review.summary}")
+            if attempt == max_review_retries - 1:
+                raise RuntimeError(f"分组审核失败（已重试 {max_review_retries} 次）: {review_feedback}")
+
+        # 构建 image_types（cover + 语义分组后的 detail_N）
+        image_types: list[dict[str, Any]] = [{"type": "cover", "desc": "封面图 - 大标题风格，突出主题"}]
+        for i, g in enumerate(groups, start=1):
+            image_types.append({
+                "type": f"detail_{i}",
+                "desc": f"详情图{i} - 语义分组：{g['title']}",
+                "group_title": g["title"],
+                "indices": g["indices"],
+            })
 
         print(f"   🎨 开始生成 {len(image_types)} 张配图（{key_info_count} 个关键信息）...")
 
@@ -495,7 +594,7 @@ class ImageAgent:
             content: 内容数据
             research: 研究数据（包含 key_infos 列表）
             topic: 主题
-            image_type_info: 图片类型信息（包含 type, desc, info_start, info_end）
+            image_type_info: 图片类型信息（包含 type, desc, group_title, indices）
         """
         image_type = image_type_info["type"]
         image_desc = image_type_info["desc"]
@@ -504,14 +603,9 @@ class ImageAgent:
             # 封面图：只需标题和主题
             body_excerpt = content.body[:150]
         else:
-            # 详情图：优先使用语义分组的 indices；否则使用原切片字段 info_start/info_end
-            indices = image_type_info.get("indices")
-            if isinstance(indices, list) and indices:
-                key_infos = [research.key_infos[i] for i in indices if 0 <= i < len(research.key_infos)]
-            else:
-                start = image_type_info.get("info_start", 0)
-                end = image_type_info.get("info_end", len(research.key_infos))
-                key_infos = research.key_infos[start:end]
+            # 详情图：使用语义分组的 indices 获取对应关键信息
+            indices = image_type_info.get("indices", [])
+            key_infos = [research.key_infos[i] for i in indices if 0 <= i < len(research.key_infos)]
 
             if key_infos:
                 # 构建关键信息列表
@@ -519,11 +613,8 @@ class ImageAgent:
                     f"{i+1}. {info.get('name', '未知')}: {info.get('description', info.get('detail', ''))}"
                     for i, info in enumerate(key_infos)
                 ])
-                group_title = image_type_info.get("group_title")
-                if group_title:
-                    body_excerpt = f"本图主题板块：{group_title}\n本图需要展示以下 {len(key_infos)} 个关键信息：\n{infos_text}"
-                else:
-                    body_excerpt = f"本图需要展示以下 {len(key_infos)} 个关键信息：\n{infos_text}"
+                group_title = image_type_info.get("group_title", "")
+                body_excerpt = f"本图主题板块：{group_title}\n本图需要展示以下 {len(key_infos)} 个关键信息：\n{infos_text}"
             else:
                 # 无关键信息时使用正文
                 body_excerpt = content.body[:300]

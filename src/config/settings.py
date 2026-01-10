@@ -58,6 +58,9 @@ class ImageConfig:
     MIN_DETAIL_IMAGES = 1           # 最少详情图数量
     MAX_DETAIL_IMAGES = 8           # 最多详情图数量（1封面+8详情=9张，小红书上限）
 
+    # 语义分组审核
+    GROUPING_REVIEW_MAX_RETRIES = 3  # 分组审核失败后最大重试次数
+
     # 压缩参数
     COMPRESS_QUALITY_START = 95    # 压缩起始质量
     COMPRESS_QUALITY_MIN = 20      # 压缩最低质量

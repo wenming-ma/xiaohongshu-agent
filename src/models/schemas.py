@@ -241,6 +241,26 @@ class ImageGroupingPlan(BaseModel):
     )
 
 
+class ImageGroupingReviewResult(BaseModel):
+    """分组审核结果：验证分组质量与完整性"""
+
+    passed: bool = Field(description="是否通过审核")
+    score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=100.0,
+        description="评分（0-100）",
+    )
+    issues: List[str] = Field(
+        default_factory=list,
+        description="问题列表（简洁描述）",
+    )
+    summary: str = Field(
+        default="",
+        description="审核总结",
+    )
+
+
 # ==================== 专用验证器模型 ====================
 
 
