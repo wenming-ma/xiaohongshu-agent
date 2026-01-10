@@ -274,7 +274,7 @@ class LoginAgent:
 - `send_telegram_message(text)`: 发送消息给用户
 - `send_telegram_image(image_path, caption)`: 发送图片（如二维码）给用户
 - `send_current_page_screenshot(caption)`: 截图当前页面并通过 Telegram 发送给用户（用于确认登录状态/展示二维码/排错）
-- `wait_for_user_reply()`: 等待用户回复（会一直等待直到用户回复）
+- `wait_for_user_reply(prompt)`: 发送提示信息并等待用户回复。**必须传入 prompt 参数**，详细描述当前做了什么、需要用户回复什么
 - `ask_user(question)`: 发送问题并等待回复（便捷方法）
 
 ### Playwright 网页操作工具
@@ -285,37 +285,38 @@ class LoginAgent:
 1. **只使用一个 tab**：不要打开新 tab，始终在当前 tab 中操作
 2. **先获取页面快照**：每次操作前先用 `playwright_snapshot` 获取页面状态
 3. **不要关闭浏览器**：操作完成后保持浏览器打开
+4. **自动勾选协议**：登录时如果遇到需要勾选的用户协议、服务条款、隐私政策等复选框，直接勾选即可。勾选按钮通常位于协议标题文字的最前面（左侧）。不需要询问用户，直接点击勾选。
 
 ## 工作流程
 
 1. 导航到目标 URL（在当前 tab）
 2. 获取页面快照，分析登录方式
 3. 识别登录/注册方式（账号密码、短信验证码、扫码等）
-4. 如果需要用户提供信息（密码、验证码等），通过 Telegram 询问
-5. 使用获取到的信息完成登录/注册
-6. 验证登录是否成功
+4. **检查并勾选协议**：如果页面上有用户协议、服务条款、隐私政策等需要勾选的复选框，直接点击勾选（复选框通常在协议文字的左侧）
+5. 如果需要用户提供信息（密码、验证码等），通过 Telegram 询问
+6. 使用获取到的信息完成登录/注册
+7. 验证登录是否成功
 
 ## 交互规范
 
 ### 请求密码
+使用 `wait_for_user_reply` 工具，传入详细提示：
 ```
-🔐 检测到需要登录 [网站名称]
-
-请回复密码：
+wait_for_user_reply(prompt="🔐 检测到需要登录 [网站名称]\n\n已填写账号：[账号]\n请回复密码：")
 ```
 
 ### 请求验证码
+使用 `wait_for_user_reply` 工具，传入详细提示：
 ```
-📱 已发送验证码到 [手机号/邮箱]
-
-请回复收到的验证码：
+wait_for_user_reply(prompt="📱 已发送验证码到 [手机号/邮箱]\n\n请回复收到的验证码：")
 ```
 
 ### 扫码登录
-1. 截取二维码图片
-2. 发送图片给用户
-3. 提示用户扫码
-4. 等待用户回复 "done" 或 "完成"
+1. 截取二维码图片并发送
+2. 使用 `wait_for_user_reply` 提示用户扫码：
+```
+wait_for_user_reply(prompt="📲 二维码已发送\n\n请使用 [APP名称] 扫描二维码\n扫码完成后请回复 'done' 或 '完成'")
+```
 
 ### 注册新账号
 1. 告知用户正在注册
@@ -409,14 +410,20 @@ class LoginAgent:
             return f"截图已发送（ID: {result}）"
         return "截图发送失败"
     
-    async def _wait_for_user_reply(self) -> str:
+    async def _wait_for_user_reply(self, prompt: str) -> str:
         """
-        等待用户回复（会一直等待直到用户回复）
-        
+        发送提示信息并等待用户回复
+
+        Args:
+            prompt: 详细描述当前做了什么、需要用户回复什么的提示信息
+
         Returns:
             用户回复的内容
         """
         self._last_action = "waiting:user_reply"
+        # 先发送提示信息给用户
+        await self.telegram.send_message(prompt)
+        # 更新状态
         await self.telegram.upsert_status(
             f"⌛ 等待你的回复中…\n已用时：{self._format_elapsed()}\n最近动作：{self._last_action}"
         )
