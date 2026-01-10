@@ -21,6 +21,7 @@ from pydantic_ai import Agent
 from .internal_base import InternalValidator, InternalValidationResult
 from ..models.schemas import ResearchResult, ReviewResult
 from ..config.settings import RetryConfig
+from ..utils.minimax_provider import get_minimax_model
 from ..utils.logger import get_logger
 from prompts import get_system_prompt, get_user_prompt
 
@@ -56,11 +57,10 @@ class ResearchReviewValidator(InternalValidator):
 
     @property
     def reviewer(self) -> Agent:
-        """延迟初始化 reviewer Agent（使用 Claude 模型）"""
+        """延迟初始化 reviewer Agent（文本审核使用 MiniMax）"""
         if self._reviewer is None:
-            from ..utils.anthropic_provider import get_anthropic_model
             self._reviewer = Agent(
-                model=get_anthropic_model(),
+                model=get_minimax_model(),
                 output_type=ReviewResult,
                 instrument=True,
                 retries=RetryConfig.AGENT_RETRIES,

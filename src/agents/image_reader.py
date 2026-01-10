@@ -3,7 +3,7 @@
 
 目标：
 - 以 Tool 的形式提供给其它 Agent（如 Research/Search）调用
-- 默认固定使用 Claude（Anthropic 直连），避免默认 provider（如 MiniMax）不支持视觉/图片输入
+- 默认使用 OpenRouter 的视觉模型，避免直连 Claude 不可用
 """
 
 from __future__ import annotations
@@ -25,11 +25,11 @@ class ImageReaderAgent:
     """读图 Agent（输出结构化的 ImageReadResult），并提供 Tool 包装。"""
 
     def __init__(self):
-        # 视觉任务必须使用 Claude（Anthropic 直连）
-        from ..utils.anthropic_provider import get_anthropic_model
+        # 视觉任务使用 OpenRouter 视觉模型（避免直连 Claude）
+        from ..utils.openrouter_provider import get_openrouter_model
 
         self._agent = Agent(
-            model=get_anthropic_model(),
+            model=get_openrouter_model("google/gemma-3-27b-it:free"),
             output_type=ImageReadResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
@@ -59,7 +59,7 @@ class ImageReaderAgent:
             )
             return result.model_dump_json(indent=2)
 
-        # 压缩图片（Claude API 限制 5MB）
+        # 压缩图片（API 限制 5MB）
         image_data = await compress_image_for_review(path, max_size_mb=5.0)
 
         # question 为空时也传入模板，便于 LLM 明确“忽略空问题”

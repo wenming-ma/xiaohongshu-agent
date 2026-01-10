@@ -21,6 +21,7 @@ from typing import Any, Literal
 from urllib.parse import urlsplit, parse_qs, unquote, urlunsplit, parse_qsl, urlencode
 
 import httpx
+import logfire
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, Tool
 
@@ -89,98 +90,121 @@ class WebSearchAgent:
             }
         """
         q = (query or "").strip()
-        if not q:
-            return json.dumps(
-                {
-                    "query": query,
-                    "deep_search": bool(deep_search),
-                    "backend": "none",
-                    "results": [],
-                    "answer": "",
-                    "claims": [],
-                    "coverage_notes": "empty query",
-                    "error": "empty query",
-                },
-                ensure_ascii=False,
-            )
-
         # hard cap，避免单次返回过大
         max_results = int(max(1, min(max_results or 5, 10)))
 
-        error: str = ""
-        backend: str = "unknown"
-        results: list[dict[str, str]] = []
-        debug: dict[str, Any] | None = None
-
-        try:
-            if deep_search:
-                backend, results, debug = await self._deep_search(q, max_results=max_results)
-            else:
-                one = await self._search_once(q, max_results=max_results)
-                backend = one.get("backend", "unknown")
-                results = one.get("results") or []
-                error = one.get("error") or ""
-
-        except Exception as e:
-            error = self._format_error(e)
-            logger.warning("WebSearchAgent search pipeline failed: %s", error)
-
-        # 规范化 URL（去 tracking），保证 sources 更干净、更可复用
-        normalized_results: list[dict[str, str]] = []
-        for item in results:
-            url = (item.get("url") or "").strip()
-            normalized_results.append(
-                {
-                    "title": (item.get("title") or "").strip(),
-                    "url": self._canonicalize_url(url) or url,
-                    "snippet": (item.get("snippet") or "").strip(),
-                }
-            )
-        results = normalized_results
-
-        # 始终进行信息整合（synthesis）：返回调用者想要的“结论+证据”，而不是网页 dump
-        answer = ""
-        claims: list[dict[str, Any]] = []
-        coverage_notes = ""
-
-        try:
-            synth = await self._synthesize(q, results)
-            answer = (synth.answer or "").strip()
-            coverage_notes = (synth.coverage_notes or "").strip()
-
-            allowed_urls = {r.get("url", "") for r in results if r.get("url")}
-            cleaned: list[dict[str, Any]] = []
-            for c in synth.claims or []:
-                srcs = [s for s in (c.sources or []) if s in allowed_urls]
-                if not srcs:
-                    continue
-                cleaned.append(
+        with logfire.span(
+            "web_search:call",
+            query=q,
+            deep_search=bool(deep_search),
+            max_results=max_results,
+        ) as span:
+            if not q:
+                span.set_attribute("backend", "none")
+                span.set_attribute("results_count", 0)
+                span.set_attribute("error", "empty query")
+                return json.dumps(
                     {
-                        "claim": (c.claim or "").strip(),
-                        "detail": (c.detail or "").strip(),
-                        "sources": srcs,
-                        "confidence": c.confidence,
+                        "query": query,
+                        "deep_search": bool(deep_search),
+                        "backend": "none",
+                        "results": [],
+                        "answer": "",
+                        "claims": [],
+                        "coverage_notes": "empty query",
+                        "error": "empty query",
+                    },
+                    ensure_ascii=False,
+                )
+
+            error: str = ""
+            backend: str = "unknown"
+            results: list[dict[str, str]] = []
+            debug: dict[str, Any] | None = None
+
+            try:
+                if deep_search:
+                    backend, results, debug = await self._deep_search(q, max_results=max_results)
+                else:
+                    one = await self._search_once(q, max_results=max_results)
+                    backend = one.get("backend", "unknown")
+                    results = one.get("results") or []
+                    error = one.get("error") or ""
+
+            except Exception as e:
+                error = self._format_error(e)
+                logger.warning("WebSearchAgent search pipeline failed: %s", error)
+
+            # 规范化 URL（去 tracking），保证 sources 更干净、更可复用
+            normalized_results: list[dict[str, str]] = []
+            for item in results:
+                url = (item.get("url") or "").strip()
+                normalized_results.append(
+                    {
+                        "title": (item.get("title") or "").strip(),
+                        "url": self._canonicalize_url(url) or url,
+                        "snippet": (item.get("snippet") or "").strip(),
                     }
                 )
-            claims = cleaned
-        except Exception as e:
-            synth_err = self._format_error(e)
-            logger.warning("WebSearchAgent synthesis failed: %s", synth_err)
-            error = (error + " | " + synth_err).strip(" |")
+            results = normalized_results
 
-        payload: dict[str, Any] = {
-            "query": q,
-            "deep_search": bool(deep_search),
-            "backend": backend,
-            "results": results,
-            "answer": answer,
-            "claims": claims,
-            "coverage_notes": coverage_notes,
-            "error": error,
-        }
-        if debug is not None:
-            payload["debug"] = debug
-        return json.dumps(payload, ensure_ascii=False)
+            span.set_attribute("backend", backend)
+            span.set_attribute("results_count", len(results))
+            if error:
+                span.set_attribute("error", error)
+
+            if not results and backend.startswith("duckduckgo") and not error:
+                msg = (
+                    "duckduckgo returned empty results; consider setting SERPER_API_KEY or TAVILY_API_KEY "
+                    "for more reliable SERP results"
+                )
+                logfire.warn(msg, backend=backend)
+
+            # 始终进行信息整合（synthesis）：返回调用者想要的“结论+证据”，而不是网页 dump
+            answer = ""
+            claims: list[dict[str, Any]] = []
+            coverage_notes = ""
+
+            try:
+                synth = await self._synthesize(q, results)
+                answer = (synth.answer or "").strip()
+                coverage_notes = (synth.coverage_notes or "").strip()
+
+                allowed_urls = {r.get("url", "") for r in results if r.get("url")}
+                cleaned: list[dict[str, Any]] = []
+                for c in synth.claims or []:
+                    srcs = [s for s in (c.sources or []) if s in allowed_urls]
+                    if not srcs:
+                        continue
+                    cleaned.append(
+                        {
+                            "claim": (c.claim or "").strip(),
+                            "detail": (c.detail or "").strip(),
+                            "sources": srcs,
+                            "confidence": c.confidence,
+                        }
+                    )
+                claims = cleaned
+            except Exception as e:
+                synth_err = self._format_error(e)
+                logger.warning("WebSearchAgent synthesis failed: %s", synth_err)
+                error = (error + " | " + synth_err).strip(" |")
+                span.set_attribute("error", error)
+
+            payload: dict[str, Any] = {
+                "query": q,
+                "deep_search": bool(deep_search),
+                "backend": backend,
+                "results": results,
+                "answer": answer,
+                "claims": claims,
+                "coverage_notes": coverage_notes,
+                "error": error,
+            }
+            if debug is not None:
+                payload["debug"] = debug
+
+            return json.dumps(payload, ensure_ascii=False)
 
     async def _search_serper(self, query: str, max_results: int) -> dict[str, Any]:
         """Google Serper（需要 SERPER_API_KEY）"""
@@ -316,6 +340,15 @@ class WebSearchAgent:
             r.raise_for_status()
             text = r.text
 
+        if self._ddg_html_is_anomaly(text):
+            err = (
+                "duckduckgo_html blocked by anomaly/challenge page; configure SERPER_API_KEY or TAVILY_API_KEY "
+                "for reliable results"
+            )
+            logger.warning("DuckDuckGo HTML blocked for query=%r", query)
+            logfire.warn("duckduckgo_html_blocked", query=query)
+            return {"query": query, "backend": "duckduckgo_html", "results": [], "error": err}
+
         def _strip_tags(s: str) -> str:
             s = re.sub(r"<[^>]+>", "", s)
             return _html.unescape(s).strip()
@@ -350,6 +383,18 @@ class WebSearchAgent:
                 break
 
         return {"query": query, "backend": "duckduckgo_html", "results": results, "error": ""}
+
+    @staticmethod
+    def _ddg_html_is_anomaly(html_text: str) -> bool:
+        if not html_text:
+            return False
+        s = html_text.lower()
+        return (
+            "anomaly-modal" in s
+            or "challenge-form" in s
+            or "duckduckgo.com/anomaly.js" in s
+            or "anomaly.js" in s
+        )
 
     async def _search_once(self, query: str, max_results: int) -> dict[str, Any]:
         """执行一次搜索（按可用后端选择），返回统一结构。"""

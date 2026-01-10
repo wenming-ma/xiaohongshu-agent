@@ -11,7 +11,7 @@
 
 - **pydantic-ai**: AI Agent 框架
 - **Playwright MCP Server**: 浏览器自动化
-- **Claude 3.5 Sonnet**: 大语言模型
+- **MiniMax + OpenRouter**: 大语言模型（文本审核用 MiniMax，图片审核用 OpenRouter 的 Gemma）
 
 ## 项目结构
 
@@ -44,10 +44,11 @@ python setup.py
 
 ### 2. 配置 API 密钥
 
-编辑 `.env` 文件，填入你的 Anthropic API Key：
+编辑 `.env` 文件，填入你的 MiniMax / OpenRouter API Key（Claude 不可用时不需要 Anthropic Key）：
 
 ```env
-ANTHROPIC_API_KEY=your-api-key-here
+MINIMAX_API_KEY=your-api-key-here
+OPENROUTER_API_KEY=your-api-key-here
 ```
 
 ### 3. 运行工作流

@@ -19,6 +19,7 @@ from pydantic_ai import Agent, BinaryContent
 from .external_base import ExternalValidator
 from ..models.schemas import ImageQualityReview
 from ..utils.image_compression import compress_image_for_review
+from ..utils.openrouter_provider import get_openrouter_model
 from ..utils.logger import get_logger
 from prompts import get_system_prompt, get_user_prompt
 
@@ -46,11 +47,9 @@ class ImageQualityValidator(ExternalValidator):
     def agent(self) -> Agent:
         """延迟初始化 Agent（首次使用时创建）"""
         if self._agent is None:
-            # 图片质量验证需要视觉模型（Claude），MiniMax 不支持图片理解
-            from ..utils.anthropic_provider import get_anthropic_model
             from ..config.settings import RetryConfig
             self._agent = Agent(
-                model=get_anthropic_model(),
+                model=get_openrouter_model("google/gemma-3-27b-it:free"),
                 output_type=ImageQualityReview,
                 instrument=True,
                 retries=RetryConfig.AGENT_RETRIES,  # Agent 内部重试
@@ -107,7 +106,7 @@ class ImageQualityValidator(ExternalValidator):
                 summary="无法验证：图片文件不存在"
             )
 
-        # 压缩图片文件（Claude API 限制 5MB）
+        # 压缩图片文件（API 限制 5MB）
         image_data = await compress_image_for_review(image_path, max_size_mb=5.0)
 
         # 从上下文获取 topic（用于风格验证）

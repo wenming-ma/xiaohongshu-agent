@@ -33,7 +33,7 @@ from ..models.schemas import (
     ImageGenContext,
 )
 from ..utils.model_factory import get_model
-from ..utils.anthropic_provider import get_anthropic_model
+from ..utils.openrouter_provider import get_openrouter_model
 from ..utils.download_manager import DownloadManager
 from ..utils.retry_handler import with_retry
 from ..utils.logger import get_logger
@@ -148,9 +148,9 @@ class ImageAgent:
             system_prompt=(get_system_prompt("image_grouping"),),
         )
 
-        # 分组审核 Agent（使用 Claude 模型，验证分组是否合理，失败则触发重新分组）
+        # 分组审核 Agent（使用 OpenRouter 模型，验证分组是否合理，失败则触发重新分组）
         self.grouping_reviewer = Agent(
-            model=get_anthropic_model(),
+            model=get_openrouter_model("google/gemma-3-27b-it:free"),
             output_type=ImageGroupingReviewResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,

@@ -73,7 +73,7 @@ class ResearchAgent:
         # LoginAgent - 用于处理登录/注册（复用同一个 Playwright MCP/浏览器会话）
         self.login_agent = LoginAgent(mcp_server=self.mcp_server)
 
-        # 读图工具（Claude 视觉）：给 research/search 场景读取截图/图片文本
+        # 读图工具（OpenRouter 视觉）：给 research/search 场景读取截图/图片文本
         self.image_reader_agent = ImageReaderAgent()
 
         # Web 搜索工具（不依赖模型 provider 的 builtin web_search）
@@ -86,7 +86,7 @@ class ResearchAgent:
         function_tools = [
             self.login_agent.get_tool(),        # 登录/注册工具
             self.image_reader_agent.get_tool(), # 读图工具（OCR/视觉理解）
-            self.web_search_agent.get_tool(),   # Web 搜索（用于扩展关键词/背景）
+            # self.web_search_agent.get_tool(),   # Web 搜索（用于扩展关键词/背景）
         ]
         self.generator = Agent(
             model=model,
