@@ -66,6 +66,16 @@ class ExternalValidator(ABC):
         """验证器名称（用于日志显示）"""
         pass
 
+    @property
+    def fail_open(self) -> bool:
+        """
+        验证失败是否允许降级放行（返回最后一次结果，继续后续流程）。
+
+        默认 False：验证失败会抛出 ValidationError，阻断被装饰函数。
+        典型用途：图片质量门禁可选择 fail-open，避免因为“审图不通过”导致整条工作流无法发布。
+        """
+        return False
+
     @abstractmethod
     async def validate(self, target: Any, context: dict) -> Any:
         """
@@ -179,6 +189,18 @@ class ExternalValidator(ABC):
                             )
                             await asyncio.sleep(delay)
                         else:
+                            if self.fail_open:
+                                logger.warning(
+                                    "[%s] 验证未通过但启用 fail-open，将使用最后一次结果继续: %s",
+                                    self.validator_name,
+                                    (review.summary if hasattr(review, "summary") else str(review.issues))[:200],
+                                )
+                                logfire.warn(
+                                    f'{self.validator_name} retries exhausted (fail-open)',
+                                    validator=self.validator_name,
+                                    total_attempts=attempt + 1,
+                                )
+                                return result
                             logfire.error(
                                 f'{self.validator_name} failed after all retries',
                                 validator=self.validator_name,

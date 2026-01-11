@@ -46,6 +46,13 @@ class ImageQualityValidator(ExternalValidator):
         return "ImageQuality"
 
     @property
+    def fail_open(self) -> bool:
+        # 图片质量审核失败通常属于“内容不理想/跑题”等门禁问题；
+        # 为避免整条工作流因为审图不通过而无法发布，这里选择降级放行：
+        # 仍会记录 issues/summary，但返回最后一次生成的图片供后续发布使用。
+        return True
+
+    @property
     def agent(self) -> Agent:
         """延迟初始化 Agent（首次使用时创建）"""
         if self._agent is None:
