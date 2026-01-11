@@ -11,8 +11,8 @@
    └── 其他环境变量
 
 2. Agent 构造函数参数
-   ├── src/agents/research.py: ResearchAgent.__init__(model="...")
-   └── src/agents/content.py: ContentAgent.__init__(model="...")
+   ├── src/slices/research/agent.py: ResearchAgent.__init__(model="...")
+   └── src/slices/content/agent.py: ContentAgent.__init__(model="...")
 
 3. main.py 调用时
    ├── research_agent = ResearchAgent()  # 使用默认值
@@ -61,11 +61,11 @@ ANTHROPIC_BASE_URL=http://115.175.23.49:3000/api
 #### **当前设置**
 
 ```python
-# src/agents/research.py (第14行)
+# src/slices/research/agent.py (第14行)
 def __init__(self, model: str = "claude-3-5-sonnet-20241022"):
     self.agent = Agent(model=model, ...)
 
-# src/agents/content.py (第13行)
+# src/slices/content/agent.py (第13行)
 def __init__(self, model: str = "claude-3-5-sonnet-20241022"):
     self.agent = Agent(model=model, ...)
 ```
@@ -91,14 +91,14 @@ pydantic-ai 支持以下 Anthropic 模型：
 
 #### **方法 1：修改默认值（代码中）**
 
-编辑 `src/agents/research.py`:
+编辑 `src/slices/research/agent.py`:
 
 ```python
 def __init__(self, model: str = "claude-3-5-haiku-20241022"):  # 改这里
     ...
 ```
 
-编辑 `src/agents/content.py`:
+编辑 `src/slices/content/agent.py`:
 
 ```python
 def __init__(self, model: str = "claude-3-opus-20240229"):  # 改这里
@@ -118,7 +118,7 @@ async def run_workflow(topic: str, audience: str) -> None:
 
 #### **方法 3：从环境变量读取（最灵活）**
 
-修改 `src/agents/research.py`:
+修改 `src/slices/research/agent.py`:
 
 ```python
 def __init__(self, model: str | None = None):
@@ -194,10 +194,10 @@ pydantic_ai 自动使用环境变量创建 Anthropic 客户端
 
 | 文件 | 行号 | 内容 |
 |------|------|------|
-| `src/agents/research.py` | 14 | `model="claude-3-5-sonnet-20241022"` |
-| `src/agents/research.py` | 22 | `os.getenv("ANTHROPIC_API_KEY")` |
-| `src/agents/content.py` | 13 | `model="claude-3-5-sonnet-20241022"` |
-| `src/agents/content.py` | 21 | `os.getenv("ANTHROPIC_API_KEY")` |
+| `src/slices/research/agent.py` | 14 | `model="claude-3-5-sonnet-20241022"` |
+| `src/slices/research/agent.py` | 22 | `os.getenv("ANTHROPIC_API_KEY")` |
+| `src/slices/content/agent.py` | 13 | `model="claude-3-5-sonnet-20241022"` |
+| `src/slices/content/agent.py` | 21 | `os.getenv("ANTHROPIC_API_KEY")` |
 | `src/main.py` | 47 | `ResearchAgent()` |
 | `src/main.py` | 67 | `ContentAgent()` |
 | `.env.example` | 6 | `ANTHROPIC_AUTH_TOKEN` (⚠️ 错误) |
@@ -257,7 +257,7 @@ CONTENT_MODEL=claude-3-opus-20240229
 
 #### **Q: 如何切换到更便宜的模型？**
 
-修改 `src/agents/research.py` 第 14 行：
+修改 `src/slices/research/agent.py` 第 14 行：
 ```python
 def __init__(self, model: str = "claude-3-5-haiku-20241022"):  # Haiku 更便宜
 ```
@@ -304,4 +304,4 @@ ANTHROPIC_API_KEY=your-api-key-here
 ```
 
 ### 📝 修改模型
-编辑 `src/agents/research.py` 第 14 行和 `src/agents/content.py` 第 13 行。
+编辑 `src/slices/research/agent.py` 第 14 行和 `src/slices/content/agent.py` 第 13 行。

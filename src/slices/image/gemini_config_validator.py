@@ -15,13 +15,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 from pydantic_ai import Agent, BinaryContent
-from .external_base import ExternalValidator
-from ..models.schemas import GeminiConfigReview
-from ..utils.image_compression import compress_image_for_review
-from ..utils.sagehub_provider import get_sagehub_model
-from ..utils.logger import get_logger
-from ..config.settings import APIConfig
-from prompts import get_system_prompt, get_user_prompt
+from ...validators.external_base import ExternalValidator
+from ...models.schemas import GeminiConfigReview
+from ...utils.image_compression import compress_image_for_review
+from ...utils.sagehub_provider import get_sagehub_model
+from ...utils.logger import get_logger
+from ...config.settings import APIConfig
+from .prompts import gemini_config_review_system_prompt, gemini_config_review_user_prompt
 
 logger = get_logger(__name__)
 
@@ -45,13 +45,13 @@ class GeminiConfigValidator(ExternalValidator):
     def agent(self) -> Agent:
         """延迟初始化 Agent（首次使用时创建）"""
         if self._agent is None:
-            from ..config.settings import RetryConfig
+            from ...config.settings import RetryConfig
             self._agent = Agent(
                 model=get_sagehub_model(APIConfig.SAGEHUB_MODEL),
                 output_type=GeminiConfigReview,
                 instrument=True,
                 retries=RetryConfig.AGENT_RETRIES,  # Agent 内部重试
-                system_prompt=(get_system_prompt("gemini_config_review"),),
+                system_prompt=(gemini_config_review_system_prompt(),),
             )
         return self._agent
 
@@ -117,7 +117,7 @@ class GeminiConfigValidator(ExternalValidator):
         image_data = await compress_image_for_review(screenshot_path, max_size_mb=5.0)
 
         # 获取用户提示词
-        user_prompt = get_user_prompt("gemini_config_review")
+        user_prompt = gemini_config_review_user_prompt()
 
         # 使用 Agent 分析截屏（使用压缩后的 JPEG）
         result = await self.agent.run(

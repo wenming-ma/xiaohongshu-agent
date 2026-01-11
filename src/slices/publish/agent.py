@@ -7,13 +7,13 @@ from typing import List
 from datetime import datetime
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
-from ..models.schemas import XHSContent, PublishResult
-from ..utils.minimax_provider import get_minimax_model
-from ..utils.retry_handler import with_retry
-from ..utils.logger import get_logger
-from ..config.settings import RetryConfig, PathConfig, TimeoutConfig, PublishConfig
-from prompts import get_system_prompt, get_user_prompt
-from .login import LoginAgent
+from ...models.schemas import XHSContent, PublishResult
+from ...utils.minimax_provider import get_minimax_model
+from ...utils.retry_handler import with_retry
+from ...utils.logger import get_logger
+from ...config.settings import RetryConfig, PathConfig, TimeoutConfig, PublishConfig
+from ...infra.login_agent import LoginAgent
+from .prompts import publisher_system_prompt, publisher_user_prompt
 
 logger = get_logger(__name__)
 
@@ -54,7 +54,7 @@ class PublisherAgent:
             tools=function_tools,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
-            system_prompt=(get_system_prompt("publisher"),),
+            system_prompt=(publisher_system_prompt(),),
         )
 
     @with_retry(max_retries=PublishConfig.MAX_RETRIES, initial_delay=PublishConfig.INITIAL_DELAY)
@@ -95,14 +95,13 @@ class PublisherAgent:
             ])
             hashtags_str = ", ".join(content.hashtags)
 
-            user_prompt = get_user_prompt(
-                "publisher",
+            user_prompt = publisher_user_prompt(
                 title=content.title,
                 body=content.body,
                 hashtags=hashtags_str,
                 call_to_action=content.call_to_action,
                 image_count=len(images),
-                image_paths=image_paths_str
+                image_paths=image_paths_str,
             )
 
             # 执行发布（Agent 会使用 Playwright MCP 工具）

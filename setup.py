@@ -113,7 +113,8 @@ def print_next_steps() -> None:
 
 📚 快速开始:
    - 查看 src/main.py 了解工作流
-   - 查看 src/agents/ 了解 Agent 实现
+   - 查看 src/slices/ 了解 Agent 实现
+   - 查看 src/workflows/ 了解编排逻辑
    - 查看 .claude/mcp.json 了解 MCP 配置
 
 🎉 祝你使用愉快！

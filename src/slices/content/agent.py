@@ -5,12 +5,17 @@
 """
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelRequest, UserPromptPart
-from ..models.schemas import ResearchResult, XHSContent, ReviewResult
-from ..utils.minimax_provider import get_minimax_model
-from ..utils.retry_handler import with_retry
-from ..utils.logger import get_logger
-from ..config.settings import RetryConfig, ReviewConfig
-from prompts import get_system_prompt, get_user_prompt
+from ...models.schemas import ResearchResult, XHSContent, ReviewResult
+from ...utils.minimax_provider import get_minimax_model
+from ...utils.retry_handler import with_retry
+from ...utils.logger import get_logger
+from ...config.settings import RetryConfig, ReviewConfig
+from .prompts import (
+    content_system_prompt,
+    content_user_prompt,
+    content_review_system_prompt,
+    content_review_user_prompt,
+)
 
 logger = get_logger(__name__)
 
@@ -35,7 +40,7 @@ class ContentAgent:
             model=model,
             output_type=XHSContent,
             instrument=True,
-            system_prompt=(get_system_prompt("content"),),
+            system_prompt=(content_system_prompt(),),
         )
 
         # 审核 Agent（文本审核统一使用 MiniMax，复用现有的 review 提示词）
@@ -44,7 +49,7 @@ class ContentAgent:
             output_type=ReviewResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
-            system_prompt=(get_system_prompt("content_review"),),
+            system_prompt=(content_review_system_prompt(),),
         )
 
     async def _review(self, content: XHSContent, research: ResearchResult) -> ReviewResult:
@@ -58,10 +63,9 @@ class ContentAgent:
         Returns:
             ReviewResult: 审核结果
         """
-        review_prompt = get_user_prompt(
-            "content_review",
+        review_prompt = content_review_user_prompt(
             content=content.model_dump_json(indent=2),
-            research=research.model_dump_json(indent=2)
+            research=research.model_dump_json(indent=2),
         )
         review_result = await self.reviewer.run(review_prompt)
         return review_result.output
@@ -89,10 +93,9 @@ class ContentAgent:
         for i in range(self.max_iterations):
             # 1. 生成或继续修订
             if i == 0:
-                prompt = get_user_prompt(
-                    "content",
+                prompt = content_user_prompt(
                     topic=topic,
-                    research_data=research.model_dump_json(indent=2)
+                    research_data=research.model_dump_json(indent=2),
                 )
                 logger.info("开始创作内容...")
             else:

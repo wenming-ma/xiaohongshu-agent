@@ -18,12 +18,12 @@
 """
 from typing import Optional
 from pydantic_ai import Agent
-from .internal_base import InternalValidator, InternalValidationResult
-from ..models.schemas import ResearchResult, ReviewResult
-from ..config.settings import RetryConfig
-from ..utils.minimax_provider import get_minimax_model
-from ..utils.logger import get_logger
-from prompts import get_system_prompt, get_user_prompt
+from ...validators.internal_base import InternalValidator, InternalValidationResult
+from ...models.schemas import ResearchResult, ReviewResult
+from ...config.settings import RetryConfig
+from ...utils.minimax_provider import get_minimax_model
+from ...utils.logger import get_logger
+from .prompts import research_review_system_prompt, research_review_user_prompt
 
 logger = get_logger(__name__)
 
@@ -64,7 +64,7 @@ class ResearchReviewValidator(InternalValidator):
                 output_type=ReviewResult,
                 instrument=True,
                 retries=RetryConfig.AGENT_RETRIES,
-                system_prompt=(get_system_prompt("research_review"),),
+                system_prompt=(research_review_system_prompt(),),
             )
         return self._reviewer
 
@@ -131,8 +131,7 @@ class ResearchReviewValidator(InternalValidator):
         Returns:
             ReviewResult: 审核结果
         """
-        review_prompt = get_user_prompt(
-            "research_review",
+        review_prompt = research_review_user_prompt(
             topic=topic,
             target_audience=target_audience,
             research=result.model_dump_json(indent=2),

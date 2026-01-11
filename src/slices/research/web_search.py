@@ -25,9 +25,9 @@ import logfire
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, Tool
 
-from ..utils.logger import get_logger
-from ..utils.minimax_provider import get_minimax_model
-from ..config.settings import RetryConfig
+from ...utils.logger import get_logger
+from ...utils.minimax_provider import get_minimax_model
+from ...config.settings import RetryConfig
 
 logger = get_logger(__name__)
 

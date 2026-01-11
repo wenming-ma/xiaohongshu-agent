@@ -12,12 +12,12 @@ from pathlib import Path
 
 from pydantic_ai import Agent, Tool, BinaryContent
 
-from ..models.schemas import ImageReadResult
-from ..utils.image_compression import compress_image_for_review
-from ..utils.logger import get_logger
-from ..config.settings import RetryConfig
-from ..config.settings import APIConfig
-from prompts import get_system_prompt, get_user_prompt
+from ...models.schemas import ImageReadResult
+from ...utils.image_compression import compress_image_for_review
+from ...utils.logger import get_logger
+from ...config.settings import RetryConfig
+from ...config.settings import APIConfig
+from .prompts import image_reader_system_prompt, image_reader_user_prompt
 
 logger = get_logger(__name__)
 
@@ -27,14 +27,14 @@ class ImageReaderAgent:
 
     def __init__(self):
         # 视觉任务使用 SageHub (Claude 中转服务)
-        from ..utils.sagehub_provider import get_sagehub_model
+        from ...utils.sagehub_provider import get_sagehub_model
 
         self._agent = Agent(
             model=get_sagehub_model(APIConfig.SAGEHUB_MODEL),
             output_type=ImageReadResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
-            system_prompt=(get_system_prompt("image_reader"),),
+            system_prompt=(image_reader_system_prompt(),),
         )
 
     async def read_image(self, image_path: str, question: str = "") -> str:
@@ -64,7 +64,7 @@ class ImageReaderAgent:
         image_data = await compress_image_for_review(path, max_size_mb=5.0)
 
         # question 为空时也传入模板，便于 LLM 明确“忽略空问题”
-        user_prompt = get_user_prompt("image_reader", question=(question or "").strip())
+        user_prompt = image_reader_user_prompt(question=(question or "").strip())
 
         logger.debug("ImageReaderAgent: reading image %s (question=%s)", path.name, bool(question))
 

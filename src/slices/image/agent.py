@@ -3,7 +3,7 @@
 使用 Gemini 网页生成小红书配图
 通过 Playwright MCP 操作 Gemini 网页
 
-所有提示词统一在 prompts/image.yaml 管理
+所有提示词统一在切片内的 prompts 模块管理
 
 验证机制（通过类装饰器实现）：
 - @GeminiConfigValidator: 每张图片生成后验证 Gemini 配置（Create images + Pro）
@@ -14,13 +14,13 @@ import math
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from pydantic_ai import Agent, Tool, RunContext
 from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 
-from ..models.schemas import (
+from ...models.schemas import (
     ImageResult,
     GeneratedImage,
     XHSContent,
@@ -33,14 +33,24 @@ from ..models.schemas import (
     ImageTypeSpec,
     ImageGenContext,
 )
-from ..utils.minimax_provider import get_minimax_model
-from ..utils.download_manager import DownloadManager
-from ..utils.retry_handler import with_retry
-from ..utils.logger import get_logger
-from ..validators import GeminiConfigValidator, ImageQualityValidator
-from ..config.settings import RetryConfig, ImageConfig, PathConfig, TimeoutConfig, APIConfig
-from prompts import get_system_prompt, get_user_prompt, get_prompt_field
-from .login import LoginAgent
+from ...utils.minimax_provider import get_minimax_model
+from ...utils.download_manager import DownloadManager
+from ...utils.retry_handler import with_retry
+from ...utils.logger import get_logger
+from ...config.settings import RetryConfig, ImageConfig, PathConfig, TimeoutConfig, APIConfig
+from ...infra.login_agent import LoginAgent
+from .gemini_config_validator import GeminiConfigValidator
+from .quality_validator import ImageQualityValidator
+from .prompts import (
+    image_system_prompt,
+    image_user_prompt,
+    image_grouping_system_prompt,
+    image_grouping_user_prompt,
+    image_grouping_review_system_prompt,
+    image_grouping_review_user_prompt,
+    gemini_operator_prompt,
+    gemini_operation_template,
+)
 
 logger = get_logger(__name__)
 
@@ -128,7 +138,7 @@ class ImageAgent:
         # 当 gen_ctx.validation_feedback 不为空时，会将反馈追加到系统提示词
         @self.prompt_generator.system_prompt
         async def _dynamic_system_prompt(ctx: RunContext[ImageGenContext]) -> str:
-            base_prompt = get_system_prompt("image")
+            base_prompt = image_system_prompt()
             if ctx.deps.validation_feedback:
                 return (
                     base_prompt +
@@ -144,7 +154,7 @@ class ImageAgent:
             output_type=ImageGroupingPlan,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
-            system_prompt=(get_system_prompt("image_grouping"),),
+            system_prompt=(image_grouping_system_prompt(),),
         )
 
         # 分组审核 Agent（使用 MiniMax 模型，验证分组是否合理，失败则触发重新分组）
@@ -153,7 +163,7 @@ class ImageAgent:
             output_type=ImageGroupingReviewResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
-            system_prompt=(get_system_prompt("image_grouping_review"),),
+            system_prompt=(image_grouping_review_system_prompt(),),
         )
 
         # Gemini 操作 Agent（结构化输出）
@@ -168,7 +178,7 @@ class ImageAgent:
             tools=function_tools,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
-            system_prompt=(get_prompt_field("image", "gemini_operator_prompt"),),
+            system_prompt=(gemini_operator_prompt(),),
         )
 
     # ==================== 工具方法 ====================
@@ -441,8 +451,7 @@ class ImageAgent:
         Returns:
             审核结果与本轮消息
         """
-        user_prompt = get_user_prompt(
-            "image_grouping_review",
+        user_prompt = image_grouping_review_user_prompt(
             topic=topic,
             key_infos_json=json.dumps(compact_items, ensure_ascii=False, indent=2),
             groups_json=json.dumps(groups, ensure_ascii=False, indent=2),
@@ -661,8 +670,7 @@ class ImageAgent:
                 # 1) 语义分组
                 if attempt == 0:
                     # 首次分组：使用完整提示词
-                    user_prompt = get_user_prompt(
-                        "image_grouping",
+                    user_prompt = image_grouping_user_prompt(
                         topic=topic,
                         key_infos_json=json.dumps(compact_items, ensure_ascii=False, indent=2),
                         max_group_size=target_group_size,
@@ -995,14 +1003,12 @@ class ImageAgent:
                 # 无关键信息时使用正文
                 body_excerpt = content.body[:300]
 
-        # 从 YAML 读取用户提示词模板并填充变量
-        user_prompt = get_user_prompt(
-            "image",
+        user_prompt = image_user_prompt(
             topic=topic,
             content_title=content.title,
             content_body=body_excerpt,
             image_type=image_type,
-            image_desc=image_desc
+            image_desc=image_desc,
         )
 
         # 如果有验证反馈，记录日志
@@ -1058,12 +1064,7 @@ class ImageAgent:
         prompt = await self._generate_prompt(content, research, topic, image_type_info, gen_ctx)
         logger.debug("提示词: %s...", prompt[:60])
 
-        # 从 YAML 读取操作提示词模板并填充变量
-        operation_prompt = get_prompt_field(
-            "image",
-            "gemini_operation_template",
-            prompt=prompt
-        )
+        operation_prompt = gemini_operation_template(prompt=prompt)
 
         # 运行 Gemini 操作 Agent（结构化输出）
         # 截屏验证由装饰器 @GeminiConfigValidator 处理

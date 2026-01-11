@@ -18,9 +18,13 @@
 ```
 xiaohongshu-agent/
 ├── src/
-│   ├── agents/
-│   │   ├── research.py          # 研究 Agent（包含 MCP 配置）
-│   │   └── content.py           # 内容 Agent
+│   ├── slices/
+│   │   ├── research/            # 研究切片（Agent/Validator/Prompts）
+│   │   ├── content/             # 内容切片（Agent/Prompts）
+│   │   ├── image/               # 图片切片（Agent/Validator/Prompts）
+│   │   └── publish/             # 发布切片（Agent/Prompts）
+│   ├── workflows/               # 统一编排层（FullWorkflow + 分阶段）
+│   ├── infra/                   # 基础设施（登录、提示词渲染等）
 │   ├── models/
 │   │   └── schemas.py           # 数据模型
 │   ├── utils/
@@ -62,6 +66,8 @@ python -m src.main --topic "西安公司避坑指南" --audience "求职者"
 生成的内容保存在 `posts/` 目录下，包括：
 - `research.json`: 研究结果
 - `content.json`: 创作的内容
+- `image.json`: 配图结果（可选）
+- `publish.json`: 发布结果（可选）
 
 ## 工作流程
 
@@ -71,20 +77,20 @@ python -m src.main --topic "西安公司避坑指南" --audience "求职者"
 
 2. 创作阶段 (ContentAgent)
    └─> 分析研究数据 → 生成标题和正文 → 输出结构化内容
+
+3. 配图阶段 (ImageAgent)
+   └─> 语义分组 → 生成图片提示词 → Gemini 生成 → 质量验证
+
+4. 发布阶段 (PublisherAgent)
+   └─> 自动登录 → 批量上传图片 → 填写内容 → 发布
 ```
-
-## 代码统计
-
-- **总代码**: ~500 行（相比原来减少 82%）
-- **依赖数**: 4 个（相比原来减少 75%）
-- **Agent 数**: 2 个（ResearchAgent + ContentAgent）
 
 ## 优势
 
-✅ **简洁**: 从 2,785 行减少到 500 行
-✅ **现代**: 使用 Pydantic-AI 和 MCP 标准
-✅ **类型安全**: Pydantic 强制类型验证
-✅ **易维护**: 清晰的模块化架构
+✅ **切片化**: 以业务能力为单位组织代码  
+✅ **编排清晰**: 统一的 workflow 接口便于扩展  
+✅ **类型安全**: Pydantic 强制类型验证  
+✅ **易维护**: 逻辑分层明确、职责更聚焦  
 
 ## 许可证
 

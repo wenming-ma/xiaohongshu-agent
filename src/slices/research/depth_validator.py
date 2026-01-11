@@ -17,8 +17,8 @@
         # 使用 result.feedback 继续探索
 """
 from typing import List
-from .internal_base import InternalValidator, InternalValidationResult
-from ..models.schemas import ResearchResult
+from ...validators.internal_base import InternalValidator, InternalValidationResult
+from ...models.schemas import ResearchResult
 
 
 class ResearchDepthValidator(InternalValidator):

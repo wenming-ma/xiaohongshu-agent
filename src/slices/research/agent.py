@@ -21,17 +21,18 @@ from pydantic_ai.messages import (
     TextPart, ToolCallPart, ThinkingPart
 )
 from typing import Any
-from ..models.schemas import ResearchResult
-from ..utils.minimax_provider import get_minimax_model
-from ..utils.retry_handler import with_retry
-from ..utils.navigate_tracker import NavigateTracker
-from ..utils.logger import get_logger
-from ..validators import ResearchDepthValidator, ResearchReviewValidator
-from ..config.settings import RetryConfig, ResearchConfig, PathConfig, TimeoutConfig
-from prompts import get_system_prompt, get_user_prompt
-from .login import LoginAgent
+from ...models.schemas import ResearchResult
+from ...utils.minimax_provider import get_minimax_model
+from ...utils.retry_handler import with_retry
+from ...utils.navigate_tracker import NavigateTracker
+from ...utils.logger import get_logger
+from ...config.settings import RetryConfig, ResearchConfig, PathConfig, TimeoutConfig
+from ...infra.login_agent import LoginAgent
+from .depth_validator import ResearchDepthValidator
+from .review_validator import ResearchReviewValidator
 from .image_reader import ImageReaderAgent
 from .web_search import WebSearchAgent
+from .prompts import research_system_prompt, research_user_prompt
 
 logger = get_logger(__name__)
 
@@ -94,7 +95,7 @@ class ResearchAgent:
             tools=function_tools,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
-            system_prompt=(get_system_prompt("research"),),
+            system_prompt=(research_system_prompt(),),
         )
 
         # 初始化验证器
@@ -169,11 +170,10 @@ class ResearchAgent:
         self._last_progress_snapshot: str | None = None
         
         # 准备初始提示词
-        initial_prompt = get_user_prompt(
-            "research",
+        initial_prompt = research_user_prompt(
             topic=topic,
             target_audience=target_audience,
-            min_posts=ResearchConfig.MIN_POSTS_RESEARCHED
+            min_posts=ResearchConfig.MIN_POSTS_RESEARCHED,
         )
 
         # 保持消息历史
