@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic_ai import Agent, Tool, RunContext
 from pydantic_ai.mcp import MCPServerStdio
-from pydantic_ai.messages import ModelRequest, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 
 from ..models.schemas import (
     ImageResult,
@@ -425,7 +425,8 @@ class ImageAgent:
         groups: list[GroupSpec],
         target_groups: int,
         max_group_size: int,
-    ) -> ImageGroupingReviewResult:
+        message_history: list[ModelMessage] | None = None,
+    ) -> tuple[ImageGroupingReviewResult, list[ModelMessage]]:
         """
         调用分组审核 Agent 验证分组质量。
 
@@ -435,9 +436,10 @@ class ImageAgent:
             groups: 分组列表
             target_groups: 目标分组数
             max_group_size: 单组最大条数
+            message_history: 审核消息历史
 
         Returns:
-            审核结果
+            审核结果与本轮消息
         """
         user_prompt = get_user_prompt(
             "image_grouping_review",
@@ -447,8 +449,8 @@ class ImageAgent:
             target_groups=target_groups,
             max_group_size=max_group_size,
         )
-        result = await self.grouping_reviewer.run(user_prompt)
-        return result.output
+        result = await self.grouping_reviewer.run(user_prompt, message_history=message_history or [])
+        return result.output, list(result.new_messages())
 
     def _cap_groups_to_max_images(
         self,
@@ -641,8 +643,10 @@ class ImageAgent:
         max_detail_images = ImageConfig.MAX_DETAIL_IMAGES
         max_review_retries = ImageConfig.GROUPING_REVIEW_MAX_RETRIES
 
-        messages: list[ModelMessage] = []  # 消息历史（用于保留完整的对话上下文）
-        message_rounds: list[list[ModelMessage]] = []  # 按轮保存消息，便于裁剪上下文
+        messages: list[ModelMessage] = []  # 分组消息历史（用于保留完整的对话上下文）
+        message_rounds: list[list[ModelMessage]] = []  # 按轮保存分组消息，便于裁剪上下文
+        review_messages: list[ModelMessage] = []  # 审核消息历史（用于保留审核上下文）
+        review_message_rounds: list[list[ModelMessage]] = []  # 按轮保存审核消息，便于裁剪上下文
         groups: list[GroupSpec] = []
 
         # 没有 key_infos 时不需要分组（避免后续调整逻辑对空列表做索引）
@@ -727,13 +731,21 @@ class ImageAgent:
                     max_group_size_cap=max_group_size_cap,
                 )
                 # 3) 审核分组
-                review = await self._review_groups(
+                if review_message_rounds:
+                    kept_review_rounds = review_message_rounds[-3:]
+                    review_messages = [msg for round_msgs in kept_review_rounds for msg in round_msgs]
+                else:
+                    review_messages = []
+
+                review, review_round_messages = await self._review_groups(
                     topic=topic,
                     compact_items=compact_items,
                     groups=groups,
                     target_groups=len(groups),
                     max_group_size=target_group_size,
+                    message_history=review_messages,
                 )
+                review_message_rounds.append(review_round_messages)
                 if review.passed:
                     logger.info("分组审核通过 (score=%.1f)", review.score)
                     return groups
