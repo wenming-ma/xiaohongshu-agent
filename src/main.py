@@ -46,7 +46,7 @@ from .utils.logger import setup_logging, get_logger
 setup_logging()
 logger = get_logger(__name__)
 
-from .workflows.full import FullWorkflow
+from .workflows import FullWorkflow
 from .workflows.types import WorkflowContext
 
 

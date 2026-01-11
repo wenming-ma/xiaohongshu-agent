@@ -145,6 +145,11 @@ class ExternalValidator(ABC):
                                 validator=self.validator_name,
                                 attempt=attempt + 1
                             )
+                            # 验证通过，清除 validation_feedback（避免打印过时的反馈信息）
+                            gen_ctx = kwargs.get('gen_ctx')
+                            if gen_ctx is not None and hasattr(gen_ctx, 'validation_feedback'):
+                                gen_ctx.validation_feedback = None
+
                             # 验证通过，删除临时截屏（如果存在）
                             if self._temp_screenshot and self._temp_screenshot.exists():
                                 self._temp_screenshot.unlink()

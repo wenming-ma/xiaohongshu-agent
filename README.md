@@ -19,12 +19,12 @@
 xiaohongshu-agent/
 ├── src/
 │   ├── slices/
-│   │   ├── research/            # 研究切片（Agent/Validator/Prompts）
-│   │   ├── content/             # 内容切片（Agent/Prompts）
-│   │   ├── image/               # 图片切片（Agent/Validator/Prompts）
-│   │   └── publish/             # 发布切片（Agent/Prompts）
-│   ├── workflows/               # 统一编排层（FullWorkflow + 分阶段）
+│   │   ├── research/            # 研究切片（Agent/Validator/Prompts/Workflow）
+│   │   ├── content/             # 内容切片（Agent/Prompts/Workflow）
+│   │   ├── image/               # 图片切片（Agent/Validator/Prompts/Workflow）
+│   │   └── publish/             # 发布切片（Agent/Prompts/Workflow）
 │   ├── infra/                   # 基础设施（登录、提示词渲染等）
+│   ├── workflows/               # 编排入口与上下文定义
 │   ├── models/
 │   │   └── schemas.py           # 数据模型
 │   ├── utils/
