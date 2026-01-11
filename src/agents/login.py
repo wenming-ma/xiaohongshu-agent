@@ -31,7 +31,6 @@ from ..config.settings import (
 )
 from ..utils.minimax_provider import get_minimax_model
 from ..utils.telegram_notifier import get_telegram_notifier
-from ..utils.tool_feedback import build_toolset_with_telegram_feedback
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -111,12 +110,8 @@ class LoginAgent:
         self.auth_agent = Agent(
             model=model,
             output_type=AuthResult,
-            toolsets=[
-                build_toolset_with_telegram_feedback(
-                    toolsets=[self.mcp_server],
-                    tools=function_tools,
-                )
-            ],
+            toolsets=[self.mcp_server],
+            tools=function_tools,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(system_prompt,),
@@ -215,7 +210,7 @@ class LoginAgent:
                         f"最近动作：{self._last_action}\n"
                         f"（若长时间不变，可能卡在页面加载/验证码/等待你回复）"
                     )
-                    await self.telegram.upsert_status(status)
+                    await self.telegram.send_message(status)
                     await asyncio.sleep(interval_seconds)
                 except asyncio.CancelledError:
                     break
@@ -230,7 +225,7 @@ class LoginAgent:
         """停止心跳，并可选更新最终状态文本。"""
         if final_text:
             try:
-                await self.telegram.upsert_status(final_text)
+                await self.telegram.send_message(final_text)
             except Exception:
                 pass
         if self._heartbeat_task is not None:
@@ -424,7 +419,7 @@ wait_for_user_reply(prompt="📲 二维码已发送\n\n请使用 [APP名称] 扫
         # 先发送提示信息给用户
         await self.telegram.send_message(prompt)
         # 更新状态
-        await self.telegram.upsert_status(
+        await self.telegram.send_message(
             f"⌛ 等待你的回复中…\n已用时：{self._format_elapsed()}\n最近动作：{self._last_action}"
         )
         reply = await self.telegram.wait_for_reply()
@@ -441,7 +436,7 @@ wait_for_user_reply(prompt="📲 二维码已发送\n\n请使用 [APP名称] 扫
             用户回复的内容
         """
         self._last_action = "ask:user"
-        await self.telegram.upsert_status(
+        await self.telegram.send_message(
             f"📩 已向你提问，等待回复…\n已用时：{self._format_elapsed()}\n最近动作：{self._last_action}"
         )
         reply = await self.telegram.ask(question)

@@ -21,14 +21,25 @@ if sys.platform == "win32":
 # Logfire 可观测性配置
 import logfire
 
+# 创建 Telegram SpanProcessor（在 configure 之前）
+from .utils.logfire_telegram_handler import TelegramSpanProcessor
+telegram_processor = TelegramSpanProcessor(
+    min_interval_sec=1.0,           # 最小发送间隔 1 秒
+    include_http_requests=False,    # 不包含 HTTP 请求日志
+    include_tool_args=True,         # 包含工具参数
+    max_arg_length=200,             # 参数最大长度 200 字符
+)
+
 # Logfire 配置
 # - 'if-token-present' 表示如果没有配置 LOGFIRE_TOKEN，则不发送数据（本地模式）
 # - environment 区分开发/生产环境
 # - service_name 标识服务名称，便于在 Dashboard 中筛选
+# - additional_span_processors 添加自定义的 SpanProcessor
 logfire.configure(
     send_to_logfire='if-token-present',
     environment='development',
     service_name='xiaohongshu-agent',
+    additional_span_processors=[telegram_processor],
 )
 logfire.instrument_pydantic_ai()
 

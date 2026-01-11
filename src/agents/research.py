@@ -26,7 +26,6 @@ from ..utils.minimax_provider import get_minimax_model
 from ..utils.retry_handler import with_retry
 from ..utils.navigate_tracker import NavigateTracker
 from ..utils.logger import get_logger
-from ..utils.tool_feedback import build_toolset_with_telegram_feedback
 from ..validators import ResearchDepthValidator, ResearchReviewValidator
 from ..config.settings import RetryConfig, ResearchConfig, PathConfig, TimeoutConfig
 from prompts import get_system_prompt, get_user_prompt
@@ -91,12 +90,8 @@ class ResearchAgent:
         self.generator = Agent(
             model=model,
             output_type=ResearchResult,
-            toolsets=[
-                build_toolset_with_telegram_feedback(
-                    toolsets=[self.navigate_tracker],
-                    tools=function_tools,
-                )
-            ],
+            toolsets=[self.navigate_tracker],
+            tools=function_tools,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(get_system_prompt("research"),),

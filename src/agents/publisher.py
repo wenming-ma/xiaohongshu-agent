@@ -11,7 +11,6 @@ from ..models.schemas import XHSContent, PublishResult
 from ..utils.minimax_provider import get_minimax_model
 from ..utils.retry_handler import with_retry
 from ..utils.logger import get_logger
-from ..utils.tool_feedback import build_toolset_with_telegram_feedback
 from ..config.settings import RetryConfig, PathConfig, TimeoutConfig, PublishConfig
 from prompts import get_system_prompt, get_user_prompt
 from .login import LoginAgent
@@ -51,12 +50,8 @@ class PublisherAgent:
         self.publisher = Agent(
             model=model,
             output_type=PublishResult,
-            toolsets=[
-                build_toolset_with_telegram_feedback(
-                    toolsets=[self.mcp_server],
-                    tools=function_tools,
-                )
-            ],
+            toolsets=[self.mcp_server],
+            tools=function_tools,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(get_system_prompt("publisher"),),

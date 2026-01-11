@@ -37,7 +37,6 @@ from ..utils.minimax_provider import get_minimax_model
 from ..utils.download_manager import DownloadManager
 from ..utils.retry_handler import with_retry
 from ..utils.logger import get_logger
-from ..utils.tool_feedback import build_toolset_with_telegram_feedback
 from ..validators import GeminiConfigValidator, ImageQualityValidator
 from ..config.settings import RetryConfig, ImageConfig, PathConfig, TimeoutConfig, APIConfig
 from prompts import get_system_prompt, get_user_prompt, get_prompt_field
@@ -165,12 +164,8 @@ class ImageAgent:
         self.gemini_operator = Agent(
             model=model,
             output_type=GeminiOperationResult,
-            toolsets=[
-                build_toolset_with_telegram_feedback(
-                    toolsets=[self.mcp_server],
-                    tools=function_tools,
-                )
-            ],
+            toolsets=[self.mcp_server],
+            tools=function_tools,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(get_prompt_field("image", "gemini_operator_prompt"),),

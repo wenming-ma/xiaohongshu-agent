@@ -119,46 +119,49 @@ class TelegramNotifier:
             self._polling_task = None
             logger.info("Telegram 轮询已停止")
     
-    async def send_message(self, text: str, chat_id: Optional[str] = None) -> Optional[int]:
+    async def send_message(self, text: str, chat_id: Optional[str] = None, parse_mode: Optional[str] = None) -> Optional[int]:
         """
         发送文本消息
-        
+
         Args:
             text: 消息内容
             chat_id: 目标聊天 ID（可选，默认使用配置的 CHAT_ID）
-            
+            parse_mode: 消息格式（可选，"Markdown" 或 "HTML"，默认为纯文本）
+
         Returns:
             消息 ID，发送失败返回 None
         """
         if self.bot is None:
             logger.warning("Bot 未初始化，无法发送消息")
             return None
-        
+
         target_chat = chat_id or self.chat_id
         if not target_chat:
             logger.warning("未指定 chat_id，无法发送消息")
             return None
-        
+
         try:
             message = await self.bot.send_message(
                 chat_id=target_chat,
                 text=text,
-                parse_mode="Markdown"
+                parse_mode=parse_mode
             )
             logger.debug(f"消息已发送: {text[:50]}...")
             return message.message_id
         except Exception as e:
             logger.error(f"发送消息失败: {e}")
-            # 尝试不使用 Markdown
-            try:
-                message = await self.bot.send_message(
-                    chat_id=target_chat,
-                    text=text
-                )
-                return message.message_id
-            except Exception as e2:
-                logger.error(f"重试发送失败: {e2}")
-                return None
+            # 如果使用了格式化但失败，尝试不使用格式化
+            if parse_mode:
+                try:
+                    message = await self.bot.send_message(
+                        chat_id=target_chat,
+                        text=text
+                    )
+                    return message.message_id
+                except Exception as e2:
+                    logger.error(f"重试发送失败: {e2}")
+                    return None
+            return None
 
     async def upsert_status(self, text: str, chat_id: Optional[str] = None, *, key: str = "default") -> Optional[int]:
         """
