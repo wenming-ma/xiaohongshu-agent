@@ -19,3 +19,4 @@ nul
 output/
 workshop/
 test_*
+.*
