@@ -7,6 +7,7 @@
 - 风格匹配度
 - 图片比例
 - 文字语言
+- 内容相关性（与当前分组/图片类型要求一致）
 
 使用方式：
     @ImageQualityValidator(max_retries=2)
@@ -113,8 +114,18 @@ class ImageQualityValidator(ExternalValidator):
         # 从上下文获取 topic（用于风格验证）
         topic = context.get("topic", "")
 
+        image_type = context.get("image_type", "")
+        content = context.get("content")
+        content_title = getattr(content, "title", "") if content is not None else ""
+        expected_content = self._build_expected_content(context)
+
         # 获取用户提示词
-        user_prompt = image_quality_review_user_prompt(topic=topic)
+        user_prompt = image_quality_review_user_prompt(
+            topic=topic,
+            image_type=image_type,
+            content_title=content_title,
+            expected_content=expected_content,
+        )
 
         # 使用 Agent 分析图片（使用压缩后的 JPEG）
         result = await self.agent.run(
@@ -125,6 +136,53 @@ class ImageQualityValidator(ExternalValidator):
         )
 
         return result.output
+
+    @staticmethod
+    def _build_expected_content(context: dict) -> str:
+        image_type_info = context.get("image_type_info") or {}
+        image_desc = image_type_info.get("desc", "") if isinstance(image_type_info, dict) else ""
+        group_title = image_type_info.get("group_title", "") if isinstance(image_type_info, dict) else ""
+
+        content = context.get("content")
+        research = context.get("research")
+
+        parts: list[str] = []
+        if image_desc:
+            parts.append(f"图片目标：{image_desc}")
+
+        if not isinstance(image_type_info, dict) or image_type_info.get("type") == "cover":
+            if content is not None:
+                body = getattr(content, "body", "") or ""
+                if body:
+                    parts.append(f"正文要点（节选）：{body[:200]}")
+            return "\n".join(parts) if parts else "（未提供）"
+
+        if group_title:
+            parts.append(f"主题板块：{group_title}")
+
+        indices = image_type_info.get("indices", [])
+        if not isinstance(indices, list) or not indices:
+            return "\n".join(parts) if parts else "（未提供）"
+
+        key_infos = getattr(research, "key_infos", None) if research is not None else None
+        if not isinstance(key_infos, list) or not key_infos:
+            return "\n".join(parts) if parts else "（未提供）"
+
+        selected_infos: list[dict] = []
+        for idx in indices:
+            if isinstance(idx, int) and 0 <= idx < len(key_infos):
+                info = key_infos[idx]
+                if isinstance(info, dict):
+                    selected_infos.append(info)
+
+        if selected_infos:
+            infos_text = "\n".join(
+                f"{i+1}. {info.get('name', '未知')}: {info.get('description', info.get('detail', ''))}"
+                for i, info in enumerate(selected_infos)
+            )
+            parts.append(f"本图必须覆盖的关键信息（共 {len(selected_infos)} 条）：\n{infos_text}")
+
+        return "\n".join(parts) if parts else "（未提供）"
 
     def _log_success(self, review: ImageQualityReview) -> None:
         """记录验证成功（覆盖基类方法以显示评分）"""

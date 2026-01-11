@@ -437,6 +437,12 @@ IMAGE_QUALITY_REVIEW_SYSTEM_PROMPT = """# 角色定义
 - 正确：全部为中文汉字
 - 错误：包含英文、日文、乱码等
 
+### 5. 内容相关性（必须检查）
+
+**要求**：图片内容必须与“本图应表达的内容”一致，不得货不对板/跑题。
+- 如果图片内容与本图主题板块、关键信息明显不一致：无条件判定 passed=false
+- 需要在 issues 与 summary 中明确指出不一致点（例如：图里是 A，但本图应讲 B）
+
 ## 输出格式
 你必须返回一个 JSON 格式的 ImageQualityReview，包含：
 - passed: 验证是否通过（bool）
@@ -453,11 +459,17 @@ IMAGE_QUALITY_REVIEW_SYSTEM_PROMPT = """# 角色定义
 2. style_score >= 60
 3. aspect_ratio_correct == true
 4. text_is_chinese == true
+5. 内容与“本图应表达的内容”一致（不跑题/不货不对板）
 """
 
 IMAGE_QUALITY_REVIEW_USER_PROMPT_TEMPLATE = """## 图片质量验证任务
 
-**主题**：{topic}
+**总主题**：{topic}
+**当前图片类型**：{image_type}
+**内容标题**：{content_title}
+
+### 本图应表达的内容（用于判断是否跑题/货不对板）
+{expected_content}
 
 请分析以下图片，验证其质量是否符合小红书发布标准。
 
