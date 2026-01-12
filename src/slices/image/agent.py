@@ -803,24 +803,30 @@ class ImageAgent:
         image_desc = image_type_info["desc"]
 
         if image_type == "cover":
+            # cover 图：使用 content 的标题和正文
             body_excerpt = content.body[:150]
+            title_for_prompt = content.title
         else:
+            # detail 图：不依赖 content，直接从 research + grouping 构建
             indices = image_type_info.get("indices", [])
             key_infos = [research.key_infos[i] for i in indices if 0 <= i < len(research.key_infos)]
+            group_title = image_type_info.get("group_title", "")
 
             if key_infos:
                 infos_text = "\n".join([
                     f"{i+1}. {info.get('name', '未知')}: {info.get('description', info.get('detail', ''))}"
                     for i, info in enumerate(key_infos)
                 ])
-                group_title = image_type_info.get("group_title", "")
                 body_excerpt = f"本图主题板块：{group_title}\n本图需要展示以下 {len(key_infos)} 个关键信息：\n{infos_text}"
             else:
-                body_excerpt = content.body[:300]
+                body_excerpt = f"本图主题板块：{group_title or topic}"
+
+            # detail 图用 topic 代替 content.title，解耦 content 依赖
+            title_for_prompt = topic
 
         user_prompt = image_user_prompt(
             topic=topic,
-            content_title=content.title,
+            content_title=title_for_prompt,
             content_body=body_excerpt,
             image_type=image_type,
             image_desc=image_desc,

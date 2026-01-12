@@ -1,11 +1,12 @@
 """Workflow types and context."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
-from ..models.schemas import ImageResult, PublishResult, ResearchResult, XHSContent
+from ..models.schemas import ImageResult, PublishResult, ResearchResult, XHSContent, GeneratedImage
 
 
 @dataclass
@@ -19,6 +20,10 @@ class WorkflowContext:
     content: XHSContent | None = None
     image_result: ImageResult | None = None
     publish_result: PublishResult | None = None
+
+    # 并行化中间状态：detail 图生成结果（不依赖 content）
+    _detail_images: list[GeneratedImage] = field(default_factory=list)
+    _image_types: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def create(

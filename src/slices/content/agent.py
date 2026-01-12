@@ -38,6 +38,7 @@ class ContentState:
 
     # 消息历史
     message_history: list[ModelMessage] = field(default_factory=list)
+    review_history: list[ModelMessage] = field(default_factory=list)
 
     # 当前结果
     current_content: XHSContent | None = None
@@ -66,6 +67,9 @@ class ContentAgent:
     # ========================================================================
     # 初始化
     # ========================================================================
+
+    # 历史轮数限制
+    MAX_HISTORY_ROUNDS = 3
 
     def __init__(self, max_iterations: int = None):
         """初始化内容 Agent"""
@@ -145,6 +149,14 @@ class ContentAgent:
         """初始化内容创作状态"""
         return ContentState(research=research, topic=topic)
 
+    @staticmethod
+    def _get_recent_history(history: list[ModelMessage], max_rounds: int) -> list[ModelMessage]:
+        """获取最近 N 轮对话历史（每轮 = 1个请求 + 1个响应 = 2条消息）"""
+        max_messages = max_rounds * 2
+        if len(history) <= max_messages:
+            return history
+        return history[-max_messages:]
+
     async def _step(self, state: ContentState, iteration: int) -> None:
         """单次生成迭代"""
         if iteration == 0:
@@ -157,20 +169,27 @@ class ContentAgent:
             prompt = "请根据反馈修订内容，确保数量一致、数据准确。"
             logger.info(f"根据反馈修订内容 (第{iteration+1}轮)...")
 
-        # 执行生成
-        run_result = await self.generator.run(prompt, message_history=state.message_history)
+        # 执行生成（只传递最近 N 轮历史）
+        recent_history = self._get_recent_history(state.message_history, self.MAX_HISTORY_ROUNDS)
+        run_result = await self.generator.run(prompt, message_history=recent_history)
         state.current_content = run_result.output
         state.message_history.extend(run_result.new_messages())
 
     async def _review(self, state: ContentState) -> None:
-        """审核内容"""
+        """审核内容（带历史记忆，只保留最近 N 轮）"""
         logger.info("审核内容...")
         review_prompt = content_review_user_prompt(
             content=state.current_content.model_dump_json(indent=2),
             research=state.research.model_dump_json(indent=2),
         )
-        review_result = await self.reviewer.run(review_prompt)
+        # 只传递最近 N 轮历史
+        recent_review_history = self._get_recent_history(state.review_history, self.MAX_HISTORY_ROUNDS)
+        review_result = await self.reviewer.run(
+            review_prompt,
+            message_history=recent_review_history
+        )
         state.current_review = review_result.output
+        state.review_history.extend(review_result.new_messages())
 
     # ========================================================================
     # 状态更新方法
