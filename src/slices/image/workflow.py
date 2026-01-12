@@ -23,7 +23,7 @@ async def run(ctx: WorkflowContext) -> WorkflowContext:
         image_agent = ImageAgent()
         logger.info("ImageAgent 已创建（包含 Playwright MCP 工具）")
 
-        image_result = await image_agent.generate_image(
+        image_result = await image_agent.forward(
             content=ctx.content,
             research=ctx.research,
             topic=ctx.topic,

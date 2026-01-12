@@ -15,7 +15,7 @@ async def run(ctx: WorkflowContext) -> WorkflowContext:
     research_agent = ResearchAgent()
     logger.info("ResearchAgent 已创建（包含 Playwright MCP 工具）")
 
-    research = await research_agent.research(ctx.topic, ctx.audience, output_dir=ctx.output_dir)
+    research = await research_agent.forward(ctx.topic, ctx.audience, output_dir=ctx.output_dir)
     save_json(ctx.output_dir / "research.json", research.model_dump())
 
     ctx.research = research

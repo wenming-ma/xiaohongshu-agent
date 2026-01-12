@@ -33,7 +33,7 @@ async def run(ctx: WorkflowContext) -> WorkflowContext:
         publisher_agent = PublisherAgent()
         logger.info("PublisherAgent 已创建（包含 Playwright MCP 工具）")
 
-        publish_result = await publisher_agent.publish(
+        publish_result = await publisher_agent.forward(
             content=ctx.content,
             images=image_paths,
             output_dir=ctx.output_dir,

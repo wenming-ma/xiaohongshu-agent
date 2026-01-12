@@ -16,7 +16,7 @@ async def run(ctx: WorkflowContext) -> WorkflowContext:
     logger.info("=" * 60)
 
     content_agent = ContentAgent()
-    content = await content_agent.create_content(ctx.research, ctx.topic)
+    content = await content_agent.forward(ctx.research, ctx.topic)
     save_json(ctx.output_dir / "content.json", content.model_dump())
 
     ctx.content = content
