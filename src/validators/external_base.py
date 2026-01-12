@@ -47,7 +47,7 @@ class ExternalValidator(ABC):
             ...
     """
 
-    def __init__(self, max_retries: int = 3, initial_delay: float = 5.0):
+    def __init__(self, max_retries: int = 5, initial_delay: float = 5.0):
         """
         初始化验证器
 

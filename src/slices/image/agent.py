@@ -1021,8 +1021,8 @@ class ImageAgent:
         return result.output
 
     @with_retry(max_retries=RetryConfig.MAX_RETRIES, initial_delay=RetryConfig.INITIAL_DELAY)
-    @GeminiConfigValidator(max_retries=3, initial_delay=5.0)
-    @ImageQualityValidator(max_retries=2, initial_delay=5.0)
+    @GeminiConfigValidator(max_retries=5, initial_delay=5.0)
+    @ImageQualityValidator(max_retries=5, initial_delay=5.0)
     async def _generate_via_gemini(
         self,
         output_dir: Path,
