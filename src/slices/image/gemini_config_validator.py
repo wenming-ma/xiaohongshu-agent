@@ -18,7 +18,7 @@ from pydantic_ai import Agent, BinaryContent
 from ...validators.external_base import ExternalValidator
 from ...models.schemas import GeminiConfigReview
 from ...utils.image_compression import compress_image_for_review
-from ...utils.sagehub_provider import get_sagehub_model
+from ...utils.openrouter_provider import get_openrouter_model
 from ...utils.logger import get_logger
 from ...config.settings import APIConfig
 from .prompts import gemini_config_review_system_prompt, gemini_config_review_user_prompt
@@ -47,7 +47,7 @@ class GeminiConfigValidator(ExternalValidator):
         if self._agent is None:
             from ...config.settings import RetryConfig
             self._agent = Agent(
-                model=get_sagehub_model(APIConfig.SAGEHUB_MODEL),
+                model=get_openrouter_model(APIConfig.OPENROUTER_REVIEW_MODEL),
                 output_type=GeminiConfigReview,
                 instrument=True,
                 retries=RetryConfig.AGENT_RETRIES,  # Agent 内部重试
