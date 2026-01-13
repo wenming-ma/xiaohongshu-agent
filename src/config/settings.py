@@ -122,6 +122,14 @@ class APIConfig:
     #   - "qwen/qwen-2.5-vl-7b-instruct:free" （免费但可能不稳定）
     OPENROUTER_REVIEW_MODEL = os.getenv("OPENROUTER_REVIEW_MODEL", "qwen/qwen3-vl-30b-a3b-instruct")
 
+    # Mistral AI 模型配置（OpenAI 兼容格式）
+    # 支持视觉的模型：
+    #   - "pixtral-12b-latest" （专门的视觉模型，推荐）
+    #   - "devstral-small-latest" （代码+视觉）
+    #   - "ministral-3b-latest" （轻量级）
+    # 注意：devstral-2512 不支持视觉
+    MISTRAL_REVIEW_MODEL = os.getenv("MISTRAL_REVIEW_MODEL", "pixtral-12b-latest")
+
     # MiniMax 模型配置（Anthropic 兼容格式 - 官方推荐）
     # 可用模型：
     #   - "MiniMax-M2.1" （最新旗舰模型，支持 Tool Use & Interleaved Thinking）

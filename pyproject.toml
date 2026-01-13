@@ -30,6 +30,7 @@ dependencies = [
     "openai>=2.14.0",
     # Telegram Bot
     "aiogram>=3.0.0",
+    "mistralai>=1.9.11",
 ]
 
 [tool.uv.sources]
