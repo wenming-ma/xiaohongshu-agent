@@ -21,10 +21,8 @@ async def run(ctx: WorkflowContext) -> WorkflowContext:
     ctx.research = research
 
     logger.info("研究完成:")
-    logger.info("  - 关键信息: %d 个", len(research.key_infos))
-    logger.info("  - 案例: %d 个", len(research.cases))
+    logger.info("  - 内容项: %d 个", len(research.items))
     logger.info("  - 关键词: %d 个", len(research.keywords))
-    logger.info("  - 可信度: %s", research.credibility)
-    logger.info("  - 数据点: %d 个", research.data_points)
+    logger.info("  - 来源: %d 个", len(research.sources))
 
     return ctx

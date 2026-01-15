@@ -52,52 +52,37 @@ class ImageTypeSpec(TypedDict, total=False):
 # ==================== Pydantic 模型 ====================
 
 
+class ResearchItem(BaseModel):
+    """统一的研究内容项（替代 key_infos 和 cases）"""
+    title: str = Field(description="标题或名称（如：公司名、品牌名、案例标题）")
+    content: str = Field(description="详细内容描述")
+    item_type: Optional[str] = Field(default=None, description="内容类型（如：brand, company, case, experience, tip）")
+    source_ref: Optional[str] = Field(default=None, description="来源引用（如：post_1, comment_2）")
+
+
 class ContentSource(BaseModel):
-    """内容来源（通用）"""
+    """简化的内容来源"""
     url: str = Field(description="来源链接")
     title: str = Field(description="标题")
-    content_type: str = Field(
-        default="post",
-        description="内容类型：article/post/comment/reply"
-    )
-    author: Optional[str] = Field(default=None, description="作者")
-    publish_time: Optional[datetime] = Field(default=None, description="发布时间")
+    domain: str = Field(description="网站域名（从 URL 提取）")
 
     # 互动数据（可选）
     likes: Optional[int] = Field(default=None, description="点赞数")
     comments: Optional[int] = Field(default=None, description="评论数")
-    shares: Optional[int] = Field(default=None, description="分享数")
-    views: Optional[int] = Field(default=None, description="浏览数")
 
 
 class ResearchResult(BaseModel):
-    """研究结果（通用）"""
+    """简化的研究结果"""
 
     # 核心数据
     summary: str = Field(description="研究总结")
-    key_infos: List[Dict[str, Any]] = Field(
+    items: List[ResearchItem] = Field(
         default_factory=list,
-        description="提取的关键信息（名称、品牌、地点、数字等具体信息）"
-    )
-    cases: List[Dict[str, Any]] = Field(
-        default_factory=list,
-        description="具体案例"
+        description="研究内容项列表（统一的关键信息和案例）"
     )
     keywords: List[str] = Field(
         default_factory=list,
         description="关键词（用于搜索和索引）"
-    )
-
-    # 质量评估
-    credibility: str = Field(
-        default="medium",
-        description="可信度评估 (low/medium/high)"
-    )
-    interaction_data_ratio: float = Field(
-        default=0.0,
-        ge=0.0,
-        le=1.0,
-        description="互动数据占比（评论、回复等，0-1）"
     )
 
     # 来源追踪
@@ -109,9 +94,9 @@ class ResearchResult(BaseModel):
     # 计算字段
     @computed_field
     @property
-    def data_points(self) -> int:
-        """数据点总数（自动计算）"""
-        return len(self.key_infos) + len(self.cases)
+    def items_count(self) -> int:
+        """内容项总数（自动计算）"""
+        return len(self.items)
 
     @computed_field
     @property
@@ -123,17 +108,29 @@ class ResearchResult(BaseModel):
         json_schema_extra = {
             "example": {
                 "summary": "关于某主题的研究，收集了多个关键信息和真实案例",
-                "key_infos": [
-                    {"type": "brand", "name": "具体品牌名", "detail": "相关描述", "source": "post_1"}
-                ],
-                "cases": [
-                    {"title": "用户真实经历", "description": "具体问题描述", "source": "comment_1"}
+                "items": [
+                    {
+                        "title": "具体品牌名",
+                        "content": "品牌相关描述和详细信息",
+                        "item_type": "brand",
+                        "source_ref": "post_1"
+                    },
+                    {
+                        "title": "用户真实经历",
+                        "content": "具体问题描述和解决方案",
+                        "item_type": "case",
+                        "source_ref": "comment_1"
+                    }
                 ],
                 "keywords": ["关键词1", "关键词2", "关键词3"],
-                "credibility": "high",
-                "interaction_data_ratio": 0.45,
                 "sources": [
-                    {"url": "https://...", "title": "帖子标题", "content_type": "post", "likes": 1200, "comments": 300}
+                    {
+                        "url": "https://www.xiaohongshu.com/explore/...",
+                        "title": "帖子标题",
+                        "domain": "xiaohongshu.com",
+                        "likes": 1200,
+                        "comments": 300
+                    }
                 ]
             }
         }

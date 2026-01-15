@@ -29,8 +29,7 @@ def build_review_feedback(review: ReviewResult, research: ResearchResult) -> str
 
     feedback_message += (
         f"\n**研究数据参考**：\n"
-        f"- 可用关键信息: {len(research.key_infos)} 个\n"
-        f"- 可用案例: {len(research.cases)} 个\n"
+        f"- 可用内容项: {len(research.items)} 个\n"
     )
 
     # 添加关键词参考（最多10个）

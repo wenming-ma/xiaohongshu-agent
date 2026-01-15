@@ -11,6 +11,7 @@ from typing import List
 from datetime import datetime
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
+from pydantic_ai.usage import UsageLimits
 from ...models.schemas import XHSContent, PublishResult
 from ...utils.minimax_provider import get_minimax_model
 from ...utils.retry_handler import with_retry
@@ -116,7 +117,7 @@ class PublisherAgent:
             # 执行发布
             logger.info("Agent 开始执行发布流程...")
             async with self.mcp_server:
-                result = await self.publisher.run(user_prompt)
+                result = await self.publisher.run(user_prompt, usage_limits=UsageLimits(request_limit=None))
                 publish_result: PublishResult = result.output
 
             # 处理结果

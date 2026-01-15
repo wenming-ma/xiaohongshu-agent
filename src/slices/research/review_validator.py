@@ -146,10 +146,8 @@ class ResearchReviewValidator(InternalValidator):
             f"**数据质量审核未通过**\n\n"
             f"**审核评分**：{review.score:.1f}/100\n\n"
             f"**当前数据状态**：\n"
-            f"- 关键信息数量: {len(result.key_infos)} 个\n"
-            f"- 案例数量: {len(result.cases)} 个\n"
-            f"- 互动数据占比: {result.interaction_data_ratio:.0%}\n"
-            f"- 可信度: {result.credibility}\n\n"
+            f"- 内容项数量: {len(result.items)} 个\n"
+            f"- 来源数量: {len(result.sources)} 个\n\n"
             f"**审核反馈**：{review.summary}\n\n"
             f"**具体问题**：\n"
         )

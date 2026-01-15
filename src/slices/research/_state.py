@@ -68,32 +68,28 @@ class ResearchState:
 # 进度快照构建
 # ============================================================================
 
-def _merge_iteration_data(iteration_results: list[ResearchResult]) -> tuple[list[dict], list[dict], set[str]]:
+def _merge_iteration_data(iteration_results: list[ResearchResult]) -> tuple[list, set[str]]:
     """合并并去重迭代结果中的数据"""
-    seen_key_infos: set[str] = set()
-    seen_cases: set[str] = set()
+    seen_items: set[str] = set()
     seen_keywords: set[str] = set()
-    merged_key_infos: list[dict] = []
-    merged_cases: list[dict] = []
+    merged_items: list = []
 
     for res in iteration_results:
-        for info in res.key_infos:
-            key = json.dumps(info, sort_keys=True, ensure_ascii=False)
-            if key not in seen_key_infos:
-                seen_key_infos.add(key)
-                merged_key_infos.append(info)
-
-        for case in res.cases:
-            key = json.dumps(case, sort_keys=True, ensure_ascii=False)
-            if key not in seen_cases:
-                seen_cases.add(key)
-                merged_cases.append(case)
+        for item in res.items:
+            # 使用 title + content 作为唯一标识
+            if hasattr(item, 'title'):
+                key = f"{item.title}|{item.content}"
+            else:
+                key = f"{item.get('title', '')}|{item.get('content', '')}"
+            if key not in seen_items:
+                seen_items.add(key)
+                merged_items.append(item)
 
         for kw in res.keywords:
             if kw:
                 seen_keywords.add(str(kw))
 
-    return merged_key_infos, merged_cases, seen_keywords
+    return merged_items, seen_keywords
 
 
 def build_progress_snapshot(state: ResearchState, saved_file: str, max_items: int = 10) -> str:
@@ -102,14 +98,18 @@ def build_progress_snapshot(state: ResearchState, saved_file: str, max_items: in
         return ""
 
     # 合并去重
-    merged_key_infos, merged_cases, seen_keywords = _merge_iteration_data(state.iteration_results)
+    merged_items, seen_keywords = _merge_iteration_data(state.iteration_results)
 
     def _short(obj: Any, limit: int = 120) -> str:
-        s = str(obj)
+        if hasattr(obj, 'title'):
+            s = f"{obj.title}: {obj.content}"
+        elif isinstance(obj, dict):
+            s = f"{obj.get('title', '')}: {obj.get('content', '')}"
+        else:
+            s = str(obj)
         return s if len(s) <= limit else s[:limit - 12] + "...[truncated]"
 
-    key_infos_preview = "\n".join(f"- {_short(item)}" for item in merged_key_infos[:max_items]) or "- (none)"
-    cases_preview = "\n".join(f"- {_short(item)}" for item in merged_cases[:max_items]) or "- (none)"
+    items_preview = "\n".join(f"- {_short(item)}" for item in merged_items[:max_items]) or "- (none)"
     keywords_preview = ", ".join(sorted(seen_keywords)) or "(none)"
 
     tracked_urls = state.tracked_stats.get("post_detail_urls") or []
@@ -132,14 +132,13 @@ def build_progress_snapshot(state: ResearchState, saved_file: str, max_items: in
         f"- tracked_post_count: {state.tracked_stats.get('post_detail_count', 0)}\n"
         f"- saved_json:\n{saved_files_preview}\n"
         f"{(saved_files_note + chr(10)) if saved_files_note else ''}\n"
-        f"已保存的关键信息（示例，最多{max_items}条）：\n{key_infos_preview}\n\n"
-        f"已保存的案例（示例，最多{max_items}条）：\n{cases_preview}\n\n"
+        f"已保存的内容项（示例，最多{max_items}条）：\n{items_preview}\n\n"
         f"已保存的关键词： {keywords_preview}\n\n"
         f"已进入的帖子详情页（最近{max_items}个）：\n{tracked_urls_preview}\n\n"
         f"⚠️ 重要提醒：\n"
         f"- 以上历史数据已自动保存到文件，系统会自动合并所有轮次\n"
         f"- 本轮你只需输出【新收集】的数据，不要重复输出历史数据\n"
-        f"- 请继续探索新帖子，收集新的关键信息和案例"
+        f"- 请继续探索新帖子，收集新的内容项"
     )
 
 
@@ -158,7 +157,7 @@ def combine_feedback(depth_result, review_result) -> str:
         f"{combined}\n\n"
         f"**重要提醒**：\n"
         f"- 上一轮收集的数据已自动保存，系统会自动合并所有轮次结果\n"
-        f"- 本轮你只需输出【本轮新收集】的关键信息和案例\n"
+        f"- 本轮你只需输出【本轮新收集】的内容项\n"
         f"- 不要在输出中重复之前轮次已收集的内容\n\n"
         f"**请基于已搜索的内容发散思维，尝试不同关键词组合和细分角度，进入更多帖子详情页收集【新的】数据。**"
     )
@@ -192,13 +191,13 @@ def _find_last_positions(messages: list[ModelMessage]) -> dict[str, tuple[int, i
     return positions
 
 
-def _simplify_model_request(
+def _simplify_tool_request(
     msg: ModelRequest,
     msg_idx: int,
     last_positions: dict,
     summary_text: str
 ) -> ModelRequest:
-    """简化 ModelRequest 消息"""
+    """简化 ModelRequest 中的 ToolReturnPart（截断非最新的工具返回）"""
     new_parts = []
     for part_idx, part in enumerate(msg.parts):
         if isinstance(part, ToolReturnPart):
@@ -219,12 +218,12 @@ def _simplify_model_request(
     return replace(msg, parts=new_parts)
 
 
-def _simplify_model_response(
+def _simplify_tool_response(
     msg: ModelResponse,
     msg_idx: int,
     last_positions: dict
 ) -> ModelResponse | None:
-    """简化 ModelResponse 消息，如果没有内容则返回 None"""
+    """简化 ModelResponse 中的 ToolCallPart 和 ThinkingPart（截断非最新的）"""
     new_parts = []
 
     for part_idx, part in enumerate(msg.parts):
@@ -272,11 +271,11 @@ def simplify_message_history(messages: list[ModelMessage]) -> list[ModelMessage]
     simplified = []
     for msg_idx, msg in enumerate(messages):
         if isinstance(msg, ModelRequest):
-            simplified_msg = _simplify_model_request(msg, msg_idx, last_positions, summary_text)
+            simplified_msg = _simplify_tool_request(msg, msg_idx, last_positions, summary_text)
             simplified.append(simplified_msg)
 
         elif isinstance(msg, ModelResponse):
-            simplified_msg = _simplify_model_response(msg, msg_idx, last_positions)
+            simplified_msg = _simplify_tool_response(msg, msg_idx, last_positions)
             if simplified_msg:
                 simplified.append(simplified_msg)
         else:

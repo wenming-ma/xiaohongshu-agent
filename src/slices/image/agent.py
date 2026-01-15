@@ -12,8 +12,7 @@
 - validate_image_generation: 显式验证循环，依次验证 Gemini 配置和图片质量
 - 验证失败时自动重试，注入反馈到生成上下文
 """
-import json
-import math
+import asyncio
 import time
 from datetime import datetime
 from pathlib import Path
@@ -21,7 +20,6 @@ from typing import Any, Optional
 
 from pydantic_ai import Agent, Tool, RunContext
 from pydantic_ai.mcp import MCPServerStdio
-from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 
 from ...models.schemas import (
     ImageResult,
@@ -31,8 +29,6 @@ from ...models.schemas import (
     ImageGroupingPlan,
     ImageGroupingReviewResult,
     GeminiOperationResult,
-    GroupSpec,
-    CompactKeyInfo,
     ImageTypeSpec,
     ImageGenContext,
 )
@@ -47,19 +43,17 @@ from .prompts import (
     image_system_prompt,
     image_user_prompt,
     image_grouping_system_prompt,
-    image_grouping_user_prompt,
     image_grouping_review_system_prompt,
-    image_grouping_review_user_prompt,
     gemini_operator_prompt,
     gemini_operation_template,
 )
 
 # 从拆分的模块导入
-from ._state import ImageGenState, MessageHistoryManager
-from ._grouping import (
-    normalize_grouping_plan,
-    post_process_groups,
-    validate_groups,
+from ._group_utils import (
+    build_compact_items,
+    calculate_grouping_params,
+    groups_to_image_specs,
+    run_grouping_with_review,
 )
 from ._validation import validate_image_generation
 
@@ -233,16 +227,18 @@ class ImageAgent:
         Returns:
             ImageResult: 图片结果（包含多张图片）
         """
-        key_info_count = len(research.key_infos)
+        item_count = len(research.items)
 
         # 1. 计算分组参数
-        target_groups, target_group_size, max_group_size_cap = self._calculate_grouping_params(key_info_count)
+        target_groups, target_group_size, max_group_size_cap = calculate_grouping_params(item_count)
 
         # 2. 构造 compact_items
-        compact_items = self._build_compact_items(research.key_infos or [])
+        compact_items = build_compact_items(research.items or [])
 
         # 3. 语义分组 + 审核
-        groups = await self._run_grouping_with_review(
+        groups = await run_grouping_with_review(
+            grouping_agent=self.grouping_agent,
+            grouping_reviewer=self.grouping_reviewer,
             topic=topic,
             research=research,
             compact_items=compact_items,
@@ -251,9 +247,9 @@ class ImageAgent:
             max_group_size_cap=max_group_size_cap,
         )
 
-        # 4. 构建图片类型列表
-        image_types = self._build_image_types(groups)
-        logger.info("开始生成 %d 张配图 (%d 个关键信息)", len(image_types), key_info_count)
+        # 4. 构建图片生成规格
+        image_specs = groups_to_image_specs(groups)
+        logger.info("开始生成 %d 张配图 (%d 个内容项)", len(image_specs), item_count)
 
         # 5. 生成图片
         generated_images = await self._generate_all_images(
@@ -261,7 +257,7 @@ class ImageAgent:
             research=research,
             topic=topic,
             output_dir=output_dir,
-            image_types=image_types,
+            image_specs=image_specs,
         )
 
         return ImageResult(
@@ -274,15 +270,24 @@ class ImageAgent:
     # 工具方法
     # ========================================================================
 
-    def _check_download_status(self) -> str:
+    async def _check_download_status(self) -> str:
         """检查下载目录是否有新的 PNG 图片文件"""
+        # 等待 5 秒让下载有时间开始
+        await asyncio.sleep(5)
+
         if self._operation_start_time is None:
             return "NOT_FOUND: 操作未开始"
 
+        # 1. 检查完整的 PNG 文件（下载成功）
         for f in self.downloads_dir.glob("*.png"):
             if f.stat().st_mtime > self._operation_start_time:
-                if not f.suffix.endswith(('.crdownload', '.tmp', '.part')):
-                    return f"DOWNLOADED: {f.name} ({f.stat().st_size / 1024:.0f}KB)"
+                return f"DOWNLOADED: {f.name} ({f.stat().st_size / 1024:.0f}KB)"
+
+        # 2. 检查临时文件（下载中）
+        for pattern in ["*.crdownload", "*.tmp", "*.part"]:
+            for f in self.downloads_dir.glob(pattern):
+                if f.stat().st_mtime > self._operation_start_time:
+                    return f"DOWNLOADING: {f.name} ({f.stat().st_size / 1024:.0f}KB)"
 
         return "NOT_FOUND: 下载目录中没有新文件"
 
@@ -300,228 +305,6 @@ class ImageAgent:
             logger.warning("无法列出工具: %s", e)
 
     # ========================================================================
-    # 分组相关方法
-    # ========================================================================
-
-    @staticmethod
-    def _build_compact_items(key_infos: list[dict[str, Any]]) -> list[CompactKeyInfo]:
-        """将 key_infos 转换为精简格式"""
-        max_text_len = ImageConfig.COMPACT_TEXT_MAX_LEN
-        compact_items: list[CompactKeyInfo] = []
-        for i, info in enumerate(key_infos):
-            name = info.get("name") or info.get("title") or ""
-            desc = info.get("description") or info.get("detail") or info.get("desc") or ""
-            text = f"{name}: {desc}".strip(": ").strip()
-            compact_items.append({
-                "index": i,
-                "type": info.get("type"),
-                "name": name,
-                "text": text[:max_text_len],
-            })
-        return compact_items
-
-    @staticmethod
-    def _calculate_grouping_params(key_info_count: int) -> tuple[int, int, int]:
-        """根据 key_info 数量计算分组参数"""
-        max_detail_images = ImageConfig.MAX_DETAIL_IMAGES
-        target_groups = min(
-            max_detail_images,
-            max(ImageConfig.MIN_DETAIL_IMAGES, math.ceil(key_info_count / ImageConfig.ENTITIES_PER_DETAIL))
-        )
-        if target_groups > 0:
-            target_group_size = math.ceil(key_info_count / target_groups)
-        else:
-            target_group_size = ImageConfig.ENTITIES_PER_DETAIL
-        target_group_size = max(ImageConfig.ENTITIES_PER_DETAIL, target_group_size)
-        max_group_size_cap = max(ImageConfig.MAX_GROUP_SIZE_CAP, ImageConfig.ENTITIES_PER_DETAIL)
-        return target_groups, target_group_size, max_group_size_cap
-
-    async def _review_groups(
-        self,
-        *,
-        topic: str,
-        compact_items: list[CompactKeyInfo],
-        groups: list[GroupSpec],
-        target_groups: int,
-        max_group_size: int,
-        message_history: list[ModelMessage] | None = None,
-    ) -> tuple[ImageGroupingReviewResult, list[ModelMessage]]:
-        """调用分组审核 Agent"""
-        user_prompt = image_grouping_review_user_prompt(
-            topic=topic,
-            key_infos_json=json.dumps(compact_items, ensure_ascii=False, indent=2),
-            groups_json=json.dumps(groups, ensure_ascii=False, indent=2),
-            target_groups=target_groups,
-            max_group_size=max_group_size,
-        )
-        result = await self.grouping_reviewer.run(user_prompt, message_history=message_history or [])
-        return result.output, list(result.new_messages())
-
-    async def _run_grouping_with_review(
-        self,
-        *,
-        topic: str,
-        research: ResearchResult,
-        compact_items: list[CompactKeyInfo],
-        target_groups: int,
-        target_group_size: int,
-        max_group_size_cap: int,
-    ) -> list[GroupSpec]:
-        """语义分组 + 审核循环（使用 MessageHistoryManager）"""
-        max_detail_images = ImageConfig.MAX_DETAIL_IMAGES
-        max_review_retries = ImageConfig.GROUPING_REVIEW_MAX_RETRIES
-
-        # 使用 MessageHistoryManager 管理消息历史
-        history_mgr = MessageHistoryManager(max_rounds=3)
-        groups: list[GroupSpec] = []
-
-        if len(research.key_infos or []) == 0:
-            return []
-
-        try:
-            for attempt in range(max_review_retries):
-                if attempt == 0:
-                    user_prompt = image_grouping_user_prompt(
-                        topic=topic,
-                        key_infos_json=json.dumps(compact_items, ensure_ascii=False, indent=2),
-                        max_group_size=target_group_size,
-                        target_groups=target_groups,
-                    )
-                    logger.info("开始语义分组...")
-                else:
-                    review_feedback = (
-                        f"分组审核未通过，请根据反馈重新分组。\n\n"
-                        f"**审核评分**：{review.score:.1f}/100\n\n"
-                        f"**问题摘要**：{review.summary}\n\n"
-                        f"**具体问题**：\n"
-                    )
-                    for issue in review.issues:
-                        review_feedback += f"- {issue}\n"
-
-                    review_feedback += (
-                        f"\n**要求**：\n"
-                        f"- 确保覆盖所有 {len(compact_items)} 个关键信息\n"
-                        f"- 分组语义一致、逻辑清晰\n"
-                        f"- 目标分组数：{target_groups} 组\n"
-                        f"- 每组建议大小：{target_group_size} 条\n"
-                    )
-
-                    feedback_message = ModelRequest(parts=[UserPromptPart(review_feedback)])
-                    user_prompt = "请根据上述反馈重新分组，确保覆盖完整且分组语义一致。"
-                    logger.info(f"根据反馈重新分组 (第{attempt+1}轮)...")
-
-                # 获取分组历史
-                messages = history_mgr.get_grouping_history()
-
-                # 执行分组
-                if attempt == 0:
-                    grouping_result = await self.grouping_agent.run(user_prompt, message_history=messages)
-                    round_messages = list(grouping_result.new_messages())
-                else:
-                    grouping_result = await self.grouping_agent.run(
-                        user_prompt,
-                        message_history=messages + [feedback_message],
-                    )
-                    round_messages = [feedback_message] + list(grouping_result.new_messages())
-
-                # 保存本轮消息
-                history_mgr.add_grouping_round(round_messages)
-                plan: ImageGroupingPlan = grouping_result.output
-
-                # 使用 _grouping.py 中的函数进行后处理
-                groups = normalize_grouping_plan(
-                    plan,
-                    len(compact_items),
-                    target_group_size
-                )
-                groups = post_process_groups(
-                    groups,
-                    n_key_infos=len(compact_items),
-                    target_groups=target_groups,
-                    target_group_size=target_group_size,
-                    max_group_size_cap=max_group_size_cap,
-                    max_detail_images=max_detail_images,
-                )
-
-                # 获取审核历史
-                review_messages = history_mgr.get_review_history()
-
-                # 审核分组
-                review, review_round_messages = await self._review_groups(
-                    topic=topic,
-                    compact_items=compact_items,
-                    groups=groups,
-                    target_groups=len(groups),
-                    max_group_size=target_group_size,
-                    message_history=review_messages,
-                )
-
-                # 保存审核消息
-                history_mgr.add_review_round(review_round_messages)
-
-                if review.passed:
-                    logger.info("分组审核通过 (score=%.1f)", review.score)
-                    return groups
-
-                logger.warning(
-                    "分组审核未通过 (attempt=%d/%d): %s",
-                    attempt + 1, max_review_retries, review.summary
-                )
-        except Exception:
-            n_key_infos = len(research.key_infos or [])
-            logger.exception(
-                "语义分组阶段异常，降级为确定性分组 (key_infos=%d, target_groups=%d, target_group_size=%d)",
-                n_key_infos, target_groups, target_group_size
-            )
-            if groups:
-                logger.warning("语义分组异常，使用最近一次分组结果继续生成 (groups=%d)", len(groups))
-                # 使用 _grouping.py 中的函数进行后处理
-                from ._grouping import cap_groups_to_max_images
-                return cap_groups_to_max_images(
-                    groups,
-                    max_groups=max_detail_images,
-                    max_group_size_cap=max_group_size_cap,
-                )
-            if n_key_infos <= 0:
-                return []
-            idxs = list(range(n_key_infos))
-            chunk_size = max(1, min(target_group_size, max_group_size_cap))
-            chunks = [idxs[i : i + chunk_size] for i in range(0, len(idxs), chunk_size)]
-            fallback_groups: list[GroupSpec] = [
-                {"title": f"要点清单（{i}/{len(chunks)}）", "indices": chunk}
-                for i, chunk in enumerate(chunks, start=1)
-                if chunk
-            ]
-            # 使用 _grouping.py 中的函数进行后处理
-            from ._grouping import cap_groups_to_max_images
-            return cap_groups_to_max_images(
-                fallback_groups,
-                max_groups=max_detail_images,
-                max_group_size_cap=max_group_size_cap,
-            )
-
-        logger.warning(
-            "分组审核失败（已重试 %d 次），将使用最后一次分组继续生成 (最后评分: %.1f, 问题: %s)",
-            max_review_retries, review.score, review.summary
-        )
-        return groups
-
-    @staticmethod
-    def _build_image_types(groups: list[GroupSpec]) -> list[ImageTypeSpec]:
-        """将分组列表转换为图片类型列表"""
-        image_types: list[ImageTypeSpec] = [
-            {"type": "cover", "desc": "封面图 - 大标题风格，突出主题"}
-        ]
-        for i, g in enumerate(groups, start=1):
-            image_types.append({
-                "type": f"detail_{i}",
-                "desc": f"详情图{i} - 语义分组：{g['title']}",
-                "group_title": g["title"],
-                "indices": g["indices"],
-            })
-        return image_types
-
-    # ========================================================================
     # 图片生成方法
     # ========================================================================
 
@@ -532,15 +315,15 @@ class ImageAgent:
         research: ResearchResult,
         topic: str,
         output_dir: Path,
-        image_types: list[ImageTypeSpec],
+        image_specs: list[ImageTypeSpec],
     ) -> list[GeneratedImage]:
         """在 MCP Server 上下文中逐张生成图片"""
         generated_images: list[GeneratedImage] = []
 
         async with self.mcp_server:
-            for image_type_info in image_types:
-                image_type = image_type_info["type"]
-                image_desc = image_type_info.get("desc", "")
+            for spec in image_specs:
+                image_type = spec["type"]
+                image_desc = spec.get("desc", "")
 
                 logger.info("[%s] %s", image_type, image_desc)
 
@@ -554,11 +337,11 @@ class ImageAgent:
                     gen_ctx=gen_ctx,
                     content=content,
                     research=research,
-                    image_type_info=image_type_info,
+                    image_spec=spec,
                 )
 
                 final_prompt = await self._generate_prompt(
-                    content, research, topic, image_type_info, gen_ctx
+                    content, research, topic, spec, gen_ctx
                 )
 
                 generated_images.append(GeneratedImage(
@@ -576,29 +359,29 @@ class ImageAgent:
         content: XHSContent,
         research: ResearchResult,
         topic: str,
-        image_type_info: ImageTypeSpec,
+        image_spec: ImageTypeSpec,
         gen_ctx: ImageGenContext,
     ) -> str:
         """生成 Gemini 图片提示词"""
-        image_type = image_type_info["type"]
-        image_desc = image_type_info["desc"]
+        image_type = image_spec["type"]
+        image_desc = image_spec["desc"]
 
         if image_type == "cover":
             # cover 图：使用 content 的标题和正文
-            body_excerpt = content.body[:150]
+            body_excerpt = content.body
             title_for_prompt = content.title
         else:
-            # detail 图：不依赖 content，直接从 research + grouping 构建
-            indices = image_type_info.get("indices", [])
-            key_infos = [research.key_infos[i] for i in indices if 0 <= i < len(research.key_infos)]
-            group_title = image_type_info.get("group_title", "")
+            # detail 图：直接从 research + grouping 构建
+            indices = image_spec.get("indices", [])
+            items = [research.items[i] for i in indices if 0 <= i < len(research.items)]
+            group_title = image_spec.get("group_title", "")
 
-            if key_infos:
+            if items:
                 infos_text = "\n".join([
-                    f"{i+1}. {info.get('name', '未知')}: {info.get('description', info.get('detail', ''))}"
-                    for i, info in enumerate(key_infos)
+                    f"{i+1}. {item.title if hasattr(item, 'title') else item.get('title', '未知')}: {item.content if hasattr(item, 'content') else item.get('content', item.get('description', ''))}"
+                    for i, item in enumerate(items)
                 ])
-                body_excerpt = f"本图主题板块：{group_title}\n本图需要展示以下 {len(key_infos)} 个关键信息：\n{infos_text}"
+                body_excerpt = f"本图主题板块：{group_title}\n本图需要展示以下 {len(items)} 个关键信息：\n{infos_text}"
             else:
                 body_excerpt = f"本图主题板块：{group_title or topic}"
 
@@ -660,7 +443,7 @@ class ImageAgent:
         gen_ctx: ImageGenContext,
         content: XHSContent,
         research: ResearchResult,
-        image_type_info: ImageTypeSpec,
+        image_spec: ImageTypeSpec,
     ) -> Path:
         """通过 Gemini 网页生成图片（带验证）"""
         # 初始化验证器（如果还没有）
@@ -679,7 +462,7 @@ class ImageAgent:
 
         # 定义核心生成函数（闭包，捕获所有参数）
         async def generate_core_fn() -> Path:
-            prompt = await self._generate_prompt(content, research, topic, image_type_info, gen_ctx)
+            prompt = await self._generate_prompt(content, research, topic, image_spec, gen_ctx)
             return await self._generate_via_gemini_core(
                 output_dir=output_dir,
                 image_type=image_type,

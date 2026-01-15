@@ -313,9 +313,7 @@ class ResearchAgent:
         logger.info("本轮研究结果：")
         logger.info(f"  - 帖子数量（追踪）: {tracked_count}")
         logger.info(f"  - 内容来源数量: {result.sources_count}")
-        logger.info(f"  - 关键信息数量: {len(result.key_infos)}")
-        logger.info(f"  - 案例数量: {len(result.cases)}")
-        logger.info(f"  - 互动数据占比: {result.interaction_data_ratio:.0%}")
+        logger.info(f"  - 内容项数量: {len(result.items)}")
 
     def _log_success(self, span, state: ResearchState, iteration: int) -> None:
         """记录成功日志"""
@@ -343,20 +341,3 @@ class ResearchAgent:
             topic=topic,
             max_iterations=self.max_iterations
         )
-
-    # ========================================================================
-    # 工具方法
-    # ========================================================================
-
-    async def list_tools(self) -> None:
-        """列出所有可用的 MCP 工具（用于验证）"""
-        logger.info("正在检查可用工具...")
-        try:
-            async with self.mcp_server as server:
-                tools = await server.list_tools()
-                logger.info(f"发现 {len(tools)} 个 Playwright MCP 工具:")
-                for tool in tools:
-                    tool_name = f"{self.mcp_server.tool_prefix}_{tool.name}" if self.mcp_server.tool_prefix else tool.name
-                    logger.debug(f"  - {tool_name}")
-        except Exception as e:
-            logger.warning(f"无法列出工具: {e}")

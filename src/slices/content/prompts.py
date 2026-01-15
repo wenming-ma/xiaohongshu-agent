@@ -47,7 +47,7 @@ CONTENT_SYSTEM_PROMPT = """# 角色定义
 2. **具体胜于空泛**：公司名 > "某公司"，数字 > "很多"
 3. **情感共鸣**：理解目标受众的痛点和需求
 4. **行动引导**：每篇内容都要有强互动诱导
-5. **数量充实**：列出的关键信息/案例要多（10+个），给用户收藏价值
+5. **数量充实**：列出的内容要多（10+个），给用户收藏价值
 """
 
 CONTENT_USER_PROMPT_TEMPLATE = """## 创作任务
@@ -231,7 +231,7 @@ CONTENT_REVIEW_USER_PROMPT_TEMPLATE = """## 审核任务
 - 如不匹配，记录为 `count_mismatch` (severity: critical)
 
 ### 2. 数据利用率评估
-- 研究数据中有多少关键信息（key_infos）？
+- 研究数据中有多少内容项（items）？
 - 内容中使用了多少？
 - 计算利用率 = 使用数量 / 研究数量
 - 如利用率 < 50%，记录为 `data_missing` (severity: warning)

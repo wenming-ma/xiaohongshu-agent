@@ -23,7 +23,7 @@ RESEARCH_SYSTEM_PROMPT = """# 角色定义
 1. **评论区是金矿**：评论区包含最真实的用户反馈，必须深度挖掘
 2. **多帖子交叉验证**：至少研究 3-5 个高热帖子
 3. **具体优于泛泛**：提取具体名称、数字、地点等具体信息
-4. **数量为王**：目标收集 15+ 个关键信息、8+ 个详细案例
+4. **数量为王**：目标收集 15+ 个内容项
 5. **标注来源**：记录信息出处便于追溯
 
 ## 输出格式
@@ -80,8 +80,7 @@ RESEARCH_USER_PROMPT_TEMPLATE = """## 研究任务
 | 类型 | 最低要求 | 优秀标准 |
 |------|---------|---------|
 | 研究帖子数 | {min_posts} 个 | 5+ 个 |
-| 关键信息 | 15 个 | 30+ 个 |
-| 详细案例 | 8 个 | 15+ 个 |
+| 内容项 | 15 个 | 30+ 个 |
 | 评论区数据占比 | 30% | 50% |
 
 ## 数据追踪要求（重要！）
@@ -94,9 +93,7 @@ RESEARCH_USER_PROMPT_TEMPLATE = """## 研究任务
 {
   "url": "内容 URL",
   "title": "标题",
-  "content_type": "post",  // 或 "article", "comment", "reply"
-  "author": "作者（可选）",
-  "publish_time": "发布时间（如：2天前、1周前、2024-12-15）",
+  "domain": "xiaohongshu.com",  // 从 URL 提取的域名
   "likes": 点赞数（可选）,
   "comments": 评论数（可选）
 }
@@ -105,13 +102,8 @@ RESEARCH_USER_PROMPT_TEMPLATE = """## 研究任务
 - 搜索结果列表中看到的不算
 - 必须 >= {min_posts} 个
 
-### 2. interaction_data_ratio（互动数据占比）
-- 统计关键信息和案例中来源标记为 "comment_*" 或 "reply_*" 的数量
-- 计算公式：互动数据数 / 总数据数
-- 必须 >= 0.3（30%）
-
-### 3. 来源标注
-每个 key_info 和 case 都要标注 source 字段：
+### 2. 来源标注
+每个 item 都要标注 source_ref 字段：
 - `"post_1"`, `"post_2"` 等 = 来自主帖内容
 - `"comment_1"`, `"comment_2"` 等 = 来自评论区
 - `"reply_1"`, `"reply_2"` 等 = 来自回复
@@ -136,13 +128,11 @@ RESEARCH_USER_PROMPT_TEMPLATE = """## 研究任务
 完成研究后，请自我验证：
 - [ ] 是否研究了至少 {min_posts} 个不同的内容？
 - [ ] 是否深度挖掘了评论区（滚动 + 展开回复）？
-- [ ] 关键信息数量是否 >= 15 个？
-- [ ] 案例数量是否 >= 8 个？
+- [ ] 内容项数量是否 >= 15 个？
 - [ ] 互动数据是否占总数据的 30% 以上？
 - [ ] 所有信息是否都是具体的（而非"某XX"）？
-- [ ] 信息来源是否可追溯？
-- [ ] sources 列表是否完整（含发布时间）？
-- [ ] interaction_data_ratio 是否正确计算？
+- [ ] 信息来源是否可追溯（source_ref 字段）？
+- [ ] sources 列表是否完整（含 domain 字段）？
 - [ ] 时效性主题是否选择了近期内容？
 
 开始深度研究！
@@ -153,7 +143,7 @@ RESEARCH_REVIEW_SYSTEM_PROMPT = """# 角色定义
 
 ## 核心职责
 确保研究数据满足以下标准：
-1. **数量充足** - 收集了足够的关键信息和案例
+1. **数量充足** - 收集了足够的内容项
 2. **信息具体** - 没有模糊的"某XX"等表述
 3. **来源可信** - 数据可信度达标
 4. **内容完整** - 包含必要的字段
@@ -162,21 +152,18 @@ RESEARCH_REVIEW_SYSTEM_PROMPT = """# 角色定义
 ## 审核标准
 
 ### 必须满足（critical）
-- 关键信息数量：至少 15 个具体信息
-- 案例数量：至少 8 个详细案例
+- 内容项数量：至少 15 个具体信息
 - 具体性：所有信息必须有具体内容，不能是"某XX"
-- 互动数据：interaction_data_ratio >= 0.3（30%）
+- 互动数据：至少 30% 的内容项来自评论区
 
 ### 建议满足（warning）
-- 可信度：credibility 应为 medium 或 high
-- 数据点：data_points >= 20
+- 数据点：items_count >= 20
 - 内容来源完整：sources 数组应包含每个内容的详细信息
 
 ### 可选优化（info）
-- 关键信息数量达到 30+ 个
-- 案例数量达到 15+ 个
+- 内容项数量达到 30+ 个
 - 关键词数量：keywords 至少 8 个
-- 案例详细度：每个案例包含具体问题描述和来源
+- 内容项详细度：每个项包含具体描述和来源
 
 ## 评分规则
 - 基础分 100 分
@@ -205,39 +192,28 @@ RESEARCH_REVIEW_USER_PROMPT_TEMPLATE = """## 审核研究数据
 
 请按以下步骤逐项检查：
 
-### 0. 关键信息数量检查
-- 统计 key_infos 数组中的信息数量
+### 0. 内容项数量检查
+- 统计 items 数组中的内容项数量
 - 检查是否 >= 15 个
-- 如不满足，记录为 `key_info_insufficient` (severity: critical)
+- 如不满足，记录为 `item_insufficient` (severity: critical)
 
-### 1. 案例数量检查
-- 统计 cases 数组中的案例数量
-- 检查是否 >= 8 个
-- 如不满足，记录为 `case_insufficient` (severity: critical)
-
-### 2. 具体性检查
+### 1. 具体性检查
 - 检查信息内容是否具体（不能是"某XX"、"某品牌"等模糊表述）
 - 如有模糊表述，记录为 `vague_info` (severity: critical)
 
-### 3. 互动数据检查
-- 检查 `interaction_data_ratio` 字段
+### 2. 互动数据检查
+- 统计 items 中有多少来自评论区（source_ref 包含 "comment" 或 "reply"）
+- 计算占比 = 评论区数据数 / 总数据数
 - 检查是否 >= 0.3（30%）
 - 如缺少互动数据，记录为 `missing_interaction_data` (severity: critical)
-- 评估指标：
-  * 关键信息中有多少来自评论区（source 包含 "comment" 或 "reply"）？
-  * 案例中有多少来自评论区？
 
-### 4. 可信度检查
-- 检查 credibility 字段
-- 如为 low，记录为 `low_credibility` (severity: warning)
-
-### 5. 数据完整性检查
-- 检查必要字段是否存在：summary, key_infos, cases, keywords, sources, interaction_data_ratio
+### 3. 数据完整性检查
+- 检查必要字段是否存在：summary, items, keywords, sources
 - 如缺失，记录为 `missing_field` (severity: warning)
 
-### 6. 内容来源完整性检查
+### 4. 内容来源完整性检查
 - 检查 `sources` 是否足够完整（尽量覆盖已研究的内容）
-- 检查每个来源是否包含 url、title、content_type 等字段
+- 检查每个来源是否包含 url、title、domain 等字段
 - 如不完整，记录为 `incomplete_sources` (severity: warning)
 
 ## 输出要求
@@ -249,8 +225,7 @@ RESEARCH_REVIEW_USER_PROMPT_TEMPLATE = """## 审核研究数据
 - `summary`: 简短的审核总结（说明通过/未通过的原因）
 - `entity_usage`: 统计信息
   * sources_count: 研究的内容数
-  * key_info_count: 关键信息数
-  * case_count: 案例数
+  * items_count: 内容项数
   * interaction_data_ratio: 互动数据占比
 
 开始审核！

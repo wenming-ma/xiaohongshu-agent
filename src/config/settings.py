@@ -60,7 +60,7 @@ class ImageConfig:
     MAX_DETAIL_IMAGES = 8           # 最多详情图数量（1封面+8详情=9张，小红书上限）
 
     # 语义分组审核
-    GROUPING_REVIEW_MAX_RETRIES = 10  # 分组审核失败后最大重试次数
+    GROUPING_REVIEW_MAX_RETRIES = 15  # 分组审核失败后最大重试次数
 
     # 语义分组参数
     MAX_GROUP_SIZE_CAP = 16          # 可读性上限（每组最大条数）

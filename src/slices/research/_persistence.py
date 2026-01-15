@@ -9,7 +9,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from ...models.schemas import ResearchResult
+from ...models.schemas import ResearchResult, ResearchItem
 from ...utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -70,27 +70,17 @@ def save_iteration_result(
 # 合并结果
 # ============================================================================
 
-def _deduplicate_items(items: list[dict]) -> list[dict]:
-    """去重字典列表（基于 JSON 序列化）"""
+def _deduplicate_items(items: list[ResearchItem]) -> list[ResearchItem]:
+    """去重 ResearchItem 列表（基于 title + content）"""
     seen = set()
     unique = []
     for item in items:
-        key = json.dumps(item, sort_keys=True, ensure_ascii=False)
+        # 使用 title + content 的组合作为唯一标识
+        key = f"{item.title}|{item.content}"
         if key not in seen:
             seen.add(key)
             unique.append(item)
     return unique
-
-
-def _average_credibility(credibilities: list[str]) -> str:
-    """计算 credibility 平均值"""
-    credibility_map = {"low": 1, "medium": 2, "high": 3}
-    credibility_reverse = {1: "low", 2: "medium", 3: "high"}
-
-    scores = [credibility_map.get(c, 2) for c in credibilities]
-    avg_score = round(sum(scores) / len(scores)) if scores else 2
-
-    return credibility_reverse.get(avg_score, "medium")
 
 
 def merge_results(
@@ -108,14 +98,12 @@ def merge_results(
         合并后的研究结果
     """
     # 收集所有数据
-    all_key_infos = [info for res in all_results for info in res.key_infos]
-    all_cases = [case for res in all_results for case in res.cases]
+    all_items = [item for res in all_results for item in res.items]
     all_keywords = {kw for res in all_results for kw in res.keywords}
     all_sources = [source for res in all_results for source in res.sources]
 
     # 去重
-    merged_key_infos = _deduplicate_items(all_key_infos)
-    merged_cases = _deduplicate_items(all_cases)
+    merged_items = _deduplicate_items(all_items)
 
     # sources 按 URL 去重
     seen_urls = set()
@@ -133,22 +121,15 @@ def merge_results(
         if res.summary
     )
 
-    # 计算 credibility 平均值
-    merged_credibility = _average_credibility([res.credibility for res in all_results])
-
     merged_result = ResearchResult(
         summary=merged_summary,
-        key_infos=merged_key_infos,
-        cases=merged_cases,
+        items=merged_items,
         keywords=list(all_keywords),
-        credibility=merged_credibility,
         sources=merged_sources,
-        interaction_data_ratio=all_results[-1].interaction_data_ratio
     )
 
     logger.info("合并历史数据：")
-    logger.info(f"  - 关键信息: {len(merged_key_infos)} 条（来自 {len(all_results)} 轮）")
-    logger.info(f"  - 案例: {len(merged_cases)} 个")
+    logger.info(f"  - 内容项: {len(merged_items)} 条（来自 {len(all_results)} 轮）")
     logger.info(f"  - 关键词: {len(all_keywords)} 个")
     logger.info(f"  - 内容来源: {len(merged_sources)} 个")
 
