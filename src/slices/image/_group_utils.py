@@ -12,7 +12,7 @@
 """
 import json
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 
@@ -115,7 +115,7 @@ def groups_to_image_specs(groups: list[GroupSpec]) -> list[ImageTypeSpec]:
     return image_types
 
 
-def validate_groups(groups: list[GroupSpec], n_items: int, max_group_size: int) -> None:
+def validate_groups(groups: list[GroupSpec], n_items: int, max_group_size: int) -> Optional[str]:
     """
     防御性校验分组结果
 
@@ -124,31 +124,34 @@ def validate_groups(groups: list[GroupSpec], n_items: int, max_group_size: int) 
         n_items: items 总数
         max_group_size: 每组最大大小
 
-    Raises:
-        ValueError: 校验失败时抛出
+    Returns:
+        None: 验证通过
+        str: 验证失败的错误信息
     """
     all_indices: list[int] = []
 
     for g in groups:
         idxs = g.get("indices", [])
         if not isinstance(idxs, list):
-            raise ValueError("group.indices must be a list")
+            return "group.indices must be a list"
         if len(idxs) == 0:
-            raise ValueError("group.indices is empty")
+            return "group.indices is empty"
         if len(idxs) > max_group_size:
-            raise ValueError(f"group too large: {len(idxs)} > {max_group_size}")
+            return f"group too large: {len(idxs)} > {max_group_size}"
 
         for idx in idxs:
             if not isinstance(idx, int):
-                raise ValueError("index must be int")
+                return "index must be int"
             if idx < 0 or idx >= n_items:
-                raise ValueError(f"index out of range: {idx}")
+                return f"index out of range: {idx}"
             all_indices.append(idx)
 
     if len(all_indices) != n_items:
-        raise ValueError(f"coverage mismatch: {len(all_indices)} != {n_items}")
+        return f"coverage mismatch: {len(all_indices)} != {n_items}"
     if set(all_indices) != set(range(n_items)):
-        raise ValueError("coverage mismatch: indices not complete or duplicated")
+        return "coverage mismatch: indices not complete or duplicated"
+
+    return None
 
 
 def cap_groups_to_max_images(
@@ -322,8 +325,30 @@ async def run_grouping_with_review(
             for g in plan.groups
         ]
 
-        # 防御性校验
-        validate_groups(groups, len(compact_items), target_group_size)
+        # 防御性校验（使用硬性上限而非建议值）
+        validation_error = validate_groups(groups, len(compact_items), max_group_size_cap)
+        if validation_error:
+            # 验证失败：构造审核不通过的结果，让AI重新分组
+            logger.warning(f"分组验证失败: {validation_error}")
+
+            # 构造一个模拟的审核不通过结果
+            from ...models.schemas import ImageGroupingReviewResult
+            review = ImageGroupingReviewResult(
+                passed=False,
+                score=0.0,
+                summary=f"分组验证失败: {validation_error}",
+                issues=[
+                    f"验证错误: {validation_error}",
+                    f"每组最大允许 {max_group_size_cap} 个项目",
+                    "请重新分组，确保每组大小符合要求"
+                ]
+            )
+
+            logger.warning(
+                "分组验证未通过 (attempt=%d/%d): %s",
+                attempt + 1, max_review_retries, validation_error
+            )
+            continue  # 跳过本轮，进入下一轮重试
 
         # 限制最大图片数量
         groups = cap_groups_to_max_images(
