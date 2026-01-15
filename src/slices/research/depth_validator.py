@@ -1,9 +1,9 @@
 """
 研究深度验证器
-验证研究是否达到足够的深度（帖子数量）
+验证研究是否达到足够的深度（内容数量）
 
 验证基于 MCP 工具调用追踪数据（tracked_post_count），
-而非 Agent 自报的 posts_researched。
+而非 Agent 自报的 sources_count。
 
 验证项目：
 - tracked_post_count >= min_posts（通过 playwright_navigate 追踪）
@@ -23,11 +23,11 @@ from ...models.schemas import ResearchResult
 
 class ResearchDepthValidator(InternalValidator):
     """
-    研究深度验证器 - 验证帖子数量是否达标
+    研究深度验证器 - 验证内容数量是否达标
 
     基于 MCP 工具调用追踪数据验证：
     - tracked_post_count >= min_posts（真实导航数据）
-    - 对比 Agent 自报数据（posts_researched）检测差异
+    - 对比 Agent 自报数据（sources_count）检测差异
     """
 
     def __init__(self, min_posts: int = 3):
@@ -72,12 +72,12 @@ class ResearchDepthValidator(InternalValidator):
         tracked_urls: List[str] = context.get("tracked_urls", [])
 
         # Agent 自报数据（用于对比）
-        reported_count = result.posts_researched
+        reported_count = result.sources_count
 
         # 1. 检查追踪的帖子数量（主要验证依据）
         if tracked_count < self.min_posts:
             issues.append(
-                f"帖子数量不足：已访问 {tracked_count} 个详情页，需要至少 {self.min_posts} 个"
+                f"内容数量不足：已访问 {tracked_count} 个详情页，需要至少 {self.min_posts} 个"
             )
             # 按比例扣分
             score -= (self.min_posts - tracked_count) * 2
@@ -85,7 +85,7 @@ class ResearchDepthValidator(InternalValidator):
         # 2. 检测自报数据与追踪数据的差异（信任验证）
         if reported_count > tracked_count * 1.5:  # 自报超出追踪的 50%
             issues.append(
-                f"数据异常：Agent 自报 {reported_count} 个帖子，"
+                f"数据异常：Agent 自报 {reported_count} 个来源，"
                 f"但追踪仅记录 {tracked_count} 个详情页访问"
             )
             score -= 10
@@ -130,8 +130,8 @@ class ResearchDepthValidator(InternalValidator):
         feedback = (
             f"**研究深度验证未通过**\n\n"
             f"**当前状态**：\n"
-            f"- 已访问帖子详情页: {tracked_count} / {self.min_posts} (最低要求)\n"
-            f"- 还需访问: {max(0, self.min_posts - tracked_count)} 个帖子\n\n"
+            f"- 已访问内容详情页: {tracked_count} / {self.min_posts} (最低要求)\n"
+            f"- 还需访问: {max(0, self.min_posts - tracked_count)} 个\n\n"
             f"**问题**：\n"
         )
         for issue in issues:
@@ -139,13 +139,13 @@ class ResearchDepthValidator(InternalValidator):
 
         feedback += (
             f"\n**建议**：\n"
-            f"请使用 playwright_navigate 进入更多帖子详情页（URL 包含 /explore/），"
-            f"深度研究其内容和评论区。每进入一个帖子详情页，系统会自动追踪。"
+            f"请使用 playwright_navigate 进入更多内容详情页（URL 包含 /explore/），"
+            f"深度研究其内容和评论区。每进入一个详情页，系统会自动追踪。"
         )
 
-        # 显示已访问的帖子（最多 5 个）
+        # 显示已访问的内容（最多 5 个）
         if tracked_urls:
-            feedback += f"\n\n**已访问的帖子详情页**（最近 5 个）：\n"
+            feedback += f"\n\n**已访问的内容详情页**（最近 5 个）：\n"
             for url in tracked_urls[-5:]:
                 feedback += f"- {url[:60]}...\n"
 

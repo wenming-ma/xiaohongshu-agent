@@ -88,33 +88,33 @@ RESEARCH_USER_PROMPT_TEMPLATE = """## 研究任务
 
 在输出 ResearchResult 时，你**必须**准确记录以下字段：
 
-### 1. posts_researched（研究的帖子数量）
-- 只有**进入帖子详情页、阅读内容+评论区**的才算
+### 1. sources（内容来源列表）
+记录每个研究的内容信息（使用 ContentSource 结构）：
+```json
+{
+  "url": "内容 URL",
+  "title": "标题",
+  "content_type": "post",  // 或 "article", "comment", "reply"
+  "author": "作者（可选）",
+  "publish_time": "发布时间（如：2天前、1周前、2024-12-15）",
+  "likes": 点赞数（可选）,
+  "comments": 评论数（可选）
+}
+```
+- 只有**进入详情页、阅读内容+评论区**的才算
 - 搜索结果列表中看到的不算
 - 必须 >= {min_posts} 个
 
-### 2. post_sources（帖子来源列表）
-记录每个研究的帖子信息：
-```json
-{
-  "url": "帖子 URL",
-  "title": "帖子标题",
-  "likes": 点赞数,
-  "comments": 评论数,
-  "publish_time": "发布时间（如：2天前、1周前、2024-12-15）",
-  "key_info_found": 从该帖子提取的关键信息数
-}
-```
-
-### 3. comment_data_ratio（评论区数据占比）
-- 统计关键信息和案例中来源标记为 "comment_*" 的数量
-- 计算公式：评论区数据数 / 总数据数
+### 2. interaction_data_ratio（互动数据占比）
+- 统计关键信息和案例中来源标记为 "comment_*" 或 "reply_*" 的数量
+- 计算公式：互动数据数 / 总数据数
 - 必须 >= 0.3（30%）
 
-### 4. 来源标注
+### 3. 来源标注
 每个 key_info 和 case 都要标注 source 字段：
 - `"post_1"`, `"post_2"` 等 = 来自主帖内容
 - `"comment_1"`, `"comment_2"` 等 = 来自评论区
+- `"reply_1"`, `"reply_2"` 等 = 来自回复
 
 ## 评论区挖掘技巧
 
@@ -134,17 +134,16 @@ RESEARCH_USER_PROMPT_TEMPLATE = """## 研究任务
 ## 自检清单
 
 完成研究后，请自我验证：
-- [ ] 是否研究了至少 {min_posts} 个不同的帖子？
+- [ ] 是否研究了至少 {min_posts} 个不同的内容？
 - [ ] 是否深度挖掘了评论区（滚动 + 展开回复）？
 - [ ] 关键信息数量是否 >= 15 个？
 - [ ] 案例数量是否 >= 8 个？
-- [ ] 评论区数据是否占总数据的 30% 以上？
+- [ ] 互动数据是否占总数据的 30% 以上？
 - [ ] 所有信息是否都是具体的（而非"某XX"）？
 - [ ] 信息来源是否可追溯？
-- [ ] posts_researched 字段是否正确记录？
-- [ ] post_sources 列表是否完整（含发布时间）？
-- [ ] comment_data_ratio 是否正确计算？
-- [ ] 时效性主题是否选择了近期帖子？
+- [ ] sources 列表是否完整（含发布时间）？
+- [ ] interaction_data_ratio 是否正确计算？
+- [ ] 时效性主题是否选择了近期内容？
 
 开始深度研究！
 """
@@ -166,12 +165,12 @@ RESEARCH_REVIEW_SYSTEM_PROMPT = """# 角色定义
 - 关键信息数量：至少 15 个具体信息
 - 案例数量：至少 8 个详细案例
 - 具体性：所有信息必须有具体内容，不能是"某XX"
-- 评论区数据：comment_data_ratio >= 0.3（30%）
+- 互动数据：interaction_data_ratio >= 0.3（30%）
 
 ### 建议满足（warning）
 - 可信度：credibility 应为 medium 或 high
 - 数据点：data_points >= 20
-- 帖子来源完整：post_sources 数组应包含每个帖子的详细信息
+- 内容来源完整：sources 数组应包含每个内容的详细信息
 
 ### 可选优化（info）
 - 关键信息数量达到 30+ 个
@@ -220,12 +219,12 @@ RESEARCH_REVIEW_USER_PROMPT_TEMPLATE = """## 审核研究数据
 - 检查信息内容是否具体（不能是"某XX"、"某品牌"等模糊表述）
 - 如有模糊表述，记录为 `vague_info` (severity: critical)
 
-### 3. 评论区数据检查
-- 检查 `comment_data_ratio` 字段
+### 3. 互动数据检查
+- 检查 `interaction_data_ratio` 字段
 - 检查是否 >= 0.3（30%）
-- 如缺少评论区数据，记录为 `missing_comment_data` (severity: critical)
+- 如缺少互动数据，记录为 `missing_interaction_data` (severity: critical)
 - 评估指标：
-  * 关键信息中有多少来自评论区（source 包含 "comment"）？
+  * 关键信息中有多少来自评论区（source 包含 "comment" 或 "reply"）？
   * 案例中有多少来自评论区？
 
 ### 4. 可信度检查
@@ -233,12 +232,12 @@ RESEARCH_REVIEW_USER_PROMPT_TEMPLATE = """## 审核研究数据
 - 如为 low，记录为 `low_credibility` (severity: warning)
 
 ### 5. 数据完整性检查
-- 检查必要字段是否存在：summary, key_infos, cases, keywords, posts_researched, post_sources, comment_data_ratio
+- 检查必要字段是否存在：summary, key_infos, cases, keywords, sources, interaction_data_ratio
 - 如缺失，记录为 `missing_field` (severity: warning)
 
-### 6. 帖子来源完整性检查
-- 检查 `post_sources` 是否足够完整（尽量覆盖已研究的帖子）
-- 检查每个帖子来源是否包含 url、title、likes 等字段
+### 6. 内容来源完整性检查
+- 检查 `sources` 是否足够完整（尽量覆盖已研究的内容）
+- 检查每个来源是否包含 url、title、content_type 等字段
 - 如不完整，记录为 `incomplete_sources` (severity: warning)
 
 ## 输出要求
@@ -249,10 +248,10 @@ RESEARCH_REVIEW_USER_PROMPT_TEMPLATE = """## 审核研究数据
 - `issues`: 发现的问题列表
 - `summary`: 简短的审核总结（说明通过/未通过的原因）
 - `entity_usage`: 统计信息
-  * posts_count: 研究的帖子数
+  * sources_count: 研究的内容数
   * key_info_count: 关键信息数
   * case_count: 案例数
-  * comment_data_ratio: 评论区数据占比
+  * interaction_data_ratio: 互动数据占比
 
 开始审核！
 """

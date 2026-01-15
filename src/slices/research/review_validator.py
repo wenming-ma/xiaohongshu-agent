@@ -1,12 +1,12 @@
 """
 研究审核验证器
-验证研究数据的质量（实体数量、案例数量、具体性、评论区数据等）
+验证研究数据的质量（实体数量、案例数量、具体性、互动数据等）
 
 验证项目：
 - 实体数量 >= 15
 - 案例数量 >= 8
 - 具体性（无"某公司"等模糊表述）
-- 评论区数据占比 >= 30%
+- 互动数据占比 >= 30%
 
 使用 AI Agent 进行审核（原有的 reviewer 逻辑）
 
@@ -36,7 +36,7 @@ class ResearchReviewValidator(InternalValidator):
     - 实体数量 >= 15
     - 案例数量 >= 8
     - 具体性（无模糊表述）
-    - 评论区数据占比 >= 30%
+    - 互动数据占比 >= 30%
 
     使用 AI Agent 进行审核，提供详细的反馈信息。
     """
@@ -80,7 +80,7 @@ class ResearchReviewValidator(InternalValidator):
         - 实体数量是否充足
         - 案例数量是否充足
         - 信息是否具体（无模糊表述）
-        - 评论区数据占比是否达标
+        - 互动数据占比是否达标
 
         Args:
             result: ResearchResult 对象
@@ -148,7 +148,7 @@ class ResearchReviewValidator(InternalValidator):
             f"**当前数据状态**：\n"
             f"- 关键信息数量: {len(result.key_infos)} 个\n"
             f"- 案例数量: {len(result.cases)} 个\n"
-            f"- 评论区数据占比: {result.comment_data_ratio:.0%}\n"
+            f"- 互动数据占比: {result.interaction_data_ratio:.0%}\n"
             f"- 可信度: {result.credibility}\n\n"
             f"**审核反馈**：{review.summary}\n\n"
             f"**具体问题**：\n"

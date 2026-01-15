@@ -8,9 +8,9 @@
 
 通过 Playwright MCP 操作 Gemini 网页
 
-验证机制（通过类装饰器实现）：
-- @GeminiConfigValidator: 每张图片生成后验证 Gemini 配置（Create images + Pro）
-- @ImageQualityValidator: 验证图片质量（字迹清晰、风格匹配）
+验证机制（通过显式验证循环实现）：
+- validate_image_generation: 显式验证循环，依次验证 Gemini 配置和图片质量
+- 验证失败时自动重试，注入反馈到生成上下文
 """
 import json
 import math
@@ -38,7 +38,6 @@ from ...models.schemas import (
 )
 from ...utils.minimax_provider import get_minimax_model
 from ...utils.download_manager import DownloadManager
-from ...utils.retry_handler import with_retry
 from ...utils.logger import get_logger
 from ...config.settings import RetryConfig, ImageConfig, PathConfig, TimeoutConfig, APIConfig
 from ...infra.login_agent import LoginAgent
@@ -54,6 +53,15 @@ from .prompts import (
     gemini_operator_prompt,
     gemini_operation_template,
 )
+
+# 从拆分的模块导入
+from ._state import ImageGenState, MessageHistoryManager
+from ._grouping import (
+    normalize_grouping_plan,
+    post_process_groups,
+    validate_groups,
+)
+from ._validation import validate_image_generation
 
 logger = get_logger(__name__)
 
@@ -328,236 +336,6 @@ class ImageAgent:
         max_group_size_cap = max(ImageConfig.MAX_GROUP_SIZE_CAP, ImageConfig.ENTITIES_PER_DETAIL)
         return target_groups, target_group_size, max_group_size_cap
 
-    @staticmethod
-    def _dedupe_and_filter_indices(
-        raw_groups: list,
-        n_key_infos: int,
-    ) -> tuple[list[GroupSpec], set[int]]:
-        """去重并过滤越界 indices"""
-        seen: set[int] = set()
-        cleaned: list[GroupSpec] = []
-        for g in raw_groups:
-            title = (g.title or "").strip() or "其他"
-            indices: list[int] = []
-            for idx in (g.indices or []):
-                if not isinstance(idx, int):
-                    continue
-                if idx < 0 or idx >= n_key_infos:
-                    continue
-                if idx in seen:
-                    continue
-                seen.add(idx)
-                indices.append(idx)
-            if indices:
-                indices.sort()
-                cleaned.append({"title": title, "indices": indices})
-        return cleaned, seen
-
-    @staticmethod
-    def _fill_missing_indices(
-        groups: list[GroupSpec],
-        seen: set[int],
-        n_key_infos: int,
-    ) -> list[GroupSpec]:
-        """补齐未被分配的 indices"""
-        missing = [i for i in range(n_key_infos) if i not in seen]
-        if missing:
-            groups.append({"title": "其他补充", "indices": missing})
-        return groups
-
-    @staticmethod
-    def _split_large_groups(
-        groups: list[GroupSpec],
-        max_group_size: int,
-    ) -> list[GroupSpec]:
-        """将超过 max_group_size 的组拆分"""
-        split_groups: list[GroupSpec] = []
-        for g in groups:
-            idxs = g["indices"]
-            if len(idxs) <= max_group_size:
-                split_groups.append(g)
-            else:
-                chunks = [idxs[i : i + max_group_size] for i in range(0, len(idxs), max_group_size)]
-                for ci, chunk in enumerate(chunks, start=1):
-                    split_groups.append({"title": f"{g['title']}（续{ci}）", "indices": chunk})
-        return split_groups
-
-    @staticmethod
-    def _merge_small_groups(
-        groups: list[GroupSpec],
-        min_group_size: int,
-        max_group_size: int,
-    ) -> list[GroupSpec]:
-        """将过小的组合并到前一个组"""
-        merged: list[GroupSpec] = []
-        for g in groups:
-            if not merged:
-                merged.append(dict(g))
-                continue
-            if len(g["indices"]) < min_group_size:
-                prev = merged[-1]
-                if len(prev["indices"]) + len(g["indices"]) <= max_group_size:
-                    new_indices = sorted(prev["indices"] + g["indices"])
-                    merged[-1] = {"title": prev["title"], "indices": new_indices}
-                    continue
-            merged.append(dict(g))
-        return merged
-
-    def _normalize_grouping_plan(
-        self,
-        plan: ImageGroupingPlan,
-        n_key_infos: int,
-        max_group_size: int,
-        min_group_size: int | None = None,
-    ) -> list[GroupSpec]:
-        """归一化分组计划"""
-        if min_group_size is None:
-            threshold = ImageConfig.MIN_GROUP_SIZE_THRESHOLD
-            min_group_size = 3 if n_key_infos >= threshold else 1
-
-        raw_groups = plan.groups or []
-
-        cleaned, seen = self._dedupe_and_filter_indices(raw_groups, n_key_infos)
-        cleaned = self._fill_missing_indices(cleaned, seen, n_key_infos)
-
-        if not cleaned:
-            return [{"title": "要点汇总", "indices": list(range(n_key_infos))}]
-
-        split_groups = self._split_large_groups(cleaned, max_group_size)
-        merged = self._merge_small_groups(split_groups, min_group_size, max_group_size)
-
-        all_indices: list[int] = []
-        for g in merged:
-            all_indices.extend(g["indices"])
-        if set(all_indices) != set(range(n_key_infos)) or len(all_indices) != n_key_infos:
-            idxs = list(range(n_key_infos))
-            chunks = [idxs[i : i + max_group_size] for i in range(0, len(idxs), max_group_size)]
-            return [{"title": f"要点清单（{i}/{len(chunks)}）", "indices": chunk} for i, chunk in enumerate(chunks, start=1)]
-
-        return merged
-
-    @staticmethod
-    def _validate_groups(groups: list[GroupSpec], n_key_infos: int, max_group_size: int) -> None:
-        """运行时校验"""
-        all_indices: list[int] = []
-        for g in groups:
-            idxs = g.get("indices", [])
-            if not isinstance(idxs, list):
-                raise ValueError("group.indices must be a list")
-            if len(idxs) == 0:
-                raise ValueError("group.indices is empty")
-            if len(idxs) > max_group_size:
-                raise ValueError("group too large after normalization")
-            for idx in idxs:
-                if not isinstance(idx, int):
-                    raise ValueError("index must be int")
-                if idx < 0 or idx >= n_key_infos:
-                    raise ValueError("index out of range")
-                all_indices.append(idx)
-        if len(all_indices) != n_key_infos:
-            raise ValueError("coverage mismatch (count)")
-        if set(all_indices) != set(range(n_key_infos)):
-            raise ValueError("coverage mismatch (set)")
-
-    def _cap_groups_to_max_images(
-        self,
-        groups: list[GroupSpec],
-        *,
-        max_groups: int,
-        max_group_size_cap: int,
-    ) -> list[GroupSpec]:
-        """确保 detail 组数量不超过 max_groups"""
-        if len(groups) <= max_groups:
-            return groups
-
-        merged = [dict(title=g.get("title", "要点"), indices=list(g.get("indices", []))) for g in groups]
-
-        def can_merge(a: dict, b: dict) -> bool:
-            return len(a["indices"]) + len(b["indices"]) <= max_group_size_cap
-
-        i = len(merged) - 2
-        while len(merged) > max_groups and i >= 0:
-            if i + 1 >= len(merged):
-                i = len(merged) - 2
-                continue
-            a = merged[i]
-            b = merged[i + 1]
-            if can_merge(a, b):
-                a["indices"].extend(b["indices"])
-                a["indices"].sort()
-                merged.pop(i + 1)
-                i = min(i, len(merged) - 2)
-            else:
-                i -= 1
-
-        if len(merged) <= max_groups:
-            return merged
-
-        all_indices: list[int] = []
-        for g in groups:
-            all_indices.extend(g.get("indices", []))
-        all_indices = sorted(all_indices)
-        if not all_indices:
-            return groups[:max_groups]
-
-        chunk_size = math.ceil(len(all_indices) / max_groups)
-        chunk_size = min(max_group_size_cap, max(1, chunk_size))
-        chunks = [all_indices[i : i + chunk_size] for i in range(0, len(all_indices), chunk_size)]
-        while len(chunks) > max_groups:
-            last = chunks.pop()
-            chunks[-1].extend(last)
-        capped: list[dict[str, Any]] = []
-        for idx, chunk in enumerate(chunks[:max_groups], start=1):
-            capped.append({"title": f"要点清单（{idx}/{min(len(chunks), max_groups)}）", "indices": chunk})
-        return capped
-
-    def _adjust_groups_to_target_count(
-        self,
-        groups: list[GroupSpec],
-        *,
-        target_groups: int,
-        max_group_size_cap: int,
-    ) -> list[GroupSpec]:
-        """调整组数量接近 target_groups"""
-        if target_groups <= 0:
-            return groups
-
-        adjusted = [dict(title=g.get("title", "要点"), indices=list(g.get("indices", []))) for g in groups]
-
-        if len(adjusted) > target_groups:
-            adjusted = self._cap_groups_to_max_images(
-                adjusted,
-                max_groups=target_groups,
-                max_group_size_cap=max_group_size_cap,
-            )
-
-        def pick_largest_idx() -> int:
-            largest_i = 0
-            largest_len = -1
-            for i, g in enumerate(adjusted):
-                l = len(g["indices"])
-                if l > largest_len:
-                    largest_len = l
-                    largest_i = i
-            return largest_i
-
-        while len(adjusted) < target_groups:
-            i = pick_largest_idx()
-            g = adjusted[i]
-            idxs = g["indices"]
-            if len(idxs) <= 1:
-                break
-            mid = len(idxs) // 2
-            left = idxs[:mid]
-            right = idxs[mid:]
-            if len(left) > max_group_size_cap or len(right) > max_group_size_cap:
-                break
-            title = g.get("title", "要点")
-            adjusted[i] = {"title": f"{title}（续1）", "indices": left}
-            adjusted.insert(i + 1, {"title": f"{title}（续2）", "indices": right})
-
-        return adjusted
-
     async def _review_groups(
         self,
         *,
@@ -589,14 +367,12 @@ class ImageAgent:
         target_group_size: int,
         max_group_size_cap: int,
     ) -> list[GroupSpec]:
-        """语义分组 + 审核循环"""
+        """语义分组 + 审核循环（使用 MessageHistoryManager）"""
         max_detail_images = ImageConfig.MAX_DETAIL_IMAGES
         max_review_retries = ImageConfig.GROUPING_REVIEW_MAX_RETRIES
 
-        messages: list[ModelMessage] = []
-        message_rounds: list[list[ModelMessage]] = []
-        review_messages: list[ModelMessage] = []
-        review_message_rounds: list[list[ModelMessage]] = []
+        # 使用 MessageHistoryManager 管理消息历史
+        history_mgr = MessageHistoryManager(max_rounds=3)
         groups: list[GroupSpec] = []
 
         if len(research.key_infos or []) == 0:
@@ -634,12 +410,10 @@ class ImageAgent:
                     user_prompt = "请根据上述反馈重新分组，确保覆盖完整且分组语义一致。"
                     logger.info(f"根据反馈重新分组 (第{attempt+1}轮)...")
 
-                if message_rounds:
-                    kept_rounds = message_rounds[-3:]
-                    messages = [msg for round_msgs in kept_rounds for msg in round_msgs]
-                else:
-                    messages = []
+                # 获取分组历史
+                messages = history_mgr.get_grouping_history()
 
+                # 执行分组
                 if attempt == 0:
                     grouping_result = await self.grouping_agent.run(user_prompt, message_history=messages)
                     round_messages = list(grouping_result.new_messages())
@@ -650,29 +424,29 @@ class ImageAgent:
                     )
                     round_messages = [feedback_message] + list(grouping_result.new_messages())
 
+                # 保存本轮消息
+                history_mgr.add_grouping_round(round_messages)
                 plan: ImageGroupingPlan = grouping_result.output
-                message_rounds.append(round_messages)
 
-                groups = self._normalize_grouping_plan(plan, len(compact_items), target_group_size)
-                self._validate_groups(groups, len(compact_items), target_group_size)
-
-                groups = self._adjust_groups_to_target_count(
+                # 使用 _grouping.py 中的函数进行后处理
+                groups = normalize_grouping_plan(
+                    plan,
+                    len(compact_items),
+                    target_group_size
+                )
+                groups = post_process_groups(
                     groups,
+                    n_key_infos=len(compact_items),
                     target_groups=target_groups,
+                    target_group_size=target_group_size,
                     max_group_size_cap=max_group_size_cap,
-                )
-                groups = self._cap_groups_to_max_images(
-                    groups,
-                    max_groups=max_detail_images,
-                    max_group_size_cap=max_group_size_cap,
+                    max_detail_images=max_detail_images,
                 )
 
-                if review_message_rounds:
-                    kept_review_rounds = review_message_rounds[-3:]
-                    review_messages = [msg for round_msgs in kept_review_rounds for msg in round_msgs]
-                else:
-                    review_messages = []
+                # 获取审核历史
+                review_messages = history_mgr.get_review_history()
 
+                # 审核分组
                 review, review_round_messages = await self._review_groups(
                     topic=topic,
                     compact_items=compact_items,
@@ -681,7 +455,10 @@ class ImageAgent:
                     max_group_size=target_group_size,
                     message_history=review_messages,
                 )
-                review_message_rounds.append(review_round_messages)
+
+                # 保存审核消息
+                history_mgr.add_review_round(review_round_messages)
+
                 if review.passed:
                     logger.info("分组审核通过 (score=%.1f)", review.score)
                     return groups
@@ -698,7 +475,9 @@ class ImageAgent:
             )
             if groups:
                 logger.warning("语义分组异常，使用最近一次分组结果继续生成 (groups=%d)", len(groups))
-                return self._cap_groups_to_max_images(
+                # 使用 _grouping.py 中的函数进行后处理
+                from ._grouping import cap_groups_to_max_images
+                return cap_groups_to_max_images(
                     groups,
                     max_groups=max_detail_images,
                     max_group_size_cap=max_group_size_cap,
@@ -713,7 +492,9 @@ class ImageAgent:
                 for i, chunk in enumerate(chunks, start=1)
                 if chunk
             ]
-            return self._cap_groups_to_max_images(
+            # 使用 _grouping.py 中的函数进行后处理
+            from ._grouping import cap_groups_to_max_images
+            return cap_groups_to_max_images(
                 fallback_groups,
                 max_groups=max_detail_images,
                 max_group_size_cap=max_group_size_cap,
@@ -838,26 +619,18 @@ class ImageAgent:
         result = await self.prompt_generator.run(user_prompt, deps=gen_ctx)
         return result.output
 
-    @with_retry(max_retries=RetryConfig.MAX_RETRIES, initial_delay=RetryConfig.INITIAL_DELAY)
-    @GeminiConfigValidator(max_retries=5, initial_delay=5.0)
-    @ImageQualityValidator(max_retries=5, initial_delay=5.0)
-    async def _generate_via_gemini(
+    async def _generate_via_gemini_core(
         self,
+        *,
         output_dir: Path,
         image_type: str,
-        topic: str,
-        gen_ctx: ImageGenContext,
-        content: XHSContent,
-        research: ResearchResult,
-        image_type_info: ImageTypeSpec,
+        prompt: str,
     ) -> Path:
-        """通过 Gemini 网页生成图片（带重试和验证）"""
+        """核心生成逻辑（不含验证和重试）"""
         start_time = time.time()
         self._operation_start_time = start_time
 
-        prompt = await self._generate_prompt(content, research, topic, image_type_info, gen_ctx)
         logger.debug("提示词: %s...", prompt[:60])
-
         operation_prompt = gemini_operation_template(prompt=prompt)
 
         result = await self.gemini_operator.run(operation_prompt)
@@ -876,5 +649,50 @@ class ImageAgent:
             before_time=start_time
         )
         logger.info("图片已保存: %s", image_path)
+
+        return image_path
+
+    async def _generate_via_gemini(
+        self,
+        output_dir: Path,
+        image_type: str,
+        topic: str,
+        gen_ctx: ImageGenContext,
+        content: XHSContent,
+        research: ResearchResult,
+        image_type_info: ImageTypeSpec,
+    ) -> Path:
+        """通过 Gemini 网页生成图片（带验证）"""
+        # 初始化验证器（如果还没有）
+        if not hasattr(self, 'gemini_config_validator'):
+            self.gemini_config_validator = GeminiConfigValidator(
+                mcp_server=self.mcp_server,
+                max_retries=5,
+                initial_delay=5.0
+            )
+        if not hasattr(self, 'image_quality_validator'):
+            self.image_quality_validator = ImageQualityValidator(
+                mcp_server=self.mcp_server,
+                max_retries=5,
+                initial_delay=5.0
+            )
+
+        # 定义核心生成函数（闭包，捕获所有参数）
+        async def generate_core_fn() -> Path:
+            prompt = await self._generate_prompt(content, research, topic, image_type_info, gen_ctx)
+            return await self._generate_via_gemini_core(
+                output_dir=output_dir,
+                image_type=image_type,
+                prompt=prompt,
+            )
+
+        # 使用显式验证循环
+        image_path = await validate_image_generation(
+            generate_core_fn=generate_core_fn,
+            gemini_config_validator=self.gemini_config_validator,
+            image_quality_validator=self.image_quality_validator,
+            gen_ctx=gen_ctx,
+            max_retries=5,
+        )
 
         return image_path

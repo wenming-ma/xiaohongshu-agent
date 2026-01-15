@@ -3,7 +3,8 @@ Pydantic 数据模型
 定义研究结果和内容的数据结构
 """
 from dataclasses import dataclass, field
-from pydantic import BaseModel, Field
+from datetime import datetime
+from pydantic import BaseModel, Field, computed_field
 from typing import List, Optional, Dict, Any, TypedDict
 
 
@@ -51,9 +52,28 @@ class ImageTypeSpec(TypedDict, total=False):
 # ==================== Pydantic 模型 ====================
 
 
-class ResearchResult(BaseModel):
-    """小红书研究结果"""
+class ContentSource(BaseModel):
+    """内容来源（通用）"""
+    url: str = Field(description="来源链接")
+    title: str = Field(description="标题")
+    content_type: str = Field(
+        default="post",
+        description="内容类型：article/post/comment/reply"
+    )
+    author: Optional[str] = Field(default=None, description="作者")
+    publish_time: Optional[datetime] = Field(default=None, description="发布时间")
 
+    # 互动数据（可选）
+    likes: Optional[int] = Field(default=None, description="点赞数")
+    comments: Optional[int] = Field(default=None, description="评论数")
+    shares: Optional[int] = Field(default=None, description="分享数")
+    views: Optional[int] = Field(default=None, description="浏览数")
+
+
+class ResearchResult(BaseModel):
+    """研究结果（通用）"""
+
+    # 核心数据
     summary: str = Field(description="研究总结")
     key_infos: List[Dict[str, Any]] = Field(
         default_factory=list,
@@ -65,32 +85,39 @@ class ResearchResult(BaseModel):
     )
     keywords: List[str] = Field(
         default_factory=list,
-        description="关键词"
+        description="关键词（用于搜索和索引）"
     )
+
+    # 质量评估
     credibility: str = Field(
         default="medium",
         description="可信度评估 (low/medium/high)"
     )
-    data_points: int = Field(
-        default=0,
-        description="收集的数据点数量"
-    )
-
-    # 帖子追踪（用于验证研究深度）
-    posts_researched: int = Field(
-        default=0,
-        description="研究的帖子数量（进入详情页才算）"
-    )
-    post_sources: List[Dict[str, Any]] = Field(
-        default_factory=list,
-        description="研究的帖子来源列表（URL、标题、点赞数等）"
-    )
-    comment_data_ratio: float = Field(
+    interaction_data_ratio: float = Field(
         default=0.0,
         ge=0.0,
         le=1.0,
-        description="评论区数据占比（0-1）"
+        description="互动数据占比（评论、回复等，0-1）"
     )
+
+    # 来源追踪
+    sources: List[ContentSource] = Field(
+        default_factory=list,
+        description="内容来源列表"
+    )
+
+    # 计算字段
+    @computed_field
+    @property
+    def data_points(self) -> int:
+        """数据点总数（自动计算）"""
+        return len(self.key_infos) + len(self.cases)
+
+    @computed_field
+    @property
+    def sources_count(self) -> int:
+        """来源数量（自动计算）"""
+        return len(self.sources)
 
     class Config:
         json_schema_extra = {
@@ -104,12 +131,10 @@ class ResearchResult(BaseModel):
                 ],
                 "keywords": ["关键词1", "关键词2", "关键词3"],
                 "credibility": "high",
-                "data_points": 15,
-                "posts_researched": 5,
-                "post_sources": [
-                    {"url": "https://...", "title": "帖子标题", "likes": 1200, "comments": 300}
-                ],
-                "comment_data_ratio": 0.45
+                "interaction_data_ratio": 0.45,
+                "sources": [
+                    {"url": "https://...", "title": "帖子标题", "content_type": "post", "likes": 1200, "comments": 300}
+                ]
             }
         }
 
