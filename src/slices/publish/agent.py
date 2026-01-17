@@ -148,11 +148,15 @@ class PublisherAgent:
         ])
         hashtags_str = ", ".join(content.hashtags)
 
+        # 预先拼接正文和行动号召，避免 LLM 在浏览器操作时遗漏或覆盖
+        full_body = content.body
+        if content.call_to_action:
+            full_body = f"{content.body}\n\n{content.call_to_action}"
+
         return publisher_user_prompt(
             title=content.title,
-            body=content.body,
+            body=full_body,
             hashtags=hashtags_str,
-            call_to_action=content.call_to_action,
             image_count=len(images),
             image_paths=image_paths_str,
         )
