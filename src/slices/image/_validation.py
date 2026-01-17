@@ -5,8 +5,9 @@
 - 显式验证循环（替代装饰器堆叠）
 """
 import asyncio
-import time
+from datetime import datetime
 from pathlib import Path
+from typing import Any, Optional
 
 from ...models.schemas import (
     XHSContent,
@@ -32,7 +33,13 @@ async def validate_image_generation(
     generate_core_fn,
     gemini_config_validator: GeminiConfigValidator,
     image_quality_validator: ImageQualityValidator,
+    agent_instance: Any,
     gen_ctx: ImageGenContext,
+    topic: str = "",
+    image_type: str = "",
+    content: Optional[XHSContent] = None,
+    research: Optional[ResearchResult] = None,
+    image_spec: Optional[ImageTypeSpec] = None,
     max_retries: int = 5,
 ) -> Path:
     """
@@ -42,7 +49,13 @@ async def validate_image_generation(
         generate_core_fn: 核心生成函数（async callable）
         gemini_config_validator: Gemini 配置验证器
         image_quality_validator: 图片质量验证器
+        agent_instance: ImageAgent 实例（用于截屏等操作）
         gen_ctx: 生成上下文
+        topic: 主题
+        image_type: 图片类型
+        content: 内容对象
+        research: 研究结果
+        image_spec: 图片规格
         max_retries: 最大重试次数
 
     Returns:
@@ -50,16 +63,38 @@ async def validate_image_generation(
     """
     image_path = None
 
+    # 构建质量验证器所需的 context 字典
+    quality_context = {
+        "topic": topic,
+        "image_type": image_type,
+        "content": content,
+        "research": research,
+    }
+    # 添加 image_type_info（如果 image_spec 存在）
+    if image_spec is not None:
+        quality_context["image_type_info"] = {
+            "type": image_type,
+            "desc": getattr(image_spec, "description", ""),
+            "group_title": getattr(image_spec, "group_title", ""),
+            "indices": getattr(image_spec, "key_info_indices", []),
+        }
+
     for attempt in range(max_retries):
         try:
             # 生成图片
             image_path = await generate_core_fn()
 
-            # 验证 Gemini 配置
+            # 验证 Gemini 配置（通过截屏）
             logger.debug("验证 Gemini 配置...")
+            # 截取 Gemini 页面
+            screenshot_path = await gemini_config_validator.get_validation_target(
+                agent_instance=agent_instance,
+                result=image_path,
+                context=quality_context,
+            )
             config_review = await gemini_config_validator.validate(
-                image_path=image_path,
-                gen_ctx=gen_ctx,
+                screenshot_path=screenshot_path,
+                context=quality_context,
             )
 
             if not config_review.passed:
@@ -75,7 +110,7 @@ async def validate_image_generation(
             logger.debug("验证图片质量...")
             quality_review = await image_quality_validator.validate(
                 image_path=image_path,
-                gen_ctx=gen_ctx,
+                context=quality_context,
             )
 
             if not quality_review.passed:

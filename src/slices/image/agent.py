@@ -472,7 +472,13 @@ class ImageAgent:
             generate_core_fn=generate_core_fn,
             gemini_config_validator=self.gemini_config_validator,
             image_quality_validator=self.image_quality_validator,
+            agent_instance=self,
             gen_ctx=gen_ctx,
+            topic=topic,
+            image_type=image_type,
+            content=content,
+            research=research,
+            image_spec=image_spec,
             max_retries=5,
         )
 
