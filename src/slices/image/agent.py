@@ -449,13 +449,11 @@ class ImageAgent:
         # 初始化验证器（如果还没有）
         if not hasattr(self, 'gemini_config_validator'):
             self.gemini_config_validator = GeminiConfigValidator(
-                mcp_server=self.mcp_server,
                 max_retries=5,
                 initial_delay=5.0
             )
         if not hasattr(self, 'image_quality_validator'):
             self.image_quality_validator = ImageQualityValidator(
-                mcp_server=self.mcp_server,
                 max_retries=5,
                 initial_delay=5.0
             )
