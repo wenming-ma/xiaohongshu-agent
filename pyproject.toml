@@ -13,6 +13,7 @@ dependencies = [
     "pydantic-graph",
     # LLM Provider
     "anthropic>=0.40.0",
+    "google-genai>=1.0.0",
     # 其他依赖
     "mcp>=1.0.0",
     "pydantic>=2.0.0",

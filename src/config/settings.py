@@ -155,6 +155,14 @@ class APIConfig:
     SAGEHUB_MODEL = os.getenv("SAGEHUB_MODEL", "claude-sonnet-4-5-20250929")
     SAGEHUB_BASE_URL = "https://api.sagehub.cc/v1"
 
+    # Google Gemini 模型配置（直连 Google AI）
+    # 可用视觉模型：
+    #   - "gemini-3-flash-preview" （最新 Gemini 3 视觉模型，推荐）
+    #   - "gemini-2.5-flash" （稳定版本）
+    #   - "gemini-2.5-pro" （更强大）
+    # 需要设置 GOOGLE_API_KEY 环境变量
+    GOOGLE_MODEL = os.getenv("GOOGLE_MODEL", "gemini-3-flash-preview")
+
     # 模型提供者选择："anthropic" 或 "openrouter" 或 "minimax"
     # minimax 使用 Anthropic 兼容 API，支持 Tool Use
     MODEL_PROVIDER = "minimax"
