@@ -57,7 +57,7 @@ class ImageConfig:
     # 详情图动态数量配置
     ENTITIES_PER_DETAIL = 6         # 每张详情图显示的实体数量
     MIN_DETAIL_IMAGES = 1           # 最少详情图数量
-    MAX_DETAIL_IMAGES = 8           # 最多详情图数量（1封面+8详情=9张，小红书上限）
+    MAX_DETAIL_IMAGES = 12           # 最多详情图数量
 
     # 语义分组审核
     GROUPING_REVIEW_MAX_RETRIES = 15  # 分组审核失败后最大重试次数

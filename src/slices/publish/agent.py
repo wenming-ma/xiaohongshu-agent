@@ -146,17 +146,23 @@ class PublisherAgent:
             f"   {i+1}. {str(img)} [{img.stem}]"
             for i, img in enumerate(images)
         ])
-        hashtags_str = ", ".join(content.hashtags)
 
-        # 预先拼接正文和行动号召，避免 LLM 在浏览器操作时遗漏或覆盖
+        # 预先拼接正文、行动号召和话题，避免 LLM 在浏览器操作时遗漏或覆盖
         full_body = content.body
+
+        # 添加行动号召
         if content.call_to_action:
-            full_body = f"{content.body}\n\n{content.call_to_action}"
+            full_body = f"{full_body}\n\n{content.call_to_action}"
+
+        # 添加话题到正文末尾（小红书话题格式：#话题名 空格分隔）
+        if content.hashtags:
+            hashtags_formatted = " ".join([f"#{tag}" for tag in content.hashtags])
+            full_body = f"{full_body} {hashtags_formatted}"
 
         return publisher_user_prompt(
             title=content.title,
             body=full_body,
-            hashtags=hashtags_str,
+            hashtags="",  # 话题已拼接到正文中，传空字符串
             image_count=len(images),
             image_paths=image_paths_str,
         )

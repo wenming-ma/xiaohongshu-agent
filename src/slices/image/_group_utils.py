@@ -5,14 +5,12 @@
 - build_compact_items: items → 精简格式
 - calculate_grouping_params: 计算分组参数
 - groups_to_image_specs: groups → 图片生成规格
-- validate_groups: 防御性校验
-- cap_groups_to_max_images: 限制最大图片数量
-- review_groups: 调用分组审核 Agent
+- review_groups: 验证 + 审核分组
 - run_grouping_with_review: 语义分组 + 审核循环
 """
 import json
 import math
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 
@@ -115,88 +113,6 @@ def groups_to_image_specs(groups: list[GroupSpec]) -> list[ImageTypeSpec]:
     return image_types
 
 
-def validate_groups(groups: list[GroupSpec], n_items: int, max_group_size: int) -> Optional[str]:
-    """
-    防御性校验分组结果
-
-    Args:
-        groups: 分组列表
-        n_items: items 总数
-        max_group_size: 每组最大大小
-
-    Returns:
-        None: 验证通过
-        str: 验证失败的错误信息
-    """
-    all_indices: list[int] = []
-
-    for g in groups:
-        idxs = g.get("indices", [])
-        if not isinstance(idxs, list):
-            return "group.indices must be a list"
-        if len(idxs) == 0:
-            return "group.indices is empty"
-        if len(idxs) > max_group_size:
-            return f"group too large: {len(idxs)} > {max_group_size}"
-
-        for idx in idxs:
-            if not isinstance(idx, int):
-                return "index must be int"
-            if idx < 0 or idx >= n_items:
-                return f"index out of range: {idx}"
-            all_indices.append(idx)
-
-    if len(all_indices) != n_items:
-        return f"coverage mismatch: {len(all_indices)} != {n_items}"
-    if set(all_indices) != set(range(n_items)):
-        return "coverage mismatch: indices not complete or duplicated"
-
-    return None
-
-
-def cap_groups_to_max_images(
-    groups: list[GroupSpec],
-    *,
-    max_groups: int,
-    max_group_size_cap: int,
-) -> list[GroupSpec]:
-    """
-    限制分组数量不超过 max_groups（通过合并相邻组）
-
-    Args:
-        groups: 分组列表
-        max_groups: 最大分组数
-        max_group_size_cap: 合并后单组最大大小
-
-    Returns:
-        合并后的分组列表
-    """
-    if len(groups) <= max_groups:
-        return groups
-
-    merged = [dict(title=g.get("title", "要点"), indices=list(g.get("indices", []))) for g in groups]
-
-    def can_merge(a: dict, b: dict) -> bool:
-        return len(a["indices"]) + len(b["indices"]) <= max_group_size_cap
-
-    i = len(merged) - 2
-    while len(merged) > max_groups and i >= 0:
-        if i + 1 >= len(merged):
-            i = len(merged) - 2
-            continue
-        a = merged[i]
-        b = merged[i + 1]
-        if can_merge(a, b):
-            a["indices"].extend(b["indices"])
-            a["indices"].sort()
-            merged.pop(i + 1)
-            i = min(i, len(merged) - 2)
-        else:
-            i -= 1
-
-    return merged
-
-
 async def review_groups(
     *,
     reviewer: "Agent[None, ImageGroupingReviewResult]",
@@ -205,10 +121,13 @@ async def review_groups(
     groups: list[GroupSpec],
     target_groups: int,
     max_group_size: int,
+    max_groups: int,
     message_history: list[ModelMessage] | None = None,
 ) -> tuple[ImageGroupingReviewResult, list[ModelMessage]]:
     """
-    调用分组审核 Agent
+    验证并审核分组结果
+
+    先做结构验证，通过后再调用 LLM 审核。
 
     Args:
         reviewer: 分组审核 Agent 实例
@@ -217,20 +136,50 @@ async def review_groups(
         groups: 分组列表
         target_groups: 目标分组数
         max_group_size: 每组最大大小
+        max_groups: 最大分组数量
         message_history: 消息历史
 
     Returns:
         (审核结果, 新消息列表)
     """
-    user_prompt = image_grouping_review_user_prompt(
-        topic=topic,
-        key_infos_json=json.dumps(compact_items, ensure_ascii=False, indent=2),
-        groups_json=json.dumps(groups, ensure_ascii=False, indent=2),
-        target_groups=target_groups,
-        max_group_size=max_group_size,
-    )
-    result = await reviewer.run(user_prompt, message_history=message_history or [])
-    return result.output, list(result.new_messages())
+    # 1. 结构验证
+    n_items = len(compact_items)
+    issues = []
+
+    if len(groups) > max_groups:
+        issues.append(f"分组数量 {len(groups)} 超过限制 {max_groups}，请合并语义相近的分组")
+
+    all_indices: list[int] = []
+    for i, g in enumerate(groups):
+        idxs = g.get("indices", [])
+        if not isinstance(idxs, list) or len(idxs) == 0:
+            issues.append(f"分组 {i+1} 的 indices 无效")
+            continue
+        if len(idxs) > max_group_size:
+            issues.append(f"分组 {i+1} 有 {len(idxs)} 项，超过限制 {max_group_size}")
+        for idx in idxs:
+            if isinstance(idx, int) and 0 <= idx < n_items:
+                all_indices.append(idx)
+
+    if len(all_indices) != n_items or set(all_indices) != set(range(n_items)):
+        issues.append(f"分组未完整覆盖所有 {n_items} 个关键信息，请确保每个信息只出现一次")
+
+    # 2. 验证失败直接返回，通过则调用 LLM 审核
+    if issues:
+        review_result = ImageGroupingReviewResult(passed=False, score=0.0, summary="分组验证失败", issues=issues)
+        new_messages: list[ModelMessage] = []
+    else:
+        user_prompt = image_grouping_review_user_prompt(
+            topic=topic,
+            key_infos_json=json.dumps(compact_items, ensure_ascii=False, indent=2),
+            groups_json=json.dumps(groups, ensure_ascii=False, indent=2),
+            target_groups=target_groups,
+            max_group_size=max_group_size,
+        )
+        result = await reviewer.run(user_prompt, message_history=message_history or [])
+        review_result, new_messages = result.output, list(result.new_messages())
+
+    return review_result, new_messages
 
 
 async def run_grouping_with_review(
@@ -271,6 +220,9 @@ async def run_grouping_with_review(
         return []
 
     for attempt in range(max_review_retries):
+        logger.info("语义分组 (第%d轮)...", attempt + 1)
+        messages = history_mgr.get_grouping_history()
+
         if attempt == 0:
             user_prompt = image_grouping_user_prompt(
                 topic=topic,
@@ -278,39 +230,14 @@ async def run_grouping_with_review(
                 max_group_size=target_group_size,
                 target_groups=target_groups,
             )
-            logger.info("开始语义分组...")
-        else:
-            review_feedback = (
-                f"分组审核未通过，请根据反馈重新分组。\n\n"
-                f"**审核评分**：{review.score:.1f}/100\n\n"
-                f"**问题摘要**：{review.summary}\n\n"
-                f"**具体问题**：\n"
-            )
-            for issue in review.issues:
-                review_feedback += f"- {issue}\n"
-
-            review_feedback += (
-                f"\n**要求**：\n"
-                f"- 确保覆盖所有 {len(compact_items)} 个关键信息\n"
-                f"- 分组语义一致、逻辑清晰\n"
-                f"- 目标分组数：{target_groups} 组\n"
-                f"- 每组建议大小：{target_group_size} 条\n"
-            )
-
-            feedback_message = ModelRequest(parts=[UserPromptPart(review_feedback)])
-            user_prompt = "请根据上述反馈重新分组，确保覆盖完整且分组语义一致。"
-            logger.info(f"根据反馈重新分组 (第{attempt+1}轮)...")
-
-        # 获取分组历史
-        messages = history_mgr.get_grouping_history()
-
-        # 执行分组
-        if attempt == 0:
             grouping_result = await grouping_agent.run(user_prompt, message_history=messages)
             round_messages = list(grouping_result.new_messages())
         else:
+            issues_text = "\n".join(f"- {issue}" for issue in review.issues)
+            feedback = f"分组审核未通过（{review.score:.0f}分）：{review.summary}\n\n问题：\n{issues_text}"
+            feedback_message = ModelRequest(parts=[UserPromptPart(feedback)])
             grouping_result = await grouping_agent.run(
-                user_prompt,
+                "请根据上述反馈重新分组。",
                 message_history=messages + [feedback_message],
             )
             round_messages = [feedback_message] + list(grouping_result.new_messages())
@@ -325,50 +252,16 @@ async def run_grouping_with_review(
             for g in plan.groups
         ]
 
-        # 防御性校验（使用硬性上限而非建议值）
-        validation_error = validate_groups(groups, len(compact_items), max_group_size_cap)
-        if validation_error:
-            # 验证失败：构造审核不通过的结果，让AI重新分组
-            logger.warning(f"分组验证失败: {validation_error}")
-
-            # 构造一个模拟的审核不通过结果
-            from ...models.schemas import ImageGroupingReviewResult
-            review = ImageGroupingReviewResult(
-                passed=False,
-                score=0.0,
-                summary=f"分组验证失败: {validation_error}",
-                issues=[
-                    f"验证错误: {validation_error}",
-                    f"每组最大允许 {max_group_size_cap} 个项目",
-                    "请重新分组，确保每组大小符合要求"
-                ]
-            )
-
-            logger.warning(
-                "分组验证未通过 (attempt=%d/%d): %s",
-                attempt + 1, max_review_retries, validation_error
-            )
-            continue  # 跳过本轮，进入下一轮重试
-
-        # 限制最大图片数量
-        groups = cap_groups_to_max_images(
-            groups,
-            max_groups=max_detail_images,
-            max_group_size_cap=max_group_size_cap,
-        )
-
-        # 获取审核历史
-        review_messages = history_mgr.get_review_history()
-
-        # 审核分组
+        # 验证 + 审核（验证失败时不调用 LLM）
         review, review_round_messages = await review_groups(
             reviewer=grouping_reviewer,
             topic=topic,
             compact_items=compact_items,
             groups=groups,
             target_groups=len(groups),
-            max_group_size=target_group_size,
-            message_history=review_messages,
+            max_group_size=max_group_size_cap,
+            max_groups=max_detail_images,
+            message_history=history_mgr.get_review_history(),
         )
 
         # 保存审核消息
