@@ -110,7 +110,6 @@ class ResearchAgent:
             tools=function_tools,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
-            history_processors=[simplify_message_history],  # 使用 pydantic-ai 内置机制
             system_prompt=(research_system_prompt(),),
         )
 
@@ -293,6 +292,10 @@ class ResearchAgent:
         )
         state.iteration_results.append(state.current_result)
         logger.info(f"本轮数据已保存至: {saved_file}")
+
+        # 简化历史消息（在轮次之间执行，而非每次 LLM 调用前）
+        # 这样单次 run 内 agent 能看到完整历史，只在进入下一轮时才简化
+        state.message_history = simplify_message_history(state.message_history)
 
         # 注入进度快照
         snapshot = build_progress_snapshot(state, saved_file)

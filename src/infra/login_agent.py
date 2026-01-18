@@ -158,8 +158,7 @@ class LoginAgent:
             Tool(self._send_telegram_message, takes_ctx=False),
             Tool(self._send_telegram_image, takes_ctx=False),
             Tool(self._send_current_page_screenshot, takes_ctx=False),
-            Tool(self._wait_for_user_reply, takes_ctx=False),
-            Tool(self._ask_user, takes_ctx=False),
+            Tool(self._ask_for_user_reply, takes_ctx=False),
         ]
 
         self.auth_agent = Agent(
@@ -201,9 +200,8 @@ class LoginAgent:
 
         user_prompt = self._build_user_prompt(url, action, hint)
 
-        # 启动 Telegram 轮询和心跳
+        # 启动 Telegram 轮询
         await self.telegram.start_polling()
-        await self._start_heartbeat(phase=f"{action} {hint}".strip())
 
         try:
             async with self.mcp_server:
@@ -212,11 +210,11 @@ class LoginAgent:
                     user_prompt,
                     usage_limits=UsageLimits(request_limit=None)
                 )
-                await self._stop_heartbeat(final_text="✅ LoginAgent 已完成（模型返回结果）")
+                await self.telegram.send_message("✅ LoginAgent 已完成（模型返回结果）")
                 return result.output
         except Exception as e:
             logger.error(f"认证失败: {e}")
-            await self._stop_heartbeat(final_text=f"❌ LoginAgent 出错: {type(e).__name__}: {str(e)[:200]}")
+            await self.telegram.send_message(f"❌ LoginAgent 出错: {type(e).__name__}: {str(e)[:200]}")
             return AuthResult(
                 success=False,
                 auth_type="manual",
@@ -379,8 +377,7 @@ class LoginAgent:
 - `send_telegram_message(text)`: 发送消息给用户
 - `send_telegram_image(image_path, caption)`: 发送图片（如二维码）给用户
 - `send_current_page_screenshot(caption)`: 截图当前页面并通过 Telegram 发送给用户
-- `wait_for_user_reply(prompt)`: 发送提示信息并等待用户回复。**必须传入 prompt 参数**
-- `ask_user(question)`: 发送问题并等待回复（便捷方法）
+- `ask_for_user_reply(prompt)`: 发送提示信息并等待用户回复。**必须传入 prompt 参数**
 
 ### Playwright 网页操作工具
 - 导航、点击、输入、截屏等
@@ -406,17 +403,17 @@ class LoginAgent:
 
 ### 请求密码
 ```
-wait_for_user_reply(prompt="🔐 检测到需要登录 [网站名称]\\n\\n已填写账号：[账号]\\n请回复密码：")
+ask_for_user_reply(prompt="🔐 检测到需要登录 [网站名称]\\n\\n已填写账号：[账号]\\n请回复密码：")
 ```
 
 ### 请求验证码
 ```
-wait_for_user_reply(prompt="📱 已发送验证码到 [手机号/邮箱]\\n\\n请回复收到的验证码：")
+ask_for_user_reply(prompt="📱 已发送验证码到 [手机号/邮箱]\\n\\n请回复收到的验证码：")
 ```
 
 ### 扫码登录
 1. 截取二维码图片并发送
-2. 使用 `wait_for_user_reply` 提示用户扫码
+2. 使用 `ask_for_user_reply` 提示用户扫码
 
 {user_info}
 ## 输出格式
@@ -474,21 +471,9 @@ wait_for_user_reply(prompt="📱 已发送验证码到 [手机号/邮箱]\\n\\n�
             return f"截图已发送（ID: {result}）"
         return "截图发送失败"
 
-    async def _wait_for_user_reply(self, prompt: str) -> str:
+    async def _ask_for_user_reply(self, prompt: str) -> str:
         """发送提示信息并等待用户回复"""
         self._last_action = "waiting:user_reply"
         await self.telegram.send_message(prompt)
-        await self.telegram.send_message(
-            f"⌛ 等待你的回复中…\n已用时：{self._format_elapsed()}\n最近动作：{self._last_action}"
-        )
         reply = await self.telegram.wait_for_reply()
-        return reply
-
-    async def _ask_user(self, question: str) -> str:
-        """发送问题并等待用户回复"""
-        self._last_action = "ask:user"
-        await self.telegram.send_message(
-            f"📩 已向你提问，等待回复…\n已用时：{self._format_elapsed()}\n最近动作：{self._last_action}"
-        )
-        reply = await self.telegram.ask(question)
         return reply
