@@ -40,7 +40,7 @@ async def validate_image_generation(
     content: Optional[XHSContent] = None,
     research: Optional[ResearchResult] = None,
     image_spec: Optional[ImageTypeSpec] = None,
-    max_retries: int = 5,
+    max_retries: int = 15,
 ) -> Path:
     """
     显式验证循环（替代装饰器堆叠）

@@ -449,12 +449,12 @@ class ImageAgent:
         # 初始化验证器（如果还没有）
         if not hasattr(self, 'gemini_config_validator'):
             self.gemini_config_validator = GeminiConfigValidator(
-                max_retries=5,
+                max_retries=10,
                 initial_delay=5.0
             )
         if not hasattr(self, 'image_quality_validator'):
             self.image_quality_validator = ImageQualityValidator(
-                max_retries=5,
+                max_retries=10,
                 initial_delay=5.0
             )
 
@@ -479,7 +479,7 @@ class ImageAgent:
             content=content,
             research=research,
             image_spec=image_spec,
-            max_retries=5,
+            max_retries=10,
         )
 
         return image_path
