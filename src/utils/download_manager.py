@@ -12,6 +12,10 @@ import shutil
 from pathlib import Path
 from typing import Optional
 from ..config.settings import TimeoutConfig, PathConfig
+from .watermark_remover import remove_gemini_watermark
+from .logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class DownloadManager:
@@ -32,7 +36,8 @@ class DownloadManager:
         target_name: str,
         file_pattern: str = "*.png",
         timeout: float = None,
-        before_time: Optional[float] = None
+        before_time: Optional[float] = None,
+        remove_watermark: bool = True
     ) -> Path:
         """
         等待下载完成并移动文件到目标目录
@@ -43,6 +48,7 @@ class DownloadManager:
             file_pattern: 文件匹配模式
             timeout: 超时时间（秒）
             before_time: 只查找此时间之后修改的文件（Unix 时间戳）
+            remove_watermark: 是否移除 Gemini 水印（默认 True）
 
         Returns:
             Path: 移动后的文件路径
@@ -78,6 +84,14 @@ class DownloadManager:
 
                 # 移动文件
                 shutil.move(str(latest), str(target_path))
+
+                # 移除 Gemini 水印（如果启用且是图片文件）
+                if remove_watermark and target_path.suffix.lower() in ('.png', '.jpg', '.jpeg', '.webp'):
+                    try:
+                        remove_gemini_watermark(target_path)
+                        logger.info("已移除 Gemini 水印: %s", target_path.name)
+                    except Exception as e:
+                        logger.warning("去水印失败 (保留原图): %s", e)
 
                 return target_path
 
