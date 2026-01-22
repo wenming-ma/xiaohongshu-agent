@@ -81,6 +81,7 @@ def get_anthropic_model(
         client = AsyncAnthropic(
             api_key=api_key,
             http_client=http_client,
+            max_retries=10,  # SDK 内置重试次数
         )
 
         _shared_provider = AnthropicProvider(anthropic_client=client)

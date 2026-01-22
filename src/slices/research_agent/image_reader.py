@@ -3,7 +3,7 @@
 
 目标：
 - 以 Tool 的形式提供给其它 Agent（如 Research/Search）调用
-- 默认使用 OpenRouter 的视觉模型，避免直连 Claude 不可用
+- 使用 Claude 视觉模型进行图片理解
 """
 
 from __future__ import annotations
@@ -15,8 +15,8 @@ from pydantic_ai import Agent, Tool, BinaryContent
 from ...models.schemas import ImageReadResult
 from ...utils.image_compression import compress_image_for_review
 from ...utils.logger import get_logger
-from ...config.settings import RetryConfig
-from ...config.settings import APIConfig
+from ...config.settings import RetryConfig, APIConfig
+from ...utils.anthropic_provider import get_anthropic_model
 from .prompts import image_reader_system_prompt, image_reader_user_prompt
 
 logger = get_logger(__name__)
@@ -26,11 +26,9 @@ class ImageReaderAgent:
     """读图 Agent（输出结构化的 ImageReadResult），并提供 Tool 包装。"""
 
     def __init__(self):
-        # 视觉任务使用 SageHub (Claude 中转服务)
-        from ...utils.sagehub_provider import get_sagehub_model
-
+        # 视觉任务使用 Claude 模型
         self._agent = Agent(
-            model=get_sagehub_model(APIConfig.SAGEHUB_MODEL),
+            model=get_anthropic_model(APIConfig.CLAUDE_IMAGE_MODEL),
             output_type=ImageReadResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,

@@ -3,11 +3,11 @@ from ..utils.file_ops import save_json
 from ..utils.logger import get_logger
 from ..models.schemas import ImageResult
 from .types import WorkflowContext
-from ..slices.content import workflow as content_workflow
-from ..slices.image import workflow as image_workflow
-from ..slices.image.agent import ImageAgent
-from ..slices.publish import workflow as publish_workflow
-from ..slices.research import workflow as research_workflow
+from ..slices.content_agent import workflow as content_workflow
+from ..slices.image_agent import workflow as image_workflow
+from ..slices.image_agent.agent import ImageAgent
+from ..slices.publish_agent import workflow as publish_workflow
+from ..slices.research_agent import workflow as research_workflow
 
 logger = get_logger(__name__)
 

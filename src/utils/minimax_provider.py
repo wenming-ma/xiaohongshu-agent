@@ -95,6 +95,7 @@ def get_minimax_model(
             base_url=APIConfig.MINIMAX_BASE_URL,
             http_client=http_client,
             timeout=300.0,  # 5分钟超时
+            max_retries=10,  # SDK 内置重试次数
         )
 
         _shared_provider = AnthropicProvider(anthropic_client=client)

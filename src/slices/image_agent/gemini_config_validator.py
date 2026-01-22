@@ -18,7 +18,7 @@ from pydantic_ai import Agent, BinaryContent
 from ...validators.external_base import ExternalValidator
 from ...models.schemas import GeminiConfigReview
 from ...utils.image_compression import compress_image_for_review
-from ...utils.mistral_provider import get_mistral_model
+from ...utils.anthropic_provider import get_anthropic_model
 from ...utils.logger import get_logger
 from ...config.settings import APIConfig
 from .prompts import gemini_config_review_system_prompt, gemini_config_review_user_prompt
@@ -47,7 +47,7 @@ class GeminiConfigValidator(ExternalValidator):
         if self._agent is None:
             from ...config.settings import RetryConfig
             self._agent = Agent(
-                model=get_mistral_model(APIConfig.MISTRAL_REVIEW_MODEL),
+                model=get_anthropic_model(APIConfig.CLAUDE_IMAGE_MODEL),
                 output_type=GeminiConfigReview,
                 instrument=True,
                 retries=RetryConfig.AGENT_RETRIES,  # Agent 内部重试
