@@ -130,12 +130,12 @@ class APIConfig:
     # 注意：devstral-2512 不支持视觉
     MISTRAL_REVIEW_MODEL = os.getenv("MISTRAL_REVIEW_MODEL", "pixtral-12b-latest")
 
-    # MiniMax 模型配置（Anthropic 兼容格式 - 官方推荐）
+    # MiniMax 模型配置（通过 Nexus 代理访问，Anthropic 兼容格式）
     # 可用模型：
     #   - "MiniMax-M2.1" （最新旗舰模型，支持 Tool Use & Interleaved Thinking）
     #   - "MiniMax-Text-01" （支持100万token上下文）
     MINIMAX_MODEL = "MiniMax-M2.1"
-    MINIMAX_BASE_URL = "https://api.minimax.io/anthropic"
+    MINIMAX_BASE_URL = "https://nexus.itssx.com/api/claude_code/cc_minimax21"
 
     # Qwen 模型配置（阿里云通义千问，OpenAI 兼容格式）
     # 可用视觉模型：
