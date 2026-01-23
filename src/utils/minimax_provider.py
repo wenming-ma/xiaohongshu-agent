@@ -9,6 +9,7 @@ MiniMax Model 工厂
 - Base URL: https://nexus.itssx.com/api/claude_code/cc_minimax21
 """
 import os
+import logging
 from httpx import AsyncClient, HTTPStatusError, Timeout, Request, Response, AsyncBaseTransport, AsyncHTTPTransport
 from tenacity import retry_if_exception_type, stop_after_attempt, wait_exponential
 from anthropic import AsyncAnthropic
@@ -17,6 +18,8 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.retries import RetryConfig, wait_retry_after
 from ..config.settings import RetryConfig as AppRetryConfig, APIConfig
 
+
+logger = logging.getLogger(__name__)
 
 # 全局共享的 Provider 实例（避免重复创建）
 _shared_provider: AnthropicProvider | None = None
@@ -33,14 +36,28 @@ class BearerAuthTransport(AsyncBaseTransport):
     def __init__(self, api_key: str):
         self._api_key = api_key
         self._transport = AsyncHTTPTransport()
+        self._request_count = 0
 
     async def handle_async_request(self, request: Request) -> Response:
+        self._request_count += 1
+        request_id = self._request_count
+
         # 直接修改请求的 headers（原地修改，不创建新请求）
         if "x-api-key" in request.headers:
             del request.headers["x-api-key"]
         request.headers["Authorization"] = f"Bearer {self._api_key}"
 
-        return await self._transport.handle_async_request(request)
+        # 计算请求大小（用于调试）
+        content_length = request.headers.get("content-length", "unknown")
+        logger.debug(f"[Request #{request_id}] URL: {request.url}, Size: {content_length} bytes")
+
+        try:
+            response = await self._transport.handle_async_request(request)
+            logger.debug(f"[Request #{request_id}] Response: {response.status_code}")
+            return response
+        except Exception as e:
+            logger.warning(f"[Request #{request_id}] Error: {type(e).__name__}: {str(e)[:100]}")
+            raise
 
     async def aclose(self) -> None:
         await self._transport.aclose()
@@ -100,10 +117,11 @@ def get_minimax_model(
             base_url=APIConfig.MINIMAX_BASE_URL,
             http_client=http_client,
             timeout=300.0,  # 5分钟超时
-            max_retries=15,  # SDK 内置重试次数
+            max_retries=20,  # SDK 内置重试次数增加到 20
         )
 
         _shared_provider = AnthropicProvider(anthropic_client=client)
+        logger.info(f"MiniMax Provider 初始化完成: {APIConfig.MINIMAX_BASE_URL}")
 
     # 使用共享的 Provider 创建 Model
     return AnthropicModel(model_name, provider=_shared_provider)
@@ -113,3 +131,4 @@ def reset_provider():
     """重置共享的 Provider 实例（用于测试或配置更新后）"""
     global _shared_provider
     _shared_provider = None
+    logger.info("MiniMax Provider 已重置")
