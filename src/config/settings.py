@@ -167,8 +167,17 @@ class APIConfig:
     # minimax 使用 Anthropic 兼容 API，支持 Tool Use
     MODEL_PROVIDER = "minimax"
 
-    # Gemini URL
+    # Gemini URL (网页版，已废弃，保留用于参考)
     GEMINI_URL = "https://gemini.google.com/app"
+
+    # Gemini 图片生成 API 配置 (OpenAI 兼容格式)
+    # 通过本地代理服务访问
+    GEMINI_IMAGE_BASE_URL = os.getenv("GEMINI_IMAGE_BASE_URL", "http://127.0.0.1:8045/v1")
+    GEMINI_IMAGE_API_KEY = os.getenv("GEMINI_IMAGE_API_KEY", "your-api-key")
+    GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3-pro-image")
+    # 支持的尺寸: "1024x1024" (1:1), "1280x720" (16:9), "720x1280" (9:16), "1216x896" (4:3)
+    # 小红书推荐使用 3:4 竖版，使用 720x1280 (9:16) 作为默认
+    GEMINI_IMAGE_SIZE = os.getenv("GEMINI_IMAGE_SIZE", "720x1280")
 
     # 可重试的 HTTP 状态码
     RETRYABLE_STATUS_CODES = (429, 500, 502, 503, 504)

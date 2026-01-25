@@ -1,25 +1,18 @@
 """
 图片生成 Agent - ML 模型风格
-使用 Gemini 网页生成小红书配图
+使用 Gemini API 生成小红书配图
 
 使用方式：
     agent = ImageAgent()
     result = await agent.forward(content, research, topic, output_dir)
 
-通过 Playwright MCP 操作 Gemini 网页
-
-验证机制（通过显式验证循环实现）：
-- validate_image_generation: 显式验证循环，依次验证 Gemini 配置和图片质量
-- 验证失败时自动重试，注入反馈到生成上下文
+通过 OpenAI 兼容 API 调用 Gemini 图片生成服务
 """
-import asyncio
-import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
-from pydantic_ai import Agent, Tool, RunContext
-from pydantic_ai.mcp import MCPServerStdio
+from pydantic_ai import Agent, RunContext
 
 from ...models.schemas import (
     ImageResult,
@@ -28,25 +21,20 @@ from ...models.schemas import (
     ResearchResult,
     ImageGroupingPlan,
     ImageGroupingReviewResult,
-    GeminiOperationResult,
     ImageTypeSpec,
     ImageGenContext,
 )
 from ...utils.minimax_provider import get_minimax_model
-from ...utils.download_manager import DownloadManager
 from ...utils.logger import get_logger
-from ...config.settings import RetryConfig, ImageConfig, PathConfig, TimeoutConfig, APIConfig
-from ...infra.login_agent import LoginAgent
-from .gemini_config_validator import GeminiConfigValidator
+from ...config.settings import RetryConfig
 from .quality_validator import ImageQualityValidator
 from .prompts import (
     image_system_prompt,
     image_user_prompt,
     image_grouping_system_prompt,
     image_grouping_review_system_prompt,
-    gemini_operator_prompt,
-    gemini_operation_template,
 )
+from .gemini_image_client import GeminiImageClient
 
 # 从拆分的模块导入
 from ._group_utils import (
@@ -55,7 +43,6 @@ from ._group_utils import (
     groups_to_image_specs,
     run_grouping_with_review,
 )
-from ._validation import validate_image_generation
 
 logger = get_logger(__name__)
 
@@ -79,51 +66,16 @@ class ImageAgent:
 
     def __init__(self):
         """初始化图片生成 Agent"""
-        self._init_config()
-        self._init_paths()
-        self._init_state()
-        self._init_download_manager()
-        self._init_mcp_server()
-        self._init_tools()
+        self._init_image_client()
         self._init_agents()
 
-    def _init_config(self):
-        """初始化配置参数"""
-        self.gemini_url = APIConfig.GEMINI_URL
-
-    def _init_paths(self):
-        """初始化路径配置"""
-        self.downloads_dir = PathConfig.DOWNLOADS_DIR
-        self.downloads_dir.mkdir(parents=True, exist_ok=True)
-
-    def _init_state(self):
-        """初始化内部状态"""
-        self._operation_start_time: Optional[float] = None
-
-    def _init_download_manager(self):
-        """初始化下载管理器"""
-        self.download_manager = DownloadManager(download_dir=self.downloads_dir)
-
-    def _init_mcp_server(self):
-        """初始化 Playwright MCP Server"""
-        self.mcp_server = MCPServerStdio(
-            command='npx',
-            args=['-y', '@playwright/mcp@latest', '--output-dir', str(self.downloads_dir)],
-            env={
-                'HEADLESS': 'false',
-                'BROWSER_TYPE': 'chromium',
-                'USER_DATA_DIR': PathConfig.BROWSER_SESSION_GEMINI
-            },
-            tool_prefix='playwright',
-            cache_tools=True,
-            max_retries=RetryConfig.MCP_RETRIES,
-            timeout=TimeoutConfig.MCP_INIT_TIMEOUT,
-            process_tool_call=ImageAgent._block_browser_close,
+    def _init_image_client(self):
+        """初始化 Gemini 图片 API 客户端"""
+        self.image_client = GeminiImageClient()
+        self.image_quality_validator = ImageQualityValidator(
+            max_retries=RetryConfig.MAX_RETRIES,
+            initial_delay=2.0
         )
-
-    def _init_tools(self):
-        """初始化工具集"""
-        self.login_agent = LoginAgent(mcp_server=self.mcp_server)
 
     def _init_agents(self):
         """初始化所有 Agent"""
@@ -144,7 +96,7 @@ class ImageAgent:
             if ctx.deps.validation_feedback:
                 return (
                     base_prompt +
-                    "\n\n## 🚨 上次生成的图片问题（必须修复）\n"
+                    "\n\n## 上次生成的图片问题（必须修复）\n"
                     f"{ctx.deps.validation_feedback}\n\n"
                     "请根据上述反馈调整提示词，确保生成的图片符合要求。"
                 )
@@ -167,34 +119,6 @@ class ImageAgent:
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(image_grouping_review_system_prompt(),),
         )
-
-        # Gemini 操作 Agent
-        function_tools = [
-            Tool(self._check_download_status, takes_ctx=False),
-            self.login_agent.get_tool(),
-        ]
-        self.gemini_operator = Agent(
-            model=model,
-            output_type=GeminiOperationResult,
-            toolsets=[self.mcp_server],
-            tools=function_tools,
-            instrument=True,
-            retries=RetryConfig.AGENT_RETRIES,
-            system_prompt=(gemini_operator_prompt(),),
-        )
-
-    @staticmethod
-    async def _block_browser_close(
-        ctx: RunContext[Any],
-        call_tool,
-        name: str,
-        args: dict[str, Any]
-    ):
-        """拦截并阻止关闭浏览器的工具调用"""
-        if name == 'browser_close':
-            logger.debug("拦截 browser_close 调用：浏览器需要保持打开状态以供验证")
-            return {"content": [{"type": "text", "text": "操作已跳过：浏览器需要保持打开状态以供后续验证。"}]}
-        return await call_tool(name, args, None)
 
     # ========================================================================
     # 主入口：forward
@@ -267,44 +191,6 @@ class ImageAgent:
         )
 
     # ========================================================================
-    # 工具方法
-    # ========================================================================
-
-    async def _check_download_status(self) -> str:
-        """检查下载目录是否有新的 PNG 图片文件"""
-        # 等待 5 秒让下载有时间开始
-        await asyncio.sleep(5)
-
-        if self._operation_start_time is None:
-            return "NOT_FOUND: 操作未开始"
-
-        # 1. 检查完整的 PNG 文件（下载成功）
-        for f in self.downloads_dir.glob("*.png"):
-            if f.stat().st_mtime > self._operation_start_time:
-                return f"DOWNLOADED: {f.name} ({f.stat().st_size / 1024:.0f}KB)"
-
-        # 2. 检查临时文件（下载中）
-        for pattern in ["*.crdownload", "*.tmp", "*.part"]:
-            for f in self.downloads_dir.glob(pattern):
-                if f.stat().st_mtime > self._operation_start_time:
-                    return f"DOWNLOADING: {f.name} ({f.stat().st_size / 1024:.0f}KB)"
-
-        return "NOT_FOUND: 下载目录中没有新文件"
-
-    async def list_tools(self) -> None:
-        """列出所有可用的 MCP 工具（用于验证）"""
-        logger.info("正在检查 Gemini 操作工具...")
-        try:
-            async with self.mcp_server as server:
-                tools = await server.list_tools()
-                logger.info("发现 %d 个 Playwright MCP 工具", len(tools))
-                for tool in tools[:5]:
-                    tool_name = f"{self.mcp_server.tool_prefix}_{tool.name}" if self.mcp_server.tool_prefix else tool.name
-                    logger.debug("  - %s", tool_name)
-        except Exception as e:
-            logger.warning("无法列出工具: %s", e)
-
-    # ========================================================================
     # 图片生成方法
     # ========================================================================
 
@@ -317,40 +203,35 @@ class ImageAgent:
         output_dir: Path,
         image_specs: list[ImageTypeSpec],
     ) -> list[GeneratedImage]:
-        """在 MCP Server 上下文中逐张生成图片"""
+        """逐张生成图片"""
         generated_images: list[GeneratedImage] = []
 
-        async with self.mcp_server:
-            for spec in image_specs:
-                image_type = spec["type"]
-                image_desc = spec.get("desc", "")
+        for spec in image_specs:
+            image_type = spec["type"]
+            image_desc = spec.get("desc", "")
 
-                logger.info("[%s] %s", image_type, image_desc)
+            logger.info("[%s] %s", image_type, image_desc)
 
-                gen_ctx = ImageGenContext(topic=topic, image_type=image_type)
+            gen_ctx = ImageGenContext(topic=topic, image_type=image_type)
 
-                logger.info("启动 Gemini 图片生成...")
-                image_path = await self._generate_via_gemini(
-                    output_dir=output_dir,
-                    image_type=image_type,
-                    topic=topic,
-                    gen_ctx=gen_ctx,
-                    content=content,
-                    research=research,
-                    image_spec=spec,
-                )
+            logger.info("启动 Gemini API 图片生成...")
+            image_path, final_prompt = await self._generate_via_api(
+                output_dir=output_dir,
+                image_type=image_type,
+                topic=topic,
+                gen_ctx=gen_ctx,
+                content=content,
+                research=research,
+                image_spec=spec,
+            )
 
-                final_prompt = await self._generate_prompt(
-                    content, research, topic, spec, gen_ctx
-                )
+            generated_images.append(GeneratedImage(
+                image_path=str(image_path),
+                prompt_used=final_prompt,
+                image_type=image_type
+            ))
 
-                generated_images.append(GeneratedImage(
-                    image_path=str(image_path),
-                    prompt_used=final_prompt,
-                    image_type=image_type
-                ))
-
-                logger.info("%s 生成并验证完成", image_type)
+            logger.info("%s 生成完成", image_type)
 
         return generated_images
 
@@ -402,40 +283,7 @@ class ImageAgent:
         result = await self.prompt_generator.run(user_prompt, deps=gen_ctx)
         return result.output
 
-    async def _generate_via_gemini_core(
-        self,
-        *,
-        output_dir: Path,
-        image_type: str,
-        prompt: str,
-    ) -> Path:
-        """核心生成逻辑（不含验证和重试）"""
-        start_time = time.time()
-        self._operation_start_time = start_time
-
-        logger.debug("提示词: %s...", prompt[:60])
-        operation_prompt = gemini_operation_template(prompt=prompt)
-
-        result = await self.gemini_operator.run(operation_prompt)
-        op_result: GeminiOperationResult = result.output
-
-        if op_result.success:
-            logger.info("Gemini 操作成功: %s", op_result.status)
-        else:
-            logger.warning("Gemini 操作失败: %s", op_result.status)
-
-        image_path = self.download_manager.wait_and_move(
-            target_dir=output_dir,
-            target_name=image_type,
-            file_pattern="*.png",
-            timeout=TimeoutConfig.GEMINI_WAIT,
-            before_time=start_time
-        )
-        logger.info("图片已保存: %s", image_path)
-
-        return image_path
-
-    async def _generate_via_gemini(
+    async def _generate_via_api(
         self,
         output_dir: Path,
         image_type: str,
@@ -444,42 +292,87 @@ class ImageAgent:
         content: XHSContent,
         research: ResearchResult,
         image_spec: ImageTypeSpec,
-    ) -> Path:
-        """通过 Gemini 网页生成图片（带验证）"""
-        # 初始化验证器（如果还没有）
-        if not hasattr(self, 'gemini_config_validator'):
-            self.gemini_config_validator = GeminiConfigValidator(
-                max_retries=10,
-                initial_delay=5.0
-            )
-        if not hasattr(self, 'image_quality_validator'):
-            self.image_quality_validator = ImageQualityValidator(
-                max_retries=10,
-                initial_delay=5.0
-            )
+        max_retries: int = RetryConfig.MAX_RETRIES,
+    ) -> tuple[Path, str]:
+        """
+        通过 Gemini API 生成图片（带质量验证和重试）
 
-        # 定义核心生成函数（闭包，捕获所有参数）
-        async def generate_core_fn() -> Path:
-            prompt = await self._generate_prompt(content, research, topic, image_spec, gen_ctx)
-            return await self._generate_via_gemini_core(
-                output_dir=output_dir,
-                image_type=image_type,
-                prompt=prompt,
-            )
+        Args:
+            output_dir: 输出目录
+            image_type: 图片类型 (cover/detail_N)
+            topic: 主题
+            gen_ctx: 生成上下文
+            content: 内容数据
+            research: 研究数据
+            image_spec: 图片规格
+            max_retries: 最大重试次数
 
-        # 使用显式验证循环
-        image_path = await validate_image_generation(
-            generate_core_fn=generate_core_fn,
-            gemini_config_validator=self.gemini_config_validator,
-            image_quality_validator=self.image_quality_validator,
-            agent_instance=self,
-            gen_ctx=gen_ctx,
-            topic=topic,
-            image_type=image_type,
-            content=content,
-            research=research,
-            image_spec=image_spec,
-            max_retries=10,
-        )
+        Returns:
+            (图片路径, 使用的提示词)
+        """
+        last_error: Optional[Exception] = None
+        final_prompt = ""
 
-        return image_path
+        for attempt in range(max_retries):
+            try:
+                # 1. 生成提示词
+                prompt = await self._generate_prompt(content, research, topic, image_spec, gen_ctx)
+                final_prompt = prompt
+
+                # 2. 通过 API 生成图片
+                output_path = output_dir / f"{image_type}.png"
+                image_path = await self.image_client.generate_image(
+                    prompt=prompt,
+                    output_path=output_path,
+                )
+
+                # 3. 质量验证（可选，如果验证器可用）
+                try:
+                    validation_context = {
+                        "topic": topic,
+                        "image_type": image_type,
+                        "content": content,
+                        "research": research,
+                        "image_type_info": image_spec,
+                    }
+                    validation_result = await self.image_quality_validator.validate(
+                        image_path=image_path,
+                        context=validation_context,
+                    )
+
+                    if validation_result.passed:
+                        logger.info("图片质量验证通过: score=%d", validation_result.style_score)
+                        return image_path, final_prompt
+                    else:
+                        # 验证未通过，注入反馈并重试
+                        feedback = f"质量问题: {', '.join(validation_result.issues)}"
+                        gen_ctx.validation_feedback = feedback
+                        logger.warning(
+                            "图片质量验证未通过 (尝试 %d/%d): %s",
+                            attempt + 1, max_retries, feedback
+                        )
+                        continue
+
+                except Exception as e:
+                    # 验证失败但图片已生成，记录警告但继续
+                    logger.warning("图片质量验证失败，跳过验证: %s", e)
+                    return image_path, final_prompt
+
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "图片生成失败 (尝试 %d/%d): %s",
+                    attempt + 1, max_retries, str(e)
+                )
+
+                # 检查是否是限流错误
+                if "limited" in str(e).lower() or "429" in str(e):
+                    raise  # 限流错误直接抛出
+
+                if attempt < max_retries - 1:
+                    import asyncio
+                    delay = min(2 ** attempt * 2, 60)
+                    logger.info("等待 %d 秒后重试...", delay)
+                    await asyncio.sleep(delay)
+
+        raise last_error or Exception("图片生成失败，已达最大重试次数")

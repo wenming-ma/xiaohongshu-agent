@@ -328,50 +328,7 @@ class ImageGroupingReviewResult(BaseModel):
     )
 
 
-class GeminiOperationResult(BaseModel):
-    """Gemini 操作结果（用于 gemini_operator Agent）"""
-
-    success: bool = Field(description="操作是否成功完成")
-    status: str = Field(description="状态描述（成功/失败原因）")
-    downloaded_file: Optional[str] = Field(
-        default=None,
-        description="下载的文件名（如果有）"
-    )
-
-
 # ==================== 专用验证器模型 ====================
-
-
-class GeminiConfigReview(BaseModel):
-    """Gemini 配置验证结果 - 检查 Create images + Pro 模式"""
-
-    passed: bool = Field(
-        description="验证是否通过"
-    )
-    create_images_enabled: bool = Field(
-        description="Tools -> Create images 是否已选中"
-    )
-    pro_mode_enabled: bool = Field(
-        description="Pro 模式是否已选中"
-    )
-    issues: List[str] = Field(
-        default_factory=list,
-        description="发现的配置问题"
-    )
-    summary: str = Field(
-        description="验证总结"
-    )
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "passed": False,
-                "create_images_enabled": True,
-                "pro_mode_enabled": False,
-                "issues": ["Pro 模式未选中，当前为 Fast 模式"],
-                "summary": "Gemini 配置不正确：需要选择 Pro 模式"
-            }
-        }
 
 
 class ImageQualityReview(BaseModel):

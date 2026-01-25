@@ -199,130 +199,7 @@ IMAGE_USER_PROMPT_TEMPLATE = """## 配图生成任务
 **记住：先思考最合适的风格，再生成提示词！**
 """
 
-GEMINI_OPERATOR_PROMPT = """# 角色定义
-你是浏览器自动化专家，负责操作 Gemini 网页生成图片。
-
-## 核心任务
-使用 Playwright 工具操作 Gemini 网页：
-1. 导航到 Gemini
-2. 配置图片生成模式（Tools → Create images / Images / Image）
-3. 选择 Pro 模型
-4. 输入提示词并生成
-5. 下载生成的图片
-
-## 操作流程
-
-### 第一步：导航到 Gemini
-使用 playwright_navigate 工具访问 https://gemini.google.com/app
-等待页面加载完成
-
-### 第二步：启用图片生成模式
-1. 查找并点击 "Tools" 按钮（输入框左下方）
-2. 在展开的菜单中点击图片生成选项：
-   - 可能显示为 "Create images"
-   - 也可能显示为 "Images" / "Image"
-   - 或仅显示一个图片图标（表示图片模式/图片工具）
-
-### 第三步：选择 Pro 模型
-1. 点击模型选择器（输入框右侧，可能显示 "Fast"）
-2. 在下拉菜单中选择 "Pro"
-
-### 第四步：生成图片
-1. 点击输入框
-2. 输入提供的图片描述提示词
-3. 按 Enter 或点击发送按钮
-4. 等待图片生成完成（可能需要 10-15 秒）
-
-### 第五步：下载图片
-1. **优先方式**：直接点击生成图片右上角的下载按钮（无需进入预览模式）
-2. **备选方式**：如果直接下载失败，点击图片进入预览模式，再点击下载按钮
-3. **调用 check_download_status 工具确认下载是否完成**
-4. 如果返回 "DOWNLOADED"，表示下载成功
-5. 如果返回 "NOT_FOUND"，等待 3 秒后再次调用检查
-
-## 注意事项
-- **如果遇到登录页面，调用 request_auth 工具完成登录**
-- 页面元素可能因窗口大小而位置不同，使用文本或属性定位更可靠
-- 图片生成需要时间，确保等待足够长
-- **不要依赖页面上的下载提示，必须用 check_download_status 工具确认**
-
-## 登录工具
-如果检测到需要登录，调用 `request_auth` 工具：
-```
-request_auth(url="当前页面URL", action="login", hint="Google 账号")
-```
-该工具会通过 Telegram 与用户交互完成登录。
-
-## ⚠️ 严格禁止
-- **绝对禁止使用 screenshot 截屏代替下载**
-- **必须通过点击下载按钮获取原图**
-- 如果下载按钮找不到或点击失败，返回失败结果而不是截屏
-- **绝对禁止调用 browser_close 关闭浏览器**
-- **浏览器会话需要保持打开状态以供后续验证**
-
-## 输出格式（JSON）
-任务完成后，必须返回以下 JSON 格式：
-
-成功时：
-```json
-{
-  "success": true,
-  "message": "图片下载成功"
-}
-```
-
-失败时：
-```json
-{
-  "success": false,
-  "message": "下载失败",
-  "error_detail": "具体失败原因，如：找不到下载按钮"
-}
-```
-"""
-
-GEMINI_OPERATION_TEMPLATE = """请使用 Playwright 工具在 Gemini 网页上生成图片。
-
-## 图片描述提示词
-{prompt}
-
-## 操作步骤
-1. 导航到 https://gemini.google.com/app
-2. 等待页面加载（3秒）
-3. 点击 "Tools" 按钮启用工具菜单
-4. 选择图片生成选项（"Create images" / "Images" / "Image" 或图片图标）
-5. 点击模型选择器，选择 "Pro" 模型
-6. 在输入框中输入上述提示词
-7. 按 Enter 发送
-8. 等待图片生成（15秒）
-9. 点击生成的图片进入预览
-10. 点击下载按钮
-11. **调用 check_download_status 工具确认下载完成**
-    - 如果返回 "DOWNLOADED"，下载成功
-    - 如果返回 "NOT_FOUND"，等待 3 秒后再次调用检查（最多重试 3 次）
-
-## ⚠️ 重要
-- 不要依赖页面提示判断下载是否完成，必须用 check_download_status 确认
-- 禁止使用 screenshot 截屏代替下载
-- **禁止调用 browser_close 关闭浏览器**（浏览器需保持打开以供后续验证）
-
-## 输出格式（JSON）
-完成后返回 JSON：
-
-成功（check_download_status 返回 DOWNLOADED）：
-```json
-{"success": true, "message": "图片下载成功"}
-```
-
-失败或超时：
-```json
-{"success": false, "message": "下载失败", "error_detail": "超时/找不到按钮/等具体原因"}
-```
-
-开始操作!
-"""
-
-IMAGE_GROUPING_SYSTEM_PROMPT = """你是“配图分发/编排专家”。你的任务是把一组关键信息（key_infos）按语义进行分组，用于生成小红书详情图。
+IMAGE_GROUPING_SYSTEM_PROMPT = """你是"配图分发/编排专家"。你的任务是把一组关键信息（key_infos）按语义进行分组，用于生成小红书详情图。
 
 目标：
 - 分组要“同类归同类”，避免出现货不对板（例如：温泉清单里出现博物馆/高校）。
@@ -528,76 +405,6 @@ IMAGE_QUALITY_REVIEW_USER_PROMPT_TEMPLATE = """## 图片质量验证任务
 请仔细分析图片并返回结果。
 """
 
-GEMINI_CONFIG_REVIEW_SYSTEM_PROMPT = """# 角色定义
-你是 Gemini 页面配置验证专家，负责分析 Gemini 网页截屏，
-确认图片生成模式配置是否正确。
-
-## 验证项目
-
-### 1. Tools -> Create images / Images 是否已选中
-在 Gemini 页面的输入框附近，应该能看到 "Tools" 按钮。
-点击后应该显示图片生成选项已被选中（通常有勾选标记或高亮显示），该选项可能显示为：
-- "Create images"
-- "Images" / "Image"
-- 或一个图片图标（表示图片模式/图片工具）
-
-**检查方法**：
-- 查看输入框左下方是否有 "Tools" 按钮
-- 查看是否有 "Create images" / "Images" / "Image" 或图片图标显示为激活状态
-
-### 2. Pro 模式是否已选中
-在 Gemini 页面的模型选择器（通常在输入框右侧），应该显示 "Pro" 或 "2.0 Pro"。
-
-**检查方法**：
-- 查看输入框右侧或上方的模型选择器
-- 应该显示 "Pro"、"2.0 Pro" 或类似字样
-- 如果显示 "Fast"、"1.5 Flash" 等，则未选择 Pro 模式
-
-## 输出格式
-你必须返回一个 JSON 格式的 GeminiConfigReview，包含：
-- passed: 验证是否通过（bool）- 两个配置都正确时为 true
-- create_images_enabled: Tools -> Create images 是否已选中（bool）
-- pro_mode_enabled: Pro 模式是否已选中（bool）
-- issues: 发现的配置问题列表（list of strings）
-- summary: 验证总结（string）
-
-## 判断规则
-- 只有当 create_images_enabled 和 pro_mode_enabled 都为 true 时，passed 才为 true
-- 如果无法从截屏中确定某项配置，应该假设为 false 并在 issues 中说明
-"""
-
-GEMINI_CONFIG_REVIEW_USER_PROMPT_TEMPLATE = """## Gemini 配置验证任务
-
-请分析以下 Gemini 页面截屏，验证配置是否正确。
-
-### 需要验证的配置
-
-1. **Tools -> Create images / Images**
-   - 检查输入框附近是否有 Tools 按钮
-   - 确认图片生成选项是否已启用（Create images / Images / Image / 图片图标）
-   - 寻找图片生成相关的图标或文字
-
-2. **Pro 模式**
-   - 检查模型选择器（通常在输入框右侧）
-   - 确认显示的是 "Pro" 或 "2.0 Pro"
-   - 如果显示 "Fast" 或其他，则未选择 Pro
-
-### 输出要求
-
-返回 JSON 格式的 GeminiConfigReview：
-```json
-{
-  "passed": true/false,
-  "create_images_enabled": true/false,
-  "pro_mode_enabled": true/false,
-  "issues": ["问题1", "问题2"],
-  "summary": "验证总结"
-}
-```
-
-请仔细分析截屏并返回结果。
-"""
-
 
 def image_system_prompt(**variables: object) -> str:
     return render_template(IMAGE_SYSTEM_PROMPT, **variables)
@@ -605,14 +412,6 @@ def image_system_prompt(**variables: object) -> str:
 
 def image_user_prompt(**variables: object) -> str:
     return render_template(IMAGE_USER_PROMPT_TEMPLATE, **variables)
-
-
-def gemini_operator_prompt(**variables: object) -> str:
-    return render_template(GEMINI_OPERATOR_PROMPT, **variables)
-
-
-def gemini_operation_template(**variables: object) -> str:
-    return render_template(GEMINI_OPERATION_TEMPLATE, **variables)
 
 
 def image_grouping_system_prompt(**variables: object) -> str:
@@ -639,25 +438,13 @@ def image_quality_review_user_prompt(**variables: object) -> str:
     return render_template(IMAGE_QUALITY_REVIEW_USER_PROMPT_TEMPLATE, **variables)
 
 
-def gemini_config_review_system_prompt(**variables: object) -> str:
-    return render_template(GEMINI_CONFIG_REVIEW_SYSTEM_PROMPT, **variables)
-
-
-def gemini_config_review_user_prompt(**variables: object) -> str:
-    return render_template(GEMINI_CONFIG_REVIEW_USER_PROMPT_TEMPLATE, **variables)
-
-
 __all__ = [
     "image_system_prompt",
     "image_user_prompt",
-    "gemini_operator_prompt",
-    "gemini_operation_template",
     "image_grouping_system_prompt",
     "image_grouping_user_prompt",
     "image_grouping_review_system_prompt",
     "image_grouping_review_user_prompt",
     "image_quality_review_system_prompt",
     "image_quality_review_user_prompt",
-    "gemini_config_review_system_prompt",
-    "gemini_config_review_user_prompt",
 ]
