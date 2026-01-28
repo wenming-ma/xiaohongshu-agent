@@ -175,9 +175,11 @@ class APIConfig:
     GEMINI_IMAGE_BASE_URL = os.getenv("GEMINI_IMAGE_BASE_URL", "http://127.0.0.1:8045/v1")
     GEMINI_IMAGE_API_KEY = os.getenv("GEMINI_IMAGE_API_KEY", "your-api-key")
     GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3-pro-image")
-    # 支持的尺寸: "1024x1024" (1:1), "1280x720" (16:9), "720x1280" (9:16), "1216x896" (4:3)
-    # 小红书推荐使用 3:4 竖版，使用 720x1280 (9:16) 作为默认
-    GEMINI_IMAGE_SIZE = os.getenv("GEMINI_IMAGE_SIZE", "720x1280")
+    # 支持的尺寸: 任意 WIDTHxHEIGHT 格式，自动计算宽高比
+    # 小红书推荐使用 3:4 竖版，使用 1080x1440 (3:4) 作为默认
+    GEMINI_IMAGE_SIZE = os.getenv("GEMINI_IMAGE_SIZE", "1080x1440")
+    # 图片质量: "hd" (4K), "medium" (2K), "standard" (默认)
+    GEMINI_IMAGE_QUALITY = os.getenv("GEMINI_IMAGE_QUALITY", "hd")
 
     # 可重试的 HTTP 状态码
     RETRYABLE_STATUS_CODES = (429, 500, 502, 503, 504)
