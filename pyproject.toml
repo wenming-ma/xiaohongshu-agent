@@ -33,6 +33,7 @@ dependencies = [
     "aiogram>=3.0.0",
     "mistralai>=1.9.11",
     "numpy>=2.4.1",
+    "openpyxl>=3.1.5",
 ]
 
 [tool.uv.sources]
