@@ -1,15 +1,17 @@
 """
 Gemini 图片生成 API 客户端
 
-通过 OpenAI Images API 调用 Gemini 图片生成服务
+通过 Google Gemini 原生 SDK 调用图片生成服务
 """
-import base64
+import mimetypes
 from pathlib import Path
 from typing import Optional
 
-from openai import AsyncOpenAI
+import httpx
+from google import genai
+from google.genai import types
 
-from ...config.settings import APIConfig, RetryConfig
+from ...config.settings import APIConfig, RetryConfig, TimeoutConfig
 from ...utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -19,49 +21,44 @@ class GeminiImageClient:
     """
     Gemini 图片生成 API 客户端
 
-    使用 OpenAI Images API 格式调用本地代理服务
+    使用 Google Gemini 原生 SDK 直接调用
     """
 
     def __init__(
         self,
-        base_url: Optional[str] = None,
         api_key: Optional[str] = None,
         model: Optional[str] = None,
-        size: Optional[str] = None,
-        quality: Optional[str] = None,
+        image_size: Optional[str] = None,
     ):
         """
         初始化客户端
 
         Args:
-            base_url: API 基础 URL，默认从配置读取
-            api_key: API 密钥，默认从配置读取
+            api_key: Gemini API 密钥，默认从配置读取
             model: 模型名称，默认从配置读取
-            size: 图片尺寸，默认从配置读取
-            quality: 图片质量，"hd" (4K) | "medium" (2K) | "standard"，默认从配置读取
+            image_size: 图片尺寸，"1K" | "2K" | "4K"，默认从配置读取
         """
-        self.base_url = base_url or APIConfig.GEMINI_IMAGE_BASE_URL
-        self.api_key = api_key or APIConfig.GEMINI_IMAGE_API_KEY
+        self.api_key = api_key or APIConfig.GEMINI_API_KEY
         self.model = model or APIConfig.GEMINI_IMAGE_MODEL
-        self.size = size or APIConfig.GEMINI_IMAGE_SIZE
-        self.quality = quality or APIConfig.GEMINI_IMAGE_QUALITY
+        self.image_size = image_size or APIConfig.GEMINI_IMAGE_SIZE
 
-        self.client = AsyncOpenAI(
-            base_url=self.base_url,
-            api_key=self.api_key,
+        # 配置 HTTP 超时，避免请求无限等待
+        timeout = TimeoutConfig.GEMINI_WAIT
+        http_options = types.HttpOptions(
+            timeout=timeout * 1000,  # 毫秒
         )
+        self.client = genai.Client(api_key=self.api_key, http_options=http_options)
 
         logger.debug(
-            "GeminiImageClient 初始化: base_url=%s, model=%s, size=%s, quality=%s",
-            self.base_url, self.model, self.size, self.quality
+            "GeminiImageClient 初始化: model=%s, image_size=%s",
+            self.model, self.image_size
         )
 
     async def generate_image(
         self,
         prompt: str,
         output_path: Path,
-        size: Optional[str] = None,
-        quality: Optional[str] = None,
+        image_size: Optional[str] = None,
         max_retries: int = RetryConfig.MAX_RETRIES,
     ) -> Path:
         """
@@ -70,8 +67,7 @@ class GeminiImageClient:
         Args:
             prompt: 图片生成提示词
             output_path: 输出文件路径（包含文件名）
-            size: 图片尺寸（可选），覆盖默认值
-            quality: 图片质量（可选），覆盖默认值
+            image_size: 图片尺寸（可选），覆盖默认值
             max_retries: 最大重试次数
 
         Returns:
@@ -80,30 +76,59 @@ class GeminiImageClient:
         Raises:
             Exception: 生成或保存失败
         """
-        image_size = size or self.size
-        image_quality = quality or self.quality
+        size = image_size or self.image_size
 
-        logger.info("开始生成图片: %s (size=%s, quality=%s)", output_path.name, image_size, image_quality)
+        logger.info("开始生成图片: %s (size=%s)", output_path.name, size)
         logger.debug("提示词: %s...", prompt[:100])
 
         last_error = None
         for attempt in range(max_retries):
             try:
-                # 使用 OpenAI Images API (推荐方式)
-                response = await self.client.images.generate(
-                    model=self.model,
-                    prompt=prompt,
-                    size=image_size,
-                    quality=image_quality,
-                    n=1,
-                    response_format="b64_json"
+                # 构建请求内容
+                contents = [
+                    types.Content(
+                        role="user",
+                        parts=[types.Part.from_text(text=prompt)],
+                    ),
+                ]
+
+                # 配置生成参数
+                generate_content_config = types.GenerateContentConfig(
+                    response_modalities=["IMAGE", "TEXT"],
+                    image_config=types.ImageConfig(image_size=size),
                 )
 
-                # 解码 base64 图片数据
-                image_data = base64.b64decode(response.data[0].b64_json)
+                # 流式生成
+                image_data = None
+                file_extension = ".png"
+
+                for chunk in self.client.models.generate_content_stream(
+                    model=self.model,
+                    contents=contents,
+                    config=generate_content_config,
+                ):
+                    if (
+                        chunk.candidates is None
+                        or chunk.candidates[0].content is None
+                        or chunk.candidates[0].content.parts is None
+                    ):
+                        continue
+
+                    part = chunk.candidates[0].content.parts[0]
+                    if part.inline_data and part.inline_data.data:
+                        image_data = part.inline_data.data
+                        ext = mimetypes.guess_extension(part.inline_data.mime_type)
+                        if ext:
+                            file_extension = ext
+                    elif hasattr(part, 'text') and part.text:
+                        logger.debug("Gemini 返回文本: %s", part.text[:100])
 
                 if not image_data:
-                    raise ValueError("API 返回空图片数据")
+                    raise ValueError("Gemini 未返回图片数据")
+
+                # 更新输出路径的扩展名
+                if output_path.suffix.lower() != file_extension.lower():
+                    output_path = output_path.with_suffix(file_extension)
 
                 # 保存图片
                 output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -114,20 +139,40 @@ class GeminiImageClient:
             except Exception as e:
                 last_error = e
                 error_msg = str(e)
+                error_type = type(e).__name__
 
                 # 检查是否是限流错误
-                if "limited" in error_msg.lower() or "429" in error_msg:
+                if "limited" in error_msg.lower() or "429" in error_msg or "quota" in error_msg.lower():
                     logger.warning("API 限流: %s", error_msg)
                     raise  # 限流错误直接抛出，不重试
 
-                logger.warning(
-                    "图片生成失败 (尝试 %d/%d): %s",
-                    attempt + 1, max_retries, error_msg
-                )
+                # 检查是否是网络错误（应该重试）
+                is_network_error = any([
+                    isinstance(e, (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout)),
+                    "disconnected" in error_msg.lower(),
+                    "connection" in error_msg.lower(),
+                    "timeout" in error_msg.lower(),
+                    "RemoteProtocolError" in error_type,
+                ])
+
+                if is_network_error:
+                    logger.warning(
+                        "网络错误 (尝试 %d/%d): [%s] %s",
+                        attempt + 1, max_retries, error_type, error_msg
+                    )
+                else:
+                    logger.warning(
+                        "图片生成失败 (尝试 %d/%d): [%s] %s",
+                        attempt + 1, max_retries, error_type, error_msg
+                    )
 
                 if attempt < max_retries - 1:
                     import asyncio
-                    delay = min(2 ** attempt, 30)  # 指数退避，最多30秒
+                    # 网络错误使用更长的等待时间
+                    if is_network_error:
+                        delay = min(5 * (attempt + 1), 60)  # 网络错误：5, 10, 15... 最多60秒
+                    else:
+                        delay = min(2 ** attempt, 30)  # 其他错误：指数退避，最多30秒
                     logger.info("等待 %d 秒后重试...", delay)
                     await asyncio.sleep(delay)
 
@@ -138,8 +183,7 @@ class GeminiImageClient:
 async def generate_gemini_image(
     prompt: str,
     output_path: Path,
-    size: Optional[str] = None,
-    quality: Optional[str] = None,
+    image_size: Optional[str] = None,
 ) -> Path:
     """
     便捷函数：生成 Gemini 图片
@@ -147,11 +191,10 @@ async def generate_gemini_image(
     Args:
         prompt: 图片生成提示词
         output_path: 输出文件路径
-        size: 图片尺寸（可选）
-        quality: 图片质量（可选），"hd" (4K) | "medium" (2K) | "standard"
+        image_size: 图片尺寸（可选），"1K" | "2K" | "4K"
 
     Returns:
         保存的图片路径
     """
     client = GeminiImageClient()
-    return await client.generate_image(prompt, output_path, size=size, quality=quality)
+    return await client.generate_image(prompt, output_path, image_size=image_size)

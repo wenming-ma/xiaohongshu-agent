@@ -79,7 +79,7 @@ class TimeoutConfig:
 
     DOWNLOAD_TIMEOUT = 60      # 下载超时（秒）
     POLL_INTERVAL = 2          # 轮询间隔（秒）
-    GEMINI_WAIT = 60           # Gemini 生成等待（秒）
+    GEMINI_WAIT = 180          # Gemini 图片生成超时（秒）- 图片生成需要较长时间
     MCP_INIT_TIMEOUT = 90      # MCP Server 初始化超时（秒）- Windows 上 npx 启动较慢
 
 
@@ -170,16 +170,13 @@ class APIConfig:
     # Gemini URL (网页版，已废弃，保留用于参考)
     GEMINI_URL = "https://gemini.google.com/app"
 
-    # Gemini 图片生成 API 配置 (OpenAI 兼容格式)
-    # 通过本地代理服务访问
-    GEMINI_IMAGE_BASE_URL = os.getenv("GEMINI_IMAGE_BASE_URL", "http://127.0.0.1:8045/v1")
-    GEMINI_IMAGE_API_KEY = os.getenv("GEMINI_IMAGE_API_KEY", "your-api-key")
-    GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3-pro-image")
-    # 支持的尺寸: 任意 WIDTHxHEIGHT 格式，自动计算宽高比
-    # 小红书推荐使用 3:4 竖版，使用 1080x1440 (3:4) 作为默认
-    GEMINI_IMAGE_SIZE = os.getenv("GEMINI_IMAGE_SIZE", "1080x1440")
-    # 图片质量: "hd" (4K), "medium" (2K), "standard" (默认)
-    GEMINI_IMAGE_QUALITY = os.getenv("GEMINI_IMAGE_QUALITY", "hd")
+    # Gemini 图片生成 API 配置 (Google 原生 SDK)
+    # 直接使用 google-genai SDK 调用
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "your-api-key")
+    GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3-pro-image-preview")
+    # 支持的尺寸: "1K" | "2K" | "4K"
+    # 小红书推荐使用 3:4 竖版 (1080x1440)，在 prompt 中指定比例
+    GEMINI_IMAGE_SIZE = os.getenv("GEMINI_IMAGE_SIZE", "2K")
 
     # 可重试的 HTTP 状态码
     RETRYABLE_STATUS_CODES = (429, 500, 502, 503, 504)
