@@ -88,6 +88,14 @@ IMAGE_SYSTEM_PROMPT = """# 角色定义
 - **光线**：natural lighting, golden hour, soft window light（避免闪光灯直射感）
 - **细节**：realistic textures, natural skin, subtle wrinkles, genuine expression
 
+## 🔴 人物形象默认规则
+
+当图片中需要出现人物时，除非用户有特殊要求，默认使用以下设定：
+- **种族**：Asian（亚洲人）
+- **气质**：confident, beautiful/handsome, approachable（自信、漂亮/帅气、亲和力强）
+- **表情**：natural smile, genuine expression, warm and inviting（自然微笑、真实表情、温暖亲切）
+- **关键词**：Asian woman/man, beautiful, confident, radiant, elegant, stylish
+
 ## 输出格式
 直接输出 Gemini 提示词，不要任何解释。
 **提示词必须详尽但不冗长**（建议约 150-300 词英文）。
