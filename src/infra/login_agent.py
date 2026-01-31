@@ -31,7 +31,7 @@ from ..config.settings import (
     PathConfig,
     UserProfileConfig,
 )
-from ..utils.minimax_provider import get_minimax_model
+from ..utils.anthropic_provider import get_anthropic_model
 from ..utils.telegram_notifier import get_telegram_notifier
 from ..utils.logger import get_logger
 
@@ -151,7 +151,7 @@ class LoginAgent:
 
     def _init_agent(self):
         """初始化认证 Agent"""
-        model = get_minimax_model()
+        model = get_anthropic_model()
         system_prompt = self._build_system_prompt()
 
         function_tools = [

@@ -13,7 +13,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.usage import UsageLimits
 from ...models.schemas import XHSContent, PublishResult
-from ...utils.minimax_provider import get_minimax_model
+from ...utils.anthropic_provider import get_anthropic_model
 from ...utils.retry_handler import with_retry
 from ...utils.logger import get_logger
 from ...config.settings import RetryConfig, PathConfig, TimeoutConfig, PublishConfig
@@ -68,7 +68,7 @@ class PublisherAgent:
 
     def _init_publisher(self):
         """初始化发布 Agent"""
-        model = get_minimax_model()
+        model = get_anthropic_model()
         function_tools = [self.login_agent.get_tool()]
 
         self.publisher = Agent(

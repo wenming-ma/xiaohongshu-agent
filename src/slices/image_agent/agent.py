@@ -24,7 +24,6 @@ from ...models.schemas import (
     ImageTypeSpec,
     ImageGenContext,
 )
-from ...utils.minimax_provider import get_minimax_model
 from ...utils.anthropic_provider import get_anthropic_model
 from ...utils.logger import get_logger
 from ...config.settings import RetryConfig
@@ -80,7 +79,7 @@ class ImageAgent:
 
     def _init_agents(self):
         """初始化所有 Agent"""
-        model = get_minimax_model()
+        model = get_anthropic_model()
 
         # 提示词生成 Agent
         self.prompt_generator = Agent(
