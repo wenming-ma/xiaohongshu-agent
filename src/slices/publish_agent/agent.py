@@ -107,24 +107,20 @@ class PublisherAgent:
         """
         logger.info("准备发布到小红书: %s (%d 张图片)", content.title, len(images))
 
-        try:
-            # 验证图片顺序
-            self._validate_images(images)
+        # 验证图片顺序
+        self._validate_images(images)
 
-            # 构建用户提示词
-            user_prompt = self._build_prompt(content, images)
+        # 构建用户提示词
+        user_prompt = self._build_prompt(content, images)
 
-            # 执行发布
-            logger.info("Agent 开始执行发布流程...")
-            async with self.mcp_server:
-                result = await self.publisher.run(user_prompt, usage_limits=UsageLimits(request_limit=None))
-                publish_result: PublishResult = result.output
+        # 执行发布
+        logger.info("Agent 开始执行发布流程...")
+        async with self.mcp_server:
+            result = await self.publisher.run(user_prompt, usage_limits=UsageLimits(request_limit=None))
+            publish_result: PublishResult = result.output
 
-            # 处理结果
-            return self._handle_result(publish_result)
-
-        except Exception as e:
-            return self._handle_error(e, content, images)
+        # 处理结果
+        return self._handle_result(publish_result)
 
     # ========================================================================
     # 辅助方法
@@ -176,24 +172,3 @@ class PublisherAgent:
             raise RuntimeError(f"发布失败: {publish_result.error_message}")
 
         return publish_result
-
-    def _handle_error(
-        self,
-        e: Exception,
-        content: XHSContent,
-        images: List[Path]
-    ) -> PublishResult:
-        """处理发布异常"""
-        error_msg = str(e)
-        logger.error("发布异常: %s", error_msg)
-
-        return PublishResult(
-            published=False,
-            platform="xiaohongshu",
-            publish_time=datetime.now().isoformat(),
-            post_url="",
-            error_message=error_msg,
-            retry_count=PublishConfig.MAX_RETRIES,
-            content_snapshot=content.model_dump(),
-            image_paths=[str(img) for img in images]
-        )
