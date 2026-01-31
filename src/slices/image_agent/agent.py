@@ -25,6 +25,7 @@ from ...models.schemas import (
     ImageGenContext,
 )
 from ...utils.minimax_provider import get_minimax_model
+from ...utils.anthropic_provider import get_anthropic_model
 from ...utils.logger import get_logger
 from ...config.settings import RetryConfig
 from .quality_validator import ImageQualityValidator
@@ -102,18 +103,18 @@ class ImageAgent:
                 )
             return base_prompt
 
-        # 语义分组 Agent
+        # 语义分组 Agent（使用 Claude 模型）
         self.grouping_agent = Agent(
-            model=model,
+            model=get_anthropic_model(),
             output_type=ImageGroupingPlan,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(image_grouping_system_prompt(),),
         )
 
-        # 分组审核 Agent
+        # 分组审核 Agent（使用 Claude 模型）
         self.grouping_reviewer = Agent(
-            model=get_minimax_model(),
+            model=get_anthropic_model(),
             output_type=ImageGroupingReviewResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
