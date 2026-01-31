@@ -103,8 +103,8 @@ class APIConfig:
     """API 相关配置"""
 
     # Claude 模型（Anthropic 直连）
-    DEFAULT_MODEL = "claude-sonnet-4-20250514"
-    CLAUDE_IMAGE_MODEL = os.getenv("CLAUDE_IMAGE_MODEL", "claude-sonnet-4-20250514")
+    DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
+    CLAUDE_IMAGE_MODEL = os.getenv("CLAUDE_IMAGE_MODEL", "claude-sonnet-4-5-20250929")
 
     # OpenRouter 模型配置（已废弃，保留用于参考）
     # 注意：研究阶段需要处理截屏，必须使用支持视觉的模型
