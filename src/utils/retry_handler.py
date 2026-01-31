@@ -23,7 +23,7 @@ logger = get_logger(__name__)
 
 def _is_permanent_http_status(status_code: int | None) -> bool:
     """
-    判断 HTTP 状态码是否属于“永久性错误”（重试无意义）。
+    判断 HTTP 状态码是否属于"永久性错误"（重试无意义）。
 
     - 4xx 通常是参数/鉴权/权限/策略问题，重试不会成功
     - 例外：408/429 属于暂时性错误，仍可重试
@@ -31,6 +31,33 @@ def _is_permanent_http_status(status_code: int | None) -> bool:
     if status_code is None:
         return False
     return 400 <= status_code < 500 and status_code not in (408, 429)
+
+
+def _is_proxy_internal_error(e: Exception) -> bool:
+    """
+    检查是否为代理服务内部错误（HTTP 400 但 body 中包含 500/Internal server error）
+
+    某些代理服务会将内部错误包装成 400 返回，这种情况应该重试。
+    """
+    try:
+        body = getattr(e, "body", None)
+        if not body or not isinstance(body, dict):
+            return False
+
+        # 检查 body 中的 status 字段
+        if body.get("status") == 500:
+            return True
+
+        # 检查 error.message 中是否包含 "Internal server error"
+        error = body.get("error", {})
+        if isinstance(error, dict):
+            message = error.get("message", "")
+            if "internal server error" in message.lower():
+                return True
+
+        return False
+    except Exception:
+        return False
 
 
 def _log_openrouter_data_policy_hint(e: ModelHTTPError) -> None:
@@ -176,9 +203,12 @@ def with_retry(max_retries: int = None, initial_delay: float = None, max_total_w
                     
                 except TRANSIENT_EXCEPTIONS as e:
                     # 4xx 通常是永久性错误（如鉴权/权限/策略/参数问题），不应重试
+                    # 但如果是代理内部错误（body 中包含 500），则应该重试
                     if isinstance(e, ModelHTTPError) and _is_permanent_http_status(getattr(e, "status_code", None)):
-                        _log_openrouter_data_policy_hint(e)
-                        raise
+                        if not _is_proxy_internal_error(e):
+                            _log_openrouter_data_policy_hint(e)
+                            raise
+                        logger.info("检测到代理内部错误（HTTP 400 但 body 包含 500），将进行重试")
                     if isinstance(e, HTTPStatusError) and _is_permanent_http_status(getattr(e.response, "status_code", None)):
                         raise
 
