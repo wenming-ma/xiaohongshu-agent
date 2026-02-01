@@ -22,7 +22,13 @@ class GeminiImageClient:
     Gemini 图片生成 API 客户端
 
     使用 Google Gemini 原生 SDK 直接调用
+    支持多 API key 轮换，遇到速率限制自动切换
     """
+
+    # 备用 API keys（遇到限流时轮换使用）
+    FALLBACK_API_KEYS: list[str] = [
+        "your-api-key",
+    ]
 
     def __init__(
         self,
@@ -38,21 +44,46 @@ class GeminiImageClient:
             model: 模型名称，默认从配置读取
             image_size: 图片尺寸，"1K" | "2K" | "4K"，默认从配置读取
         """
-        self.api_key = api_key or APIConfig.GEMINI_API_KEY
+        primary_key = api_key or APIConfig.GEMINI_API_KEY
         self.model = model or APIConfig.GEMINI_IMAGE_MODEL
         self.image_size = image_size or APIConfig.GEMINI_IMAGE_SIZE
 
-        # 配置 HTTP 超时，避免请求无限等待
+        # 构建 API key 列表（主 key + 备用 keys）
+        self.api_keys: list[str] = [primary_key] + [
+            k for k in self.FALLBACK_API_KEYS if k != primary_key
+        ]
+        self.current_key_index = 0
+
+        self._init_client()
+
+        logger.debug(
+            "GeminiImageClient 初始化: model=%s, image_size=%s, api_keys=%d",
+            self.model, self.image_size, len(self.api_keys)
+        )
+
+    def _init_client(self) -> None:
+        """初始化 Gemini 客户端（使用当前 API key）"""
         timeout = TimeoutConfig.GEMINI_WAIT
         http_options = types.HttpOptions(
             timeout=timeout * 1000,  # 毫秒
         )
-        self.client = genai.Client(api_key=self.api_key, http_options=http_options)
+        current_key = self.api_keys[self.current_key_index]
+        self.client = genai.Client(api_key=current_key, http_options=http_options)
+        logger.debug("使用 API key #%d", self.current_key_index + 1)
 
-        logger.debug(
-            "GeminiImageClient 初始化: model=%s, image_size=%s",
-            self.model, self.image_size
-        )
+    def _switch_to_next_key(self) -> bool:
+        """
+        切换到下一个 API key
+
+        Returns:
+            True 如果成功切换，False 如果没有更多可用的 key
+        """
+        if self.current_key_index < len(self.api_keys) - 1:
+            self.current_key_index += 1
+            self._init_client()
+            logger.info("切换到备用 API key #%d", self.current_key_index + 1)
+            return True
+        return False
 
     async def generate_image(
         self,
@@ -144,7 +175,12 @@ class GeminiImageClient:
                 # 检查是否是限流错误
                 if "limited" in error_msg.lower() or "429" in error_msg or "quota" in error_msg.lower():
                     logger.warning("API 限流: %s", error_msg)
-                    raise  # 限流错误直接抛出，不重试
+                    # 尝试切换到下一个 API key
+                    if self._switch_to_next_key():
+                        continue  # 使用新 key 重试
+                    else:
+                        logger.error("所有 API key 都已用尽")
+                        raise  # 没有更多 key，抛出错误
 
                 # 检查是否是网络错误（应该重试）
                 is_network_error = any([
