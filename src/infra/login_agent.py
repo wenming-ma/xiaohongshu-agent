@@ -31,6 +31,7 @@ from ..config.settings import (
     PathConfig,
     UserProfileConfig,
 )
+from ..core.base_agent import BaseAgent, ValidationResult
 from ..utils.anthropic_provider import get_anthropic_model
 from ..utils.telegram_notifier import get_telegram_notifier
 from ..utils.logger import get_logger
@@ -64,13 +65,15 @@ class AuthResult(BaseModel):
 # LoginAgent
 # ============================================================================
 
-class LoginAgent:
+class LoginAgent(BaseAgent):
     """
     通用登录/注册助手（ML 模型风格）
 
     类似 PyTorch nn.Module 的设计：
     - __init__: 初始化所有组件
     - forward: 主执行入口
+    - step: 工作流子步骤
+    - validate: 验证输出
 
     通过 Telegram 与用户交互，使用 Playwright MCP 操作网页，
     完成任意网站的登录或注册。
@@ -87,16 +90,15 @@ class LoginAgent:
     def __init__(self, *, mcp_server: MCPServerStdio):
         """初始化 LoginAgent"""
         self.mcp_server = mcp_server
-        self._init_mcp_guards()
-        self._init_state()
-        self._init_paths()
-        self._init_telegram()
-        self._init_user_profile()
-        self._init_agent()
+        self.init_mcp_guards()
+        self.init_state()
+        self.init_paths()
+        self.init_user_profile()
+        super().__init__()
 
         logger.info("LoginAgent 初始化完成")
 
-    def _init_mcp_guards(self):
+    def init_mcp_guards(self):
         """安装 MCP 安全守卫"""
         existing = getattr(self.mcp_server, "process_tool_call", None)
 
@@ -124,22 +126,18 @@ class LoginAgent:
 
         self.mcp_server.process_tool_call = wrapped
 
-    def _init_state(self):
+    def init_state(self):
         """初始化内部状态"""
         self._auth_started_at: float | None = None
         self._last_action: str = "init"
         self._heartbeat_task: asyncio.Task | None = None
 
-    def _init_paths(self):
+    def init_paths(self):
         """初始化路径配置"""
         self.downloads_dir = PathConfig.DOWNLOADS_DIR
         self.downloads_dir.mkdir(parents=True, exist_ok=True)
 
-    def _init_telegram(self):
-        """初始化 Telegram 通知器"""
-        self.telegram = get_telegram_notifier()
-
-    def _init_user_profile(self):
+    def init_user_profile(self):
         """初始化用户信息"""
         self.user_profile = {
             "phone": UserProfileConfig.PHONE,
@@ -149,16 +147,20 @@ class LoginAgent:
             "email_alt": UserProfileConfig.EMAIL_ALT,
         }
 
-    def _init_agent(self):
+    def init_tools(self) -> None:
+        """初始化工具集（Telegram 通知器）"""
+        self.telegram = get_telegram_notifier()
+
+    def init_agent(self) -> None:
         """初始化认证 Agent"""
         model = get_anthropic_model()
-        system_prompt = self._build_system_prompt()
+        system_prompt = self.build_system_prompt()
 
         function_tools = [
-            Tool(self._send_telegram_message, takes_ctx=False),
-            Tool(self._send_telegram_image, takes_ctx=False),
-            Tool(self._send_current_page_screenshot, takes_ctx=False),
-            Tool(self._ask_for_user_reply, takes_ctx=False),
+            Tool(self.send_telegram_message, takes_ctx=False),
+            Tool(self.send_telegram_image, takes_ctx=False),
+            Tool(self.send_current_page_screenshot, takes_ctx=False),
+            Tool(self.ask_for_user_reply, takes_ctx=False),
         ]
 
         self.auth_agent = Agent(
@@ -198,20 +200,20 @@ class LoginAgent:
         self._auth_started_at = asyncio.get_running_loop().time()
         self._last_action = f"start:{action}"
 
-        user_prompt = self._build_user_prompt(url, action, hint)
+        user_prompt = self.build_user_prompt(url, action, hint)
 
         # 启动 Telegram 轮询
         await self.telegram.start_polling()
 
         try:
-            async with self.mcp_server:
-                await self._close_extra_tabs_keep_current()
-                result = await self.auth_agent.run(
-                    user_prompt,
-                    usage_limits=UsageLimits(request_limit=None)
-                )
-                await self.telegram.send_message("✅ LoginAgent 已完成（模型返回结果）")
-                return result.output
+            result = await self.step(user_prompt, url)
+
+            # 验证结果
+            validation = await self.validate(result)
+            if not validation.passed:
+                logger.warning("认证结果验证未通过: %s", validation.feedback)
+
+            return result
         except Exception as e:
             logger.error(f"认证失败: {e}")
             await self.telegram.send_message(f"❌ LoginAgent 出错: {type(e).__name__}: {str(e)[:200]}")
@@ -222,6 +224,54 @@ class LoginAgent:
                 url=url,
                 timestamp=datetime.now().isoformat()
             )
+
+    # ========================================================================
+    # 工作流子步骤
+    # ========================================================================
+
+    async def step(self, user_prompt: str, url: str) -> AuthResult:
+        """
+        工作流子步骤：执行认证流程
+
+        Args:
+            user_prompt: 用户提示词
+            url: 目标 URL
+
+        Returns:
+            AuthResult: 认证结果
+        """
+        async with self.mcp_server:
+            await self.close_extra_tabs_keep_current()
+            result = await self.auth_agent.run(
+                user_prompt,
+                usage_limits=UsageLimits(request_limit=None)
+            )
+            await self.telegram.send_message("✅ LoginAgent 已完成（模型返回结果）")
+            return result.output
+
+    # ========================================================================
+    # 验证方法
+    # ========================================================================
+
+    async def validate(self, output: Any) -> ValidationResult:
+        """
+        验证认证结果
+
+        Args:
+            output: AuthResult 实例
+
+        Returns:
+            ValidationResult: 验证结果
+        """
+        if not isinstance(output, AuthResult):
+            return ValidationResult.failure("输出类型错误，期望 AuthResult")
+
+        if output.success:
+            logger.info("认证成功: %s", output.message)
+            return ValidationResult.success(f"认证成功: {output.message}")
+        else:
+            logger.warning("认证失败: %s", output.message)
+            return ValidationResult.failure(f"认证失败: {output.message}")
 
     # 暴露给其他 Agent 的工具方法
     async def request_auth(
@@ -241,7 +291,7 @@ class LoginAgent:
     # 辅助方法
     # ========================================================================
 
-    async def _close_extra_tabs_keep_current(self) -> None:
+    async def close_extra_tabs_keep_current(self) -> None:
         """关闭除当前页外的所有 tab"""
         try:
             await self.mcp_server.direct_call_tool(
@@ -275,7 +325,7 @@ class LoginAgent:
             return f"{hh:02d}:{mm:02d}:{ss:02d}"
         return f"{mm:02d}:{ss:02d}"
 
-    async def _start_heartbeat(self, *, phase: str, interval_seconds: float = 8.0) -> None:
+    async def start_heartbeat(self, *, phase: str, interval_seconds: float = 8.0) -> None:
         """启动 Telegram 状态心跳"""
         if self._heartbeat_task is not None and not self._heartbeat_task.done():
             return
@@ -299,7 +349,7 @@ class LoginAgent:
 
         self._heartbeat_task = asyncio.create_task(_run())
 
-    async def _stop_heartbeat(self, final_text: str | None = None) -> None:
+    async def stop_heartbeat(self, final_text: str | None = None) -> None:
         """停止心跳"""
         if final_text:
             try:
@@ -318,7 +368,7 @@ class LoginAgent:
     # 提示词构建
     # ========================================================================
 
-    def _build_user_prompt(self, url: str, action: str, hint: str) -> str:
+    def build_user_prompt(self, url: str, action: str, hint: str) -> str:
         """构建用户提示词"""
         return f"""请帮助完成以下认证任务：
 
@@ -347,7 +397,7 @@ class LoginAgent:
 开始执行！
 """
 
-    def _build_system_prompt(self) -> str:
+    def build_system_prompt(self) -> str:
         """构建系统提示词"""
         user_info = ""
         if any(self.user_profile.values()):
@@ -430,14 +480,14 @@ ask_for_user_reply(prompt="📱 已发送验证码到 [手机号/邮箱]\\n\\n�
     # Telegram 工具方法
     # ========================================================================
 
-    async def _send_telegram_message(self, text: str) -> str:
+    async def send_telegram_message(self, text: str) -> str:
         """发送 Telegram 消息给用户"""
         result = await self.telegram.send_message(text)
         if result:
             return f"消息已发送（ID: {result}）"
         return "消息发送失败"
 
-    async def _send_telegram_image(self, image_path: str, caption: str = "") -> str:
+    async def send_telegram_image(self, image_path: str, caption: str = "") -> str:
         """发送图片给用户"""
         path = Path(image_path)
         result = await self.telegram.send_image(path, caption)
@@ -445,7 +495,7 @@ ask_for_user_reply(prompt="📱 已发送验证码到 [手机号/邮箱]\\n\\n�
             return f"图片已发送（ID: {result}）"
         return "图片发送失败"
 
-    async def _send_current_page_screenshot(self, caption: str = "") -> str:
+    async def send_current_page_screenshot(self, caption: str = "") -> str:
         """截图当前页面并通过 Telegram 发送"""
         filename = f"login-page-{datetime.now().strftime('%Y%m%d-%H%M%S')}.png"
         try:
@@ -471,7 +521,7 @@ ask_for_user_reply(prompt="📱 已发送验证码到 [手机号/邮箱]\\n\\n�
             return f"截图已发送（ID: {result}）"
         return "截图发送失败"
 
-    async def _ask_for_user_reply(self, prompt: str) -> str:
+    async def ask_for_user_reply(self, prompt: str) -> str:
         """发送提示信息并等待用户回复"""
         self._last_action = "waiting:user_reply"
         await self.telegram.send_message(prompt)

@@ -8,8 +8,8 @@
 
 核心循环：
     for iteration in range(max_iterations):
-        await _step(state)      # 执行研究
-        passed = await _validate(state)  # 验证
+        await step(state)      # 执行研究
+        passed = validate(state)  # 验证
         if passed: return       # 通过 → 返回
         state.inject_feedback() # 失败 → 注入反馈继续
 """
@@ -20,6 +20,7 @@ from typing import Any
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
+from ...core.base_agent import BaseAgent, ValidationResult
 from ...models.schemas import ResearchResult
 from ...utils.minimax_provider import get_minimax_model
 from ...utils.navigate_tracker import NavigateTracker
@@ -45,15 +46,15 @@ from ._persistence import save_iteration_result, merge_results
 logger = get_logger(__name__)
 
 
-class ResearchAgent:
+class ResearchAgent(BaseAgent):
     """
     小红书研究 Agent（ML 模型风格）
 
     类似 PyTorch nn.Module 的设计：
     - __init__: 初始化所有组件
     - forward: 主执行入口（核心循环）
-    - _step: 单次迭代
-    - _validate: 验证逻辑
+    - step: 单次迭代
+    - validate: 验证逻辑
 
     使用方式：
         agent = ResearchAgent()
@@ -66,12 +67,11 @@ class ResearchAgent:
 
     def __init__(self):
         """初始化研究 Agent"""
-        self._init_mcp_server()
-        self._init_tools()
-        self._init_generator()
-        self._init_validators()
+        self.init_mcp_server()
+        super().__init__()
+        self.init_validators()
 
-    def _init_mcp_server(self):
+    def init_mcp_server(self) -> None:
         """初始化 Playwright MCP Server"""
         self.mcp_server = MCPServerStdio(
             command='npx',
@@ -88,13 +88,13 @@ class ResearchAgent:
         )
         self.navigate_tracker = NavigateTracker(self.mcp_server)
 
-    def _init_tools(self):
+    def init_tools(self) -> None:
         """初始化工具集"""
         self.login_agent = LoginAgent(mcp_server=self.mcp_server)
         self.image_reader_agent = ImageReaderAgent()
         self.web_search_agent = WebSearchAgent()
 
-    def _init_generator(self):
+    def init_agent(self) -> None:
         """初始化研究生成 Agent"""
         model = get_minimax_model()
 
@@ -113,7 +113,7 @@ class ResearchAgent:
             system_prompt=(research_system_prompt(),),
         )
 
-    def _init_validators(self):
+    def init_validators(self) -> None:
         """初始化验证器"""
         self.depth_validator = ResearchDepthValidator(
             min_posts=ResearchConfig.MIN_POSTS_RESEARCHED
@@ -137,8 +137,8 @@ class ResearchAgent:
         执行研究任务（主入口）
 
         核心循环一目了然：
-        1. _step() 执行研究
-        2. _validate() 验证结果
+        1. step() 执行研究
+        2. validate() 验证结果
         3. 通过 → 返回
         4. 失败 → 注入反馈继续
 
@@ -151,7 +151,7 @@ class ResearchAgent:
             ResearchResult: 研究结果
         """
         # 初始化状态
-        state = self._init_state(topic, target_audience, output_dir)
+        state = self.create_state(topic, target_audience, output_dir)
 
         logger.info(f"开始研究：{topic}")
         logger.info(f"目标受众：{target_audience}")
@@ -168,27 +168,27 @@ class ResearchAgent:
                 for iteration in range(self.max_iterations):
                     with logfire.span('research:iteration', iteration=iteration + 1):
                         # Step: 执行研究
-                        await self._step(state, iteration)
+                        await self.step(state, iteration)
 
                         # Validate: 验证结果
-                        passed, feedback = await self._validate(state)
+                        validation = await self.validate(state.current_result)
 
-                        if passed:
-                            self._log_success(span, state, iteration)
-                            return self._finalize(state, iteration + 1)
+                        if validation.passed:
+                            self.log_success(span, state, iteration)
+                            return self.finalize(state, iteration + 1)
 
                         # Feedback: 注入反馈继续
-                        self._on_validation_failed(state, iteration, feedback)
+                        self.on_validation_failed(state, iteration, validation.feedback)
 
                 # 达到最大迭代次数
-                self._log_max_iterations(span, topic)
-                return self._finalize(state, self.max_iterations)
+                self.log_max_iterations(span, topic)
+                return self.finalize(state, self.max_iterations)
 
     # ========================================================================
-    # 执行方法
+    # 工作流子步骤
     # ========================================================================
 
-    def _init_state(
+    def create_state(
         self,
         topic: str,
         target_audience: str,
@@ -202,7 +202,7 @@ class ResearchAgent:
             output_dir=output_dir
         )
 
-    async def _step(self, state: ResearchState, iteration: int) -> None:
+    async def step(self, state: ResearchState, iteration: int) -> None:
         """单次研究迭代"""
         logger.info("=" * 50)
         logger.info(f"第 {iteration + 1}/{self.max_iterations} 轮研究")
@@ -224,17 +224,43 @@ class ResearchAgent:
         state.message_history = list(result.all_messages())
         state.tracked_stats = self.navigate_tracker.get_stats()
 
-        self._log_step_result(state)
+        # 保存 state 供 validate 使用
+        self._current_state = state
 
-    async def _validate(self, state: ResearchState) -> tuple[bool, str]:
+        self.log_step_result(state)
+
+    # ========================================================================
+    # 验证方法
+    # ========================================================================
+
+    async def validate(self, output: Any) -> ValidationResult:
         """
         验证研究结果
 
+        Args:
+            output: ResearchResult 实例
+
         Returns:
-            (passed, feedback): 是否通过，反馈信息
+            ValidationResult: 验证结果
         """
-        result = state.current_result
+        # 从实例属性获取 state context
+        state = self._current_state
         tracked_stats = state.tracked_stats
+
+        # 基础验证
+        if not isinstance(output, ResearchResult):
+            return ValidationResult.failure("结果类型错误")
+
+        if not output.items or len(output.items) == 0:
+            logger.warning("研究结果没有内容项")
+            return ValidationResult.failure("研究结果没有内容项")
+
+        if output.sources_count < ResearchConfig.MIN_POSTS_RESEARCHED:
+            logger.warning(
+                "来源数量不足: %d < %d",
+                output.sources_count,
+                ResearchConfig.MIN_POSTS_RESEARCHED
+            )
 
         validation_context = {
             "topic": state.topic,
@@ -246,19 +272,22 @@ class ResearchAgent:
         # 深度验证
         logger.info("验证研究深度...")
         with logfire.span('research:validate_depth'):
-            depth_result = await self.depth_validator.validate(result, validation_context)
+            depth_result = await self.depth_validator.validate(output, validation_context)
 
         # 质量验证
         logger.info("验证数据质量...")
         with logfire.span('research:validate_quality'):
-            review_result = await self.review_validator.validate(result, validation_context)
+            review_result = await self.review_validator.validate(output, validation_context)
 
         passed = depth_result.passed and review_result.passed
         feedback = combine_feedback(depth_result, review_result) if not passed else ""
 
-        return passed, feedback
+        if passed:
+            return ValidationResult.success("研究验证通过")
+        else:
+            return ValidationResult.failure(feedback)
 
-    def _finalize(self, state: ResearchState, iteration: int) -> ResearchResult:
+    def finalize(self, state: ResearchState, iteration: int) -> ResearchResult:
         """最终化结果：保存并合并所有迭代数据"""
         result = state.current_result
 
@@ -276,7 +305,7 @@ class ResearchAgent:
         # 合并所有历史 + 当前
         return merge_results(state.iteration_results + [result], state.tracked_stats)
 
-    def _on_validation_failed(
+    def on_validation_failed(
         self,
         state: ResearchState,
         iteration: int,
@@ -308,7 +337,7 @@ class ResearchAgent:
     # 日志方法
     # ========================================================================
 
-    def _log_step_result(self, state: ResearchState) -> None:
+    def log_step_result(self, state: ResearchState) -> None:
         """记录单步结果"""
         result = state.current_result
         tracked_count = state.tracked_stats["post_detail_count"]
@@ -318,7 +347,7 @@ class ResearchAgent:
         logger.info(f"  - 内容来源数量: {result.sources_count}")
         logger.info(f"  - 内容项数量: {len(result.items)}")
 
-    def _log_success(self, span, state: ResearchState, iteration: int) -> None:
+    def log_success(self, span, state: ResearchState, iteration: int) -> None:
         """记录成功日志"""
         logger.info("研究验证全部通过！")
 
@@ -331,7 +360,7 @@ class ResearchAgent:
             iterations=iteration + 1,
         )
 
-    def _log_max_iterations(self, span, topic: str) -> None:
+    def log_max_iterations(self, span, topic: str) -> None:
         """记录达到最大迭代次数"""
         logger.warning(f"达到最大迭代次数 ({self.max_iterations})，返回当前结果")
 

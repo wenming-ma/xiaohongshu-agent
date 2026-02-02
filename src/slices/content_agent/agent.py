@@ -8,13 +8,16 @@
 
 核心循环：
     for iteration in range(max_iterations):
-        await _step(state)      # 生成或修订
-        await _review(state)    # 审核
+        await step(state)      # 生成或修订
+        await review(state)    # 审核
         if passed: return       # 通过 → 返回
         state.inject_feedback() # 失败 → 注入反馈继续
 """
+from typing import Any
+
 from pydantic_ai import Agent
 
+from ...core.base_agent import BaseAgent, ValidationResult
 from ...models.schemas import ResearchResult, XHSContent, ReviewResult
 from ...utils.anthropic_provider import get_anthropic_model
 from ...utils.logger import get_logger
@@ -34,15 +37,15 @@ from ._feedback import build_review_feedback
 logger = get_logger(__name__)
 
 
-class ContentAgent:
+class ContentAgent(BaseAgent):
     """
     小红书内容创作 Agent（ML 模型风格）
 
     类似 PyTorch nn.Module 的设计：
     - __init__: 初始化所有组件
     - forward: 主执行入口（核心循环）
-    - _step: 单次生成迭代
-    - _review: 审核逻辑
+    - step: 单次生成迭代
+    - review: 审核逻辑
 
     使用方式：
         agent = ContentAgent()
@@ -59,10 +62,18 @@ class ContentAgent:
     def __init__(self, max_iterations: int = None):
         """初始化内容 Agent"""
         self.max_iterations = max_iterations or ReviewConfig.MAX_ITERATIONS
-        self._init_generator()
-        self._init_reviewer()
+        super().__init__()
 
-    def _init_generator(self):
+    def init_tools(self) -> None:
+        """初始化工具集（内容Agent不需要额外工具）"""
+        pass
+
+    def init_agent(self) -> None:
+        """初始化生成和审核 Agent"""
+        self.init_generator()
+        self.init_reviewer()
+
+    def init_generator(self) -> None:
         """初始化生成 Agent"""
         model = get_anthropic_model()
         self.generator = Agent(
@@ -74,7 +85,7 @@ class ContentAgent:
             system_prompt=(content_system_prompt(),),
         )
 
-    def _init_reviewer(self):
+    def init_reviewer(self) -> None:
         """初始化审核 Agent"""
         self.reviewer = Agent(
             model=get_anthropic_model(),
@@ -97,8 +108,8 @@ class ContentAgent:
         创作小红书内容（主入口）
 
         核心循环一目了然：
-        1. _step() 生成或修订
-        2. _review() 审核
+        1. step() 生成或修订
+        2. review() 审核
         3. 通过 → 返回
         4. 失败 → 注入反馈继续
 
@@ -117,27 +128,27 @@ class ContentAgent:
 
         for iteration in range(self.max_iterations):
             # Step: 生成或修订
-            await self._step(state, iteration)
+            await self.step(state, iteration)
 
-            # Review: 审核
-            await self._review(state)
+            # Validate: 验证（包含 AI 审核）
+            validation = await self.validate(state.current_content)
 
-            if state.current_review.passed:
-                self._log_success(state, iteration)
+            if validation.passed:
+                self.log_success(state, iteration)
                 return state.current_content
 
             # Feedback: 注入反馈继续
-            self._on_review_failed(state, iteration)
+            self.on_validation_failed(state, iteration, validation.feedback)
 
         # 达到最大迭代次数
         logger.warning(f"达到最大迭代次数 ({self.max_iterations})，返回当前内容")
         return state.current_content
 
     # ========================================================================
-    # 执行方法
+    # 工作流子步骤
     # ========================================================================
 
-    async def _step(self, state: ContentState, iteration: int) -> None:
+    async def step(self, state: ContentState, iteration: int) -> None:
         """单次生成迭代"""
         if iteration == 0:
             prompt = content_user_prompt(
@@ -155,11 +166,40 @@ class ContentAgent:
         state.current_content = run_result.output
         state.message_history.extend(run_result.new_messages())
 
-    async def _review(self, state: ContentState) -> None:
-        """审核内容（带历史记忆，只保留最近 N 轮）"""
+        # 保存 state 供 validate 使用
+        self._current_state = state
+
+    # ========================================================================
+    # 验证方法
+    # ========================================================================
+
+    async def validate(self, output: Any) -> ValidationResult:
+        """
+        验证内容输出（包含 AI 审核）
+
+        Args:
+            output: XHSContent 实例
+
+        Returns:
+            ValidationResult: 验证结果
+        """
+        if not isinstance(output, XHSContent):
+            return ValidationResult.failure("输出类型错误，期望 XHSContent")
+
+        # 基础验证
+        if not output.title or not output.body:
+            logger.warning("内容缺少标题或正文")
+            return ValidationResult.failure("内容缺少标题或正文")
+
+        if len(output.title) > 20:
+            logger.warning("标题过长: %d 字符", len(output.title))
+            return ValidationResult.failure(f"标题过长: {len(output.title)} 字符")
+
+        # AI 审核
+        state = self._current_state
         logger.info("审核内容...")
         review_prompt = content_review_user_prompt(
-            content=state.current_content.model_dump_json(indent=2),
+            content=output.model_dump_json(indent=2),
             research=state.research.model_dump_json(indent=2),
         )
 
@@ -173,23 +213,32 @@ class ContentAgent:
         state.current_review = review_result.output
         state.review_history.extend(review_result.new_messages())
 
-    def _on_review_failed(self, state: ContentState, iteration: int) -> None:
-        """审核失败时的处理"""
+        if state.current_review.passed:
+            return ValidationResult.success(f"审核通过，评分: {state.current_review.score:.1f}/100")
+        else:
+            feedback = build_review_feedback(state.current_review, state.research)
+            return ValidationResult.failure(feedback)
+
+    # ========================================================================
+    # 审核方法
+    # ========================================================================
+
+    def on_validation_failed(self, state: ContentState, iteration: int, feedback: str) -> None:
+        """验证失败时的处理"""
         review = state.current_review
 
         logger.warning(f"内容审核未通过 (第{iteration+1}轮): {review.summary}")
         for issue in review.issues:
             logger.warning(f"  - [{issue.severity}] {issue.description}")
 
-        # 构建并注入反馈
-        feedback = build_review_feedback(review, state.research)
+        # 注入反馈
         state.inject_feedback(feedback)
 
     # ========================================================================
     # 日志方法
     # ========================================================================
 
-    def _log_success(self, state: ContentState, iteration: int) -> None:
+    def log_success(self, state: ContentState, iteration: int) -> None:
         """记录成功日志"""
         logger.info(f"内容审核通过 (第{iteration+1}轮)")
         logger.info(f"  - 标题: {state.current_content.title}")

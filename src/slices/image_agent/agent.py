@@ -10,10 +10,11 @@
 """
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
 from pydantic_ai import Agent, RunContext
 
+from ...core.base_agent import BaseAgent, ValidationResult
 from ...models.schemas import (
     ImageResult,
     GeneratedImage,
@@ -47,7 +48,7 @@ from ._group_utils import (
 logger = get_logger(__name__)
 
 
-class ImageAgent:
+class ImageAgent(BaseAgent):
     """
     Gemini 图片生成 Agent（ML 模型风格）
 
@@ -66,18 +67,17 @@ class ImageAgent:
 
     def __init__(self):
         """初始化图片生成 Agent"""
-        self._init_image_client()
-        self._init_agents()
+        super().__init__()
 
-    def _init_image_client(self):
-        """初始化 Gemini 图片 API 客户端"""
+    def init_tools(self) -> None:
+        """初始化 Gemini 图片 API 客户端和质量验证器"""
         self.image_client = GeminiImageClient()
         self.image_quality_validator = ImageQualityValidator(
             max_retries=RetryConfig.MAX_RETRIES,
             initial_delay=2.0
         )
 
-    def _init_agents(self):
+    def init_agent(self) -> None:
         """初始化所有 Agent"""
         model = get_anthropic_model()
 
@@ -91,7 +91,7 @@ class ImageAgent:
 
         # 注册动态 system_prompt
         @self.prompt_generator.system_prompt
-        async def _dynamic_system_prompt(ctx: RunContext[ImageGenContext]) -> str:
+        async def dynamic_system_prompt(ctx: RunContext[ImageGenContext]) -> str:
             base_prompt = image_system_prompt()
             if ctx.deps.validation_feedback:
                 return (
@@ -176,7 +176,7 @@ class ImageAgent:
         logger.info("开始生成 %d 张配图 (%d 个内容项)", len(image_specs), item_count)
 
         # 5. 生成图片
-        generated_images = await self._generate_all_images(
+        generated_images = await self.generate_all_images(
             content=content,
             research=research,
             topic=topic,
@@ -184,17 +184,101 @@ class ImageAgent:
             image_specs=image_specs,
         )
 
-        return ImageResult(
+        result = ImageResult(
             images=generated_images,
             total_count=len(generated_images),
             generated_at=datetime.now().isoformat()
         )
 
+        # 验证结果
+        validation = await self.validate(result)
+        if not validation.passed:
+            raise RuntimeError(validation.feedback)
+
+        return result
+
+    # ========================================================================
+    # 工作流子步骤
+    # ========================================================================
+
+    async def step(
+        self,
+        content: XHSContent,
+        research: ResearchResult,
+        topic: str,
+        output_dir: Path,
+        image_spec: ImageTypeSpec,
+    ) -> GeneratedImage:
+        """
+        工作流子步骤：生成单张图片
+
+        Args:
+            content: 内容数据
+            research: 研究数据
+            topic: 主题
+            output_dir: 输出目录
+            image_spec: 图片规格
+
+        Returns:
+            GeneratedImage: 生成的图片
+        """
+        image_type = image_spec["type"]
+        image_desc = image_spec.get("desc", "")
+
+        logger.info("[%s] %s", image_type, image_desc)
+
+        gen_ctx = ImageGenContext(topic=topic, image_type=image_type)
+
+        logger.info("启动 Gemini API 图片生成...")
+        image_path, final_prompt = await self.generate_via_api(
+            output_dir=output_dir,
+            image_type=image_type,
+            topic=topic,
+            gen_ctx=gen_ctx,
+            content=content,
+            research=research,
+            image_spec=image_spec,
+        )
+
+        return GeneratedImage(
+            image_path=str(image_path),
+            prompt_used=final_prompt,
+            image_type=image_type
+        )
+
+    # ========================================================================
+    # 验证方法
+    # ========================================================================
+
+    async def validate(self, output: Any) -> ValidationResult:
+        """
+        验证图片生成结果
+
+        Args:
+            output: ImageResult 实例
+
+        Returns:
+            ValidationResult: 验证结果
+        """
+        if not isinstance(output, ImageResult):
+            return ValidationResult.failure("输出类型错误，期望 ImageResult")
+
+        if output.total_count == 0:
+            logger.warning("图片生成结果为空")
+            return ValidationResult.failure("图片生成结果为空")
+
+        if not output.images:
+            logger.warning("图片列表为空")
+            return ValidationResult.failure("图片列表为空")
+
+        logger.info("图片生成验证通过: %d 张图片", output.total_count)
+        return ValidationResult.success(f"图片生成验证通过: {output.total_count} 张图片")
+
     # ========================================================================
     # 图片生成方法
     # ========================================================================
 
-    async def _generate_all_images(
+    async def generate_all_images(
         self,
         *,
         content: XHSContent,
@@ -207,35 +291,19 @@ class ImageAgent:
         generated_images: list[GeneratedImage] = []
 
         for spec in image_specs:
-            image_type = spec["type"]
-            image_desc = spec.get("desc", "")
-
-            logger.info("[%s] %s", image_type, image_desc)
-
-            gen_ctx = ImageGenContext(topic=topic, image_type=image_type)
-
-            logger.info("启动 Gemini API 图片生成...")
-            image_path, final_prompt = await self._generate_via_api(
-                output_dir=output_dir,
-                image_type=image_type,
-                topic=topic,
-                gen_ctx=gen_ctx,
+            generated_image = await self.step(
                 content=content,
                 research=research,
+                topic=topic,
+                output_dir=output_dir,
                 image_spec=spec,
             )
-
-            generated_images.append(GeneratedImage(
-                image_path=str(image_path),
-                prompt_used=final_prompt,
-                image_type=image_type
-            ))
-
-            logger.info("%s 生成完成", image_type)
+            generated_images.append(generated_image)
+            logger.info("%s 生成完成", spec["type"])
 
         return generated_images
 
-    async def _generate_prompt(
+    async def generate_prompt(
         self,
         content: XHSContent,
         research: ResearchResult,
@@ -283,7 +351,7 @@ class ImageAgent:
         result = await self.prompt_generator.run(user_prompt, deps=gen_ctx)
         return result.output
 
-    async def _generate_via_api(
+    async def generate_via_api(
         self,
         output_dir: Path,
         image_type: str,
@@ -316,7 +384,7 @@ class ImageAgent:
         for attempt in range(max_retries):
             try:
                 # 1. 生成提示词
-                prompt = await self._generate_prompt(content, research, topic, image_spec, gen_ctx)
+                prompt = await self.generate_prompt(content, research, topic, image_spec, gen_ctx)
                 final_prompt = prompt
 
                 # 2. 通过 API 生成图片
