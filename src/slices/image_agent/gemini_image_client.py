@@ -172,9 +172,17 @@ class GeminiImageClient:
                 error_msg = str(e)
                 error_type = type(e).__name__
 
-                # 检查是否是限流错误
-                if "limited" in error_msg.lower() or "429" in error_msg or "quota" in error_msg.lower():
-                    logger.warning("API 限流: %s", error_msg)
+                # 检查是否是限流或服务过载错误（应该切换 API key）
+                is_rate_limit_or_overload = any([
+                    "limited" in error_msg.lower(),
+                    "429" in error_msg,
+                    "quota" in error_msg.lower(),
+                    "503" in error_msg,
+                    "overloaded" in error_msg.lower(),
+                    "unavailable" in error_msg.lower(),
+                ])
+                if is_rate_limit_or_overload:
+                    logger.warning("API 限流/过载: %s", error_msg)
                     # 尝试切换到下一个 API key
                     if self._switch_to_next_key():
                         continue  # 使用新 key 重试
