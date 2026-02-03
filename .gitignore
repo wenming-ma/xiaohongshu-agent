@@ -20,4 +20,4 @@ output/
 workshop/
 test_*
 .*
-*.xlsx
+*.xlsxsrc/config/settings.py

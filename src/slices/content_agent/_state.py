@@ -8,7 +8,7 @@
 """
 from dataclasses import dataclass, field
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, UserPromptPart, ToolReturnPart, ToolCallPart
 
 from ...models.schemas import ResearchResult, XHSContent, ReviewResult
 
@@ -42,19 +42,22 @@ class ContentState:
         )
 
     def get_recent_history(self, max_rounds: int) -> list[ModelMessage]:
-        """
-        获取最近 N 轮对话历史
-
-        Args:
-            max_rounds: 最大轮数（每轮 = 1个请求 + 1个响应 = 2条消息）
-
-        Returns:
-            最近的消息历史
-        """
+        """获取最近 N 轮对话历史，确保 tool_use/tool_result 配对完整"""
         max_messages = max_rounds * 2
         if len(self.message_history) <= max_messages:
             return self.message_history
-        return self.message_history[-max_messages:]
+
+        start_idx = len(self.message_history) - max_messages
+
+        # 确保不会截断 tool_use/tool_result 配对
+        while start_idx > 0:
+            msg = self.message_history[start_idx]
+            if isinstance(msg, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in msg.parts):
+                start_idx -= 1
+            else:
+                break
+
+        return self.message_history[start_idx:]
 
 
 # ============================================================================

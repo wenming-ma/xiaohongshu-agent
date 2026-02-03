@@ -168,11 +168,10 @@ def combine_feedback(depth_result, review_result) -> str:
 # ============================================================================
 
 def _find_last_positions(messages: list[ModelMessage]) -> dict[str, tuple[int, int] | None]:
-    """找到最后一个 ToolReturn、ToolCall、Thinking 的位置"""
+    """找到最后一个 ToolReturn、ToolCall 的位置"""
     positions = {
         "tool_return": None,
         "tool_call": None,
-        "thinking": None,
     }
 
     for msg_idx, msg in enumerate(messages):
@@ -185,8 +184,6 @@ def _find_last_positions(messages: list[ModelMessage]) -> dict[str, tuple[int, i
             for part_idx, part in enumerate(msg.parts):
                 if isinstance(part, ToolCallPart):
                     positions["tool_call"] = (msg_idx, part_idx)
-                elif isinstance(part, ThinkingPart):
-                    positions["thinking"] = (msg_idx, part_idx)
 
     return positions
 
@@ -194,8 +191,7 @@ def _find_last_positions(messages: list[ModelMessage]) -> dict[str, tuple[int, i
 def _simplify_tool_request(
     msg: ModelRequest,
     msg_idx: int,
-    last_positions: dict,
-    summary_text: str
+    last_positions: dict
 ) -> ModelRequest:
     """简化 ModelRequest 中的 ToolReturnPart（截断非最新的工具返回）"""
     new_parts = []
@@ -205,11 +201,10 @@ def _simplify_tool_request(
             if is_last:
                 new_parts.append(part)
             else:
-                simplified_content = _truncate_content(part.content, summary_text)
                 new_parts.append(ToolReturnPart(
                     tool_name=part.tool_name,
                     tool_call_id=part.tool_call_id,
-                    content=simplified_content,
+                    content="...",
                     timestamp=part.timestamp
                 ))
         else:
@@ -222,16 +217,13 @@ def _simplify_tool_response(
     msg: ModelResponse,
     msg_idx: int,
     last_positions: dict
-) -> ModelResponse | None:
-    """简化 ModelResponse 中的 ToolCallPart 和 ThinkingPart（截断非最新的）"""
+) -> ModelResponse:
+    """简化 ModelResponse 中的 ToolCallPart（保留所有 ThinkingPart）"""
     new_parts = []
 
     for part_idx, part in enumerate(msg.parts):
         if isinstance(part, ThinkingPart):
-            is_last = (msg_idx, part_idx) == last_positions["thinking"]
-            if is_last:
-                new_parts.append(part)
-            # 非最后的 ThinkingPart 直接跳过
+            new_parts.append(part)
 
         elif isinstance(part, ToolCallPart):
             is_last = (msg_idx, part_idx) == last_positions["tool_call"]
@@ -254,7 +246,7 @@ def _simplify_tool_response(
         else:
             new_parts.append(part)
 
-    return replace(msg, parts=new_parts) if new_parts else None
+    return replace(msg, parts=new_parts)
 
 
 def simplify_message_history(messages: list[ModelMessage]) -> list[ModelMessage]:
