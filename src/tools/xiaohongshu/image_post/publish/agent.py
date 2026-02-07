@@ -24,21 +24,10 @@ logger = get_logger(__name__)
 
 
 class PublisherAgent(BaseAgent):
-    """
-    小红书发布 Agent（ML 模型风格）
+    """小红书发布 Agent"""
 
-    类似 PyTorch nn.Module 的设计：
-    - __init__: 初始化所有组件
-    - forward: 主执行入口
-
-    使用方式：
-        agent = PublisherAgent()
-        result = await agent.forward(content, images, output_dir)
-    """
-
-    # ========================================================================
-    # 初始化
-    # ========================================================================
+    role = "发布专员"
+    goal = "自动化发布内容到小红书平台"
 
     def __init__(self):
         """初始化发布 Agent"""

@@ -47,17 +47,10 @@ logger = get_logger(__name__)
 
 
 class ImageAgent(BaseAgent):
-    """
-    Gemini 图片生成 Agent（ML 模型风格）
+    """Gemini 图片生成 Agent"""
 
-    类似 PyTorch nn.Module 的设计：
-    - __init__: 初始化所有组件
-    - forward: 主执行入口
-
-    使用方式：
-        agent = ImageAgent()
-        result = await agent.forward(content, research, topic, output_dir)
-    """
+    role = "图片设计师"
+    goal = "生成吸引眼球的小红书配图"
 
     # ========================================================================
     # 初始化

@@ -36,25 +36,11 @@ logger = get_logger(__name__)
 
 
 class ContentAgent(BaseAgent):
-    """
-    小红书内容创作 Agent（ML 模型风格）
+    """小红书内容创作 Agent"""
 
-    类似 PyTorch nn.Module 的设计：
-    - __init__: 初始化所有组件
-    - forward: 主执行入口（核心循环）
-    - step: 单次生成迭代
-    - review: 审核逻辑
+    role = "内容创作者"
+    goal = "基于研究数据创作高质量小红书图文内容"
 
-    使用方式：
-        agent = ContentAgent()
-        result = await agent.forward(research, topic)
-    """
-
-    # ========================================================================
-    # 初始化
-    # ========================================================================
-
-    # 历史轮数限制
     MAX_HISTORY_ROUNDS = 3
 
     def __init__(self, max_iterations: int = None):

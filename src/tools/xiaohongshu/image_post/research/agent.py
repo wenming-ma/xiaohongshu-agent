@@ -43,19 +43,10 @@ logger = get_logger(__name__)
 
 
 class ResearchAgent(BaseAgent):
-    """
-    小红书研究 Agent（ML 模型风格）
+    """小红书研究 Agent"""
 
-    类似 PyTorch nn.Module 的设计：
-    - __init__: 初始化所有组件
-    - forward: 主执行入口（核心循环）
-    - step: 单次迭代
-    - validate: 验证逻辑
-
-    使用方式：
-        agent = ResearchAgent()
-        result = await agent.forward(topic, target_audience)
-    """
+    role = "小红书研究员"
+    goal = "深度研究话题，收集爆款内容模式和用户偏好"
 
     # ========================================================================
     # 初始化

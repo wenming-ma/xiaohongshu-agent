@@ -61,8 +61,6 @@ class XHSImagePostTool(BasePlatformTool[XHSImagePostInput, XHSImagePostOutput]):
         logger.info("=" * 60)
         logger.info(f"主题: {input_data.topic}")
         logger.info(f"受众: {input_data.audience}")
-        logger.info(f"生成图片: {input_data.generate_image}")
-        logger.info(f"发布: {input_data.publish}")
         logger.info(f"输出目录: {output_dir}")
 
         try:
@@ -96,43 +94,36 @@ class XHSImagePostTool(BasePlatformTool[XHSImagePostInput, XHSImagePostOutput]):
             logger.info(f"内容创作完成: {content.title}")
 
             # Phase 3: 图片生成
-            image_paths: list[str] = []
-            if input_data.generate_image:
-                logger.info("-" * 40)
-                logger.info("Phase 3: 图片生成")
-                logger.info("-" * 40)
+            logger.info("-" * 40)
+            logger.info("Phase 3: 图片生成")
+            logger.info("-" * 40)
 
-                image_agent = ImageAgent()
-                image_result = await image_agent.forward(
-                    content=content,
-                    research=research,
-                    topic=input_data.topic,
-                    output_dir=output_dir,
-                )
-                save_json(output_dir / "image.json", image_result.model_dump())
+            image_agent = ImageAgent()
+            image_result = await image_agent.forward(
+                content=content,
+                research=research,
+                topic=input_data.topic,
+                output_dir=output_dir,
+            )
+            save_json(output_dir / "image.json", image_result.model_dump())
 
-                image_paths = [img.image_path for img in image_result.images]
-                logger.info(f"图片生成完成: {len(image_paths)} 张")
+            image_paths = [img.image_path for img in image_result.images]
+            logger.info(f"图片生成完成: {len(image_paths)} 张")
 
             # Phase 4: 发布
-            published = False
-            post_url = None
-            if input_data.publish and image_paths:
-                logger.info("-" * 40)
-                logger.info("Phase 4: 发布到小红书")
-                logger.info("-" * 40)
+            logger.info("-" * 40)
+            logger.info("Phase 4: 发布到小红书")
+            logger.info("-" * 40)
 
-                publisher_agent = PublisherAgent()
-                publish_result = await publisher_agent.forward(
-                    content=content,
-                    images=[Path(p) for p in image_paths],
-                    output_dir=output_dir,
-                )
-                save_json(output_dir / "publish.json", publish_result.model_dump())
+            publisher_agent = PublisherAgent()
+            publish_result = await publisher_agent.forward(
+                content=content,
+                images=[Path(p) for p in image_paths],
+                output_dir=output_dir,
+            )
+            save_json(output_dir / "publish.json", publish_result.model_dump())
 
-                published = publish_result.published
-                post_url = publish_result.post_url
-                logger.info(f"发布完成: {published}")
+            logger.info(f"发布完成: {publish_result.published}")
 
             logger.info("=" * 60)
             logger.info("XHSImagePostTool 执行完成")
@@ -145,8 +136,8 @@ class XHSImagePostTool(BasePlatformTool[XHSImagePostInput, XHSImagePostOutput]):
                 hashtags=content.hashtags,
                 image_count=len(image_paths),
                 image_paths=image_paths,
-                published=published,
-                post_url=post_url,
+                published=publish_result.published,
+                post_url=publish_result.post_url,
                 output_dir=str(output_dir),
             )
 

@@ -66,26 +66,10 @@ class AuthResult(BaseModel):
 # ============================================================================
 
 class LoginAgent(BaseAgent):
-    """
-    通用登录/注册助手（ML 模型风格）
+    """通用登录/注册助手"""
 
-    类似 PyTorch nn.Module 的设计：
-    - __init__: 初始化所有组件
-    - forward: 主执行入口
-    - step: 工作流子步骤
-    - validate: 验证输出
-
-    通过 Telegram 与用户交互，使用 Playwright MCP 操作网页，
-    完成任意网站的登录或注册。
-
-    使用方式：
-        agent = LoginAgent(mcp_server=mcp_server)
-        result = await agent.forward(url, action, hint)
-    """
-
-    # ========================================================================
-    # 初始化
-    # ========================================================================
+    role = "登录助手"
+    goal = "通过Telegram交互完成网站登录或注册"
 
     def __init__(self, *, mcp_server: MCPServerStdio):
         """初始化 LoginAgent"""
