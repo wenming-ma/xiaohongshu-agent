@@ -1,9 +1,10 @@
 from typing import Any
 
 from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, ModelRequest
 
 from .....core.base_agent import BaseAgent, ValidationResult
-from ..schemas import VideoResearchResult, VideoSource, XHSVideoContent, ContentReviewResult
+from ..schemas import VideoResearchResult, VideoSource, XHSVideoContent, ContentReviewResult, TranscriptionResult
 from .....utils.anthropic_provider import get_anthropic_model
 from .....utils.logger import get_logger
 from .....config.settings import RetryConfig, ReviewConfig
@@ -19,6 +20,16 @@ from .state import ContentState
 logger = get_logger(__name__)
 
 MAX_HISTORY_ROUNDS = 3
+
+
+def _safe_history_slice(history: list[ModelMessage], max_rounds: int) -> list[ModelMessage]:
+    if len(history) <= max_rounds * 2:
+        return history
+    boundaries = [i for i, msg in enumerate(history) if isinstance(msg, ModelRequest)]
+    if len(boundaries) <= max_rounds:
+        return history
+    start = boundaries[-max_rounds]
+    return history[start:]
 
 
 class ContentAgent(BaseAgent):
@@ -55,8 +66,9 @@ class ContentAgent(BaseAgent):
         research: VideoResearchResult,
         video_source: VideoSource,
         topic: str,
+        transcript: TranscriptionResult | None = None,
     ) -> XHSVideoContent:
-        state = ContentState(research=research, video_source=video_source, topic=topic)
+        state = ContentState(research=research, video_source=video_source, topic=topic, transcript=transcript)
 
         logger.info(f"开始生成视频内容: {topic}")
 
@@ -80,18 +92,24 @@ class ContentAgent(BaseAgent):
                 f"评论: {state.video_source.engagement.comments}, "
                 f"分享: {state.video_source.engagement.shares}"
             )
+            transcript_section = ""
+            if state.transcript and state.transcript.success and state.transcript.transcript:
+                transcript_section = (
+                    f"\n**视频转录文本**:\n{state.transcript.transcript}\n"
+                )
             prompt = content_user_prompt(
                 topic=state.topic,
                 platform=state.video_source.platform.value,
                 video_title=state.video_source.title,
                 video_description=state.video_source.description,
                 engagement=engagement_str,
+                transcript_section=transcript_section,
                 research_summary=state.research.summary,
             )
         else:
             prompt = "请根据反馈修订内容。"
 
-        recent_history = state.message_history[-MAX_HISTORY_ROUNDS * 2:]
+        recent_history = _safe_history_slice(state.message_history, MAX_HISTORY_ROUNDS)
         run_result = await self.generator.run(prompt, message_history=recent_history)
         state.current_content = run_result.output
         state.message_history.extend(run_result.new_messages())
@@ -110,7 +128,7 @@ class ContentAgent(BaseAgent):
         )
         review_result = await self.reviewer.run(
             review_prompt,
-            message_history=state.review_history[-MAX_HISTORY_ROUNDS * 2:],
+            message_history=_safe_history_slice(state.review_history, MAX_HISTORY_ROUNDS),
         )
         state.current_review = review_result.output
         state.review_history.extend(review_result.new_messages())

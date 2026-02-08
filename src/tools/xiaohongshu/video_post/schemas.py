@@ -66,6 +66,30 @@ class VideoResearchResult(BaseModel):
         return len(self.sources)
 
 
+class TranscriptionResult(BaseModel):
+    success: bool
+    transcript: str = ""
+    language: str = ""
+    duration_seconds: int = 0
+    error_message: str = ""
+
+
+class SubtitleSegment(BaseModel):
+    start: float
+    end: float
+    text: str
+
+
+class SubtitleResult(BaseModel):
+    success: bool
+    segments: List[SubtitleSegment] = []
+    language: str = ""
+    translated: bool = False
+    srt_path: str = ""
+    video_with_subs: str = ""
+    error_message: str = ""
+
+
 class DownloadResult(BaseModel):
     success: bool
     source: VideoSource
@@ -74,6 +98,8 @@ class DownloadResult(BaseModel):
     format: str = ""
     duration_seconds: int = 0
     error_message: str = ""
+    transcription: TranscriptionResult | None = None
+    subtitle: SubtitleResult | None = None
 
 
 class XHSVideoContent(BaseModel):

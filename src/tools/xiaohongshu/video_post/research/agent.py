@@ -12,6 +12,7 @@ from .....utils.logger import get_logger
 from .....config.settings import RetryConfig, PathConfig, TimeoutConfig
 
 from .validator import VideoSearchValidator
+from .quality_validator import VideoListQualityFilter
 from .prompts import research_system_prompt, research_user_prompt
 from .state import ResearchState
 
@@ -61,6 +62,7 @@ class ResearchAgent(BaseAgent):
 
     def init_validators(self) -> None:
         self.search_validator = VideoSearchValidator(min_videos=3)
+        self.quality_filter = VideoListQualityFilter(pass_score=70.0, min_quality_videos=3)
         self.max_iterations = MAX_ITERATIONS
 
     async def forward(
@@ -88,7 +90,7 @@ class ResearchAgent(BaseAgent):
 
                         validation = await self.validate(state.current_result)
                         if validation.passed:
-                            logger.info("视频搜索验证通过")
+                            logger.info("视频搜索和质量审核全部通过")
                             return state.current_result
 
                         self.on_validation_failed(state, iteration, validation.feedback)
@@ -120,13 +122,39 @@ class ResearchAgent(BaseAgent):
         if not output.sources:
             return ValidationResult.failure("未找到任何视频源")
 
+        # 基础验证：数量和URL
         validator_result = await self.search_validator.validate(
             output, {"min_videos": self.search_validator.min_videos}
         )
 
-        if validator_result.passed:
-            return ValidationResult.success("视频搜索验证通过")
-        return ValidationResult.failure(validator_result.feedback)
+        if not validator_result.passed:
+            return ValidationResult.failure(validator_result.feedback)
+
+        # 质量深度审核
+        logger.info("基础验证通过，开始质量深度审核...")
+
+        quality_videos, feedback_msgs = await self.quality_filter.filter_videos(
+            videos=output.sources,
+            topic=output.topic,
+            max_videos=len(output.sources),
+        )
+
+        if len(quality_videos) >= self.quality_filter.min_quality_videos:
+            # 更新结果，只保留高质量视频
+            output.sources = quality_videos
+            logger.info(f"质量审核通过: {len(quality_videos)} 个高质量视频")
+            return ValidationResult.success(f"找到 {len(quality_videos)} 个高质量视频")
+        else:
+            quality_feedback = (
+                f"质量审核未通过: 仅 {len(quality_videos)} 个视频通过质量检测，"
+                f"需要至少 {self.quality_filter.min_quality_videos} 个。\n\n"
+                f"建议:\n"
+                f"1. 搜索更多视频（目标: 有完整故事、有深度的内容）\n"
+                f"2. 避免随意拍摄的 TikTok 娱乐片段\n"
+                f"3. 寻找教程、经验分享、深度探店类视频\n\n"
+                f"过滤原因:\n" + "\n".join(feedback_msgs)
+            )
+            return ValidationResult.failure(quality_feedback)
 
     def on_validation_failed(self, state: ResearchState, iteration: int, feedback: str) -> None:
         logger.warning("搜索验证未通过，注入反馈继续...")

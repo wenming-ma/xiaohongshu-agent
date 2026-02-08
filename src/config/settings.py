@@ -45,7 +45,8 @@ class TimeoutConfig:
 
 class PathConfig:
     DOWNLOADS_DIR = Path('./output/playwright-downloads')
-    PROJECT_DIR = Path('posts')
+    IMAGE_PROJECT_DIR = Path('posts/image-posts')
+    VIDEO_PROJECT_DIR = Path('posts/video-posts')
     BROWSER_SESSION_SHARED = './browser-sessions/shared'
     BROWSER_SESSION_XHS = BROWSER_SESSION_SHARED
     BROWSER_SESSION_GEMINI = BROWSER_SESSION_SHARED
@@ -113,3 +114,13 @@ class UserProfileConfig:
     USERNAME = os.getenv("USER_USERNAME")
     PHONE_ALT = os.getenv("USER_PHONE_ALT")
     EMAIL_ALT = os.getenv("USER_EMAIL_ALT")
+
+
+class SubtitleConfig:
+    WHISPER_MODEL = os.getenv("WHISPER_MODEL", "large-v3")
+    WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cuda")
+    WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "float16")
+    TARGET_LANGUAGE = "zh"
+    FONT_NAME = "Microsoft YaHei"
+    FONT_SIZE = 24
+    ENABLE_TRANSLATION = True

@@ -8,6 +8,7 @@ import logfire
 from .....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import VideoSource, DownloadResult, Platform
 from .....utils.logger import get_logger
+from .....utils.subtitle_generator import WhisperTranscriber, WhisperSubtitleGenerator
 
 logger = get_logger(__name__)
 
@@ -62,6 +63,7 @@ class DownloadAgent(BaseAgent):
 
             if validation.passed:
                 logger.info(f"下载成功: {result.local_path}")
+                result = await self._transcribe(result)
                 return result
 
             logger.warning(f"下载失败: {result.error_message}")
@@ -115,6 +117,55 @@ class DownloadAgent(BaseAgent):
             return ValidationResult.failure(f"不支持的视频格式: {suffix}")
 
         return ValidationResult.success("视频文件验证通过")
+
+    async def _transcribe(self, result: DownloadResult) -> DownloadResult:
+        try:
+            transcriber = WhisperTranscriber()
+            transcription = await transcriber.transcribe(Path(result.local_path))
+            result.transcription = transcription
+            if transcription.success:
+                logger.info(f"Whisper 转录成功: {len(transcription.transcript)} 字符")
+            else:
+                logger.warning(f"Whisper 转录失败: {transcription.error_message}")
+        except Exception as e:
+            logger.warning(f"转录过程异常（不影响下载结果）: {e}")
+
+        try:
+            subtitle_gen = WhisperSubtitleGenerator()
+            video_path = Path(result.local_path)
+            output_dir = video_path.parent
+            subtitled_path = output_dir / f"{video_path.stem}_subtitled{video_path.suffix}"
+
+            subtitle_result_obj = await subtitle_gen.generate_and_burn(
+                video_path=video_path,
+                output_path=subtitled_path,
+                target_language="zh",
+            )
+
+            from ..schemas import SubtitleResult, SubtitleSegment
+            result.subtitle = SubtitleResult(
+                success=subtitle_result_obj.success,
+                segments=[
+                    SubtitleSegment(start=seg.start, end=seg.end, text=seg.text)
+                    for seg in subtitle_result_obj.segments
+                ],
+                language=subtitle_result_obj.language,
+                translated=subtitle_result_obj.translated,
+                srt_path=subtitle_result_obj.srt_path,
+                video_with_subs=subtitle_result_obj.video_with_subs,
+                error_message=subtitle_result_obj.error_message,
+            )
+
+            if subtitle_result_obj.success:
+                result.local_path = subtitle_result_obj.video_with_subs
+                logger.info(f"字幕生成并烧录成功: {subtitled_path}")
+            else:
+                logger.warning(f"字幕生成失败: {subtitle_result_obj.error_message}")
+
+        except Exception as e:
+            logger.warning(f"字幕生成过程异常（不影响下载结果）: {e}")
+
+        return result
 
     async def _download_with_ytdlp(self, source: VideoSource, output_dir: Path) -> Path:
         import yt_dlp

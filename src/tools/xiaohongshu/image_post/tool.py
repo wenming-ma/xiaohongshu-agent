@@ -8,6 +8,7 @@ from pathlib import Path
 
 from ....core.base_tool import BasePlatformTool
 from ....core.tool_registry import ToolRegistry
+from ....config.settings import PathConfig
 from ....utils.logger import get_logger
 from ....utils.file_ops import save_json
 from .schemas import XHSImagePostInput, XHSImagePostOutput
@@ -53,7 +54,7 @@ class XHSImagePostTool(BasePlatformTool[XHSImagePostInput, XHSImagePostOutput]):
 
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         safe_topic = "".join(c for c in input_data.topic if c.isalnum() or c in " -_")[:20]
-        output_dir = Path("posts") / f"{timestamp}-{safe_topic}"
+        output_dir = PathConfig.IMAGE_PROJECT_DIR / f"{timestamp}-{safe_topic}"
         output_dir.mkdir(parents=True, exist_ok=True)
 
         logger.info("=" * 60)
