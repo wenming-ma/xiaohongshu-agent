@@ -7,7 +7,7 @@ from pydantic_ai.usage import UsageLimits
 
 from .....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import XHSVideoContent, VideoPublishResult
-from .....utils.anthropic_provider import get_anthropic_model
+from .....utils.text_model_selector import get_text_model
 from .....utils.retry_handler import with_retry
 from .....utils.logger import get_logger
 from .....config.settings import RetryConfig, PathConfig, TimeoutConfig, PublishConfig
@@ -32,7 +32,7 @@ class PublisherAgent(BaseAgent):
             env={
                 'HEADLESS': 'false',
                 'BROWSER_TYPE': 'chromium',
-                'USER_DATA_DIR': PathConfig.BROWSER_SESSION_XHS
+                'USER_DATA_DIR': PathConfig.BROWSER_SESSION_SHARED
             },
             tool_prefix='playwright',
             cache_tools=True,
@@ -44,7 +44,7 @@ class PublisherAgent(BaseAgent):
         pass
 
     def init_agent(self) -> None:
-        model = get_anthropic_model()
+        model = get_text_model()
         self.publisher = Agent(
             model=model,
             output_type=VideoPublishResult,

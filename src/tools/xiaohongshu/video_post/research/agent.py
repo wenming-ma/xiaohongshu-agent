@@ -7,7 +7,7 @@ from pydantic_ai.mcp import MCPServerStdio
 
 from .....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import VideoResearchResult, Platform
-from .....utils.anthropic_provider import get_anthropic_model
+from .....utils.text_model_selector import get_text_model
 from .....utils.logger import get_logger
 from .....config.settings import RetryConfig, PathConfig, TimeoutConfig
 
@@ -40,6 +40,11 @@ class ResearchAgent(BaseAgent):
                 '--user-data-dir', PathConfig.BROWSER_SESSION_SHARED,
                 '--output-dir', str(PathConfig.DOWNLOADS_DIR),
             ],
+            env={
+                'HEADLESS': 'false',
+                'BROWSER_TYPE': 'chromium',
+                'USER_DATA_DIR': PathConfig.BROWSER_SESSION_SHARED,
+            },
             tool_prefix='playwright',
             cache_tools=True,
             max_retries=RetryConfig.MCP_RETRIES,
@@ -50,7 +55,7 @@ class ResearchAgent(BaseAgent):
         pass
 
     def init_agent(self) -> None:
-        model = get_anthropic_model()
+        model = get_text_model()
         self.generator = Agent(
             model=model,
             output_type=VideoResearchResult,

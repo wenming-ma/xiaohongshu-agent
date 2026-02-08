@@ -13,6 +13,7 @@ import logging
 from httpx import AsyncClient, HTTPStatusError, Timeout, Request, Response, AsyncBaseTransport, AsyncHTTPTransport
 from tenacity import retry_if_exception_type, stop_after_attempt, wait_exponential
 from anthropic import AsyncAnthropic
+from dotenv import load_dotenv
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.retries import RetryConfig, wait_retry_after
@@ -103,6 +104,10 @@ def get_minimax_model(
 
     if _shared_provider is None:
         api_key = os.getenv("MINIMAX_API_KEY")
+        if not api_key:
+            # Allow direct script runs (e.g. tests) that didn't initialize dotenv.
+            load_dotenv()
+            api_key = os.getenv("MINIMAX_API_KEY")
         if not api_key:
             raise ValueError("MINIMAX_API_KEY 环境变量未设置")
 

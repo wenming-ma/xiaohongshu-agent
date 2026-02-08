@@ -33,7 +33,7 @@ async def login_xiaohongshu():
     print("=" * 60)
     print("小红书登录")
     print("=" * 60)
-    print(f"Session 缓存目录: {PathConfig.BROWSER_SESSION_XHS}")
+    print(f"Session 缓存目录: {PathConfig.BROWSER_SESSION_SHARED}")
     print()
 
     playwright_server = MCPServerStdio(
@@ -42,7 +42,7 @@ async def login_xiaohongshu():
         env={
             'HEADLESS': 'false',
             'BROWSER_TYPE': 'chromium',
-            'USER_DATA_DIR': PathConfig.BROWSER_SESSION_XHS
+            'USER_DATA_DIR': PathConfig.BROWSER_SESSION_SHARED
         },
         tool_prefix='playwright',
         cache_tools=True,
@@ -61,7 +61,7 @@ async def login_xiaohongshu():
         print("-" * 40)
         if result.success:
             print(f"✅ 小红书登录成功: {result.message}")
-            print(f"Session 已缓存到: {PathConfig.BROWSER_SESSION_XHS}")
+            print(f"Session 已缓存到: {PathConfig.BROWSER_SESSION_SHARED}")
         else:
             print(f"❌ 小红书登录失败: {result.message}")
         print("-" * 40)
@@ -80,7 +80,7 @@ async def login_gemini():
     print("=" * 60)
     print("Gemini 登录")
     print("=" * 60)
-    print(f"Session 缓存目录: {PathConfig.BROWSER_SESSION_GEMINI}")
+    print(f"Session 缓存目录: {PathConfig.BROWSER_SESSION_SHARED}")
     print()
 
     playwright_server = MCPServerStdio(
@@ -89,7 +89,7 @@ async def login_gemini():
         env={
             'HEADLESS': 'false',
             'BROWSER_TYPE': 'chromium',
-            'USER_DATA_DIR': PathConfig.BROWSER_SESSION_GEMINI
+            'USER_DATA_DIR': PathConfig.BROWSER_SESSION_SHARED
         },
         tool_prefix='playwright',
         cache_tools=True,
@@ -108,7 +108,7 @@ async def login_gemini():
         print("-" * 40)
         if result.success:
             print(f"✅ Gemini 登录成功: {result.message}")
-            print(f"Session 已缓存到: {PathConfig.BROWSER_SESSION_GEMINI}")
+            print(f"Session 已缓存到: {PathConfig.BROWSER_SESSION_SHARED}")
         else:
             print(f"❌ Gemini 登录失败: {result.message}")
         print("-" * 40)

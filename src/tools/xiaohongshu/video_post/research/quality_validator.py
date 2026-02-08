@@ -3,7 +3,7 @@ from pydantic_ai import Agent
 
 from .....core.base_validator import InternalValidator, InternalValidationResult
 from ..schemas import VideoSource, Platform
-from .....utils.anthropic_provider import get_anthropic_model
+from .....utils.text_model_selector import get_text_model
 from .....utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -143,7 +143,7 @@ class VideoQualityValidator(InternalValidator):
 
     def _init_agent(self):
         if self.quality_agent is None:
-            model = get_anthropic_model()
+            model = get_text_model()
             self.quality_agent = Agent(
                 model=model,
                 system_prompt=VIDEO_QUALITY_SYSTEM_PROMPT,

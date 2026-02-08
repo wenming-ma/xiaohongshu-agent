@@ -7,8 +7,7 @@ from typing import Optional
 from faster_whisper import WhisperModel
 from pydantic_ai import Agent
 
-from ..config.settings import APIConfig
-from ..utils.anthropic_provider import get_anthropic_model
+from ..utils.text_model_selector import get_text_model
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -161,7 +160,7 @@ class WhisperSubtitleGenerator:
 
     def _init_translation_agent(self):
         if self.translation_agent is None:
-            model = get_anthropic_model()
+            model = get_text_model()
             self.translation_agent = Agent(
                 model=model,
                 system_prompt="你是专业的字幕翻译专家。将英文字幕翻译成简洁自然的中文，保持口语化风格。",

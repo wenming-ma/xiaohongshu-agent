@@ -42,7 +42,7 @@ class PublisherAgent(BaseAgent):
             env={
                 'HEADLESS': 'false',
                 'BROWSER_TYPE': 'chromium',
-                'USER_DATA_DIR': PathConfig.BROWSER_SESSION_XHS
+                'USER_DATA_DIR': PathConfig.BROWSER_SESSION_SHARED
             },
             tool_prefix='playwright',
             cache_tools=True,

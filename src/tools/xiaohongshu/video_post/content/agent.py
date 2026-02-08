@@ -5,7 +5,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest
 
 from .....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import VideoResearchResult, VideoSource, XHSVideoContent, ContentReviewResult, TranscriptionResult
-from .....utils.anthropic_provider import get_anthropic_model
+from .....utils.text_model_selector import get_text_model
 from .....utils.logger import get_logger
 from .....config.settings import RetryConfig, ReviewConfig
 
@@ -45,7 +45,7 @@ class ContentAgent(BaseAgent):
         pass
 
     def init_agent(self) -> None:
-        model = get_anthropic_model()
+        model = get_text_model()
         self.generator = Agent(
             model=model,
             output_type=XHSVideoContent,
