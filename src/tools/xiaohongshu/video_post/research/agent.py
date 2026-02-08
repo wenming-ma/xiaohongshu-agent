@@ -34,12 +34,12 @@ class ResearchAgent(BaseAgent):
     def init_mcp_server(self) -> None:
         self.mcp_server = MCPServerStdio(
             command='npx',
-            args=['-y', '@playwright/mcp@latest', '--output-dir', str(PathConfig.DOWNLOADS_DIR)],
-            env={
-                'HEADLESS': 'false',
-                'BROWSER_TYPE': 'chromium',
-                'USER_DATA_DIR': PathConfig.BROWSER_SESSION_SHARED
-            },
+            args=[
+                '-y', '@playwright/mcp@latest',
+                '--browser', 'chromium',
+                '--user-data-dir', PathConfig.BROWSER_SESSION_SHARED,
+                '--output-dir', str(PathConfig.DOWNLOADS_DIR),
+            ],
             tool_prefix='playwright',
             cache_tools=True,
             max_retries=RetryConfig.MCP_RETRIES,
@@ -79,28 +79,31 @@ class ResearchAgent(BaseAgent):
             output_dir=output_dir,
         )
 
-        logger.info(f"开始视频搜索: {topic}")
-        logger.info(f"目标平台: {[p.value for p in platforms]}")
+        logger.info(f"Starting video search: {topic}")
+        logger.info(f"Platforms: {[p.value for p in platforms]}")
+        logger.info("Initializing Playwright MCP server...")
 
         with logfire.span('video_research:workflow', topic=topic):
             async with self.mcp_server:
+                logger.info("MCP server ready, starting search...")
+
                 for iteration in range(self.max_iterations):
+                    logger.info(f"Search iteration {iteration + 1}/{self.max_iterations}")
+
                     with logfire.span('video_research:iteration', iteration=iteration + 1):
                         await self.step(state, iteration)
 
                         validation = await self.validate(state.current_result)
                         if validation.passed:
-                            logger.info("视频搜索和质量审核全部通过")
+                            logger.info("Search and quality review passed")
                             return state.current_result
 
                         self.on_validation_failed(state, iteration, validation.feedback)
 
-                logger.warning(f"达到最大迭代次数 ({self.max_iterations})")
+                logger.warning(f"Max iterations reached ({self.max_iterations})")
                 return state.current_result
 
     async def step(self, state: ResearchState, iteration: int) -> None:
-        logger.info(f"第 {iteration + 1}/{self.max_iterations} 轮搜索")
-
         if iteration == 0:
             platforms_str = ", ".join(p.value for p in state.platforms)
             prompt = research_user_prompt(
@@ -108,12 +111,15 @@ class ResearchAgent(BaseAgent):
                 platforms=platforms_str,
                 max_videos=state.max_videos,
             )
+            logger.info("AI agent searching...")
             result = await self.generator.run(prompt)
         else:
+            logger.info("AI agent continuing with feedback...")
             result = await self.generator.run(message_history=state.message_history)
 
         state.current_result = result.output
         state.message_history = list(result.all_messages())
+        logger.info(f"Found {len(state.current_result.sources)} videos")
 
     async def validate(self, output: Any) -> ValidationResult:
         if not isinstance(output, VideoResearchResult):

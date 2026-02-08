@@ -53,6 +53,7 @@ class ContentAgent(BaseAgent):
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(content_system_prompt(),),
         )
+
         self.reviewer = Agent(
             model=model,
             output_type=ContentReviewResult,
