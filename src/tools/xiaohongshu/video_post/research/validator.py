@@ -105,7 +105,7 @@ class VideoQualityValidator(InternalValidator):
 
         try:
             result = await self.quality_agent.run(prompt)
-            response_text = result.data
+            response_text = result.output
 
             score = self._extract_score(response_text)
             passed = score >= self.pass_score

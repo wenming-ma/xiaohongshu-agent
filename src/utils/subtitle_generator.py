@@ -1,8 +1,13 @@
 import asyncio
+import os
 import subprocess
 import tempfile
 from pathlib import Path
 from typing import Optional
+
+# 设置离线模式和禁用警告
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
 from faster_whisper import WhisperModel
 from pydantic_ai import Agent
@@ -12,8 +17,12 @@ from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# 项目本地缓存路径
+PROJECT_CACHE = Path(__file__).parent.parent.parent / ".cache" / "huggingface" / "hub"
+LOCAL_WHISPER_MODEL_PATH = PROJECT_CACHE / "models--Systran--faster-whisper-large-v3" / "faster-whisper-large-v3"
+
 SUBTITLE_CONFIG = {
-    "WHISPER_MODEL": "large-v3",
+    "WHISPER_MODEL": str(LOCAL_WHISPER_MODEL_PATH),  # 使用本地路径
     "WHISPER_DEVICE": "cuda",
     "WHISPER_COMPUTE_TYPE": "float16",
     "TARGET_LANGUAGE": "zh",
@@ -58,14 +67,13 @@ class WhisperTranscriber:
 
     def _load_whisper_model(self):
         if self.model is None:
-            logger.info(f"加载 Whisper {SUBTITLE_CONFIG['WHISPER_MODEL']} 模型...")
-            project_cache = Path(__file__).parent.parent.parent / ".cache" / "huggingface" / "hub"
+            logger.info(f"加载 Whisper 模型（本地离线模式）...")
 
             self.model = WhisperModel(
                 SUBTITLE_CONFIG["WHISPER_MODEL"],
                 device=SUBTITLE_CONFIG["WHISPER_DEVICE"],
                 compute_type=SUBTITLE_CONFIG["WHISPER_COMPUTE_TYPE"],
-                download_root=str(project_cache),
+                local_files_only=True,
             )
             logger.info("Whisper 模型加载完成")
 
@@ -145,16 +153,13 @@ class WhisperSubtitleGenerator:
 
     def _load_whisper_model(self):
         if self.model is None:
-            logger.info(f"加载 Faster-Whisper {SUBTITLE_CONFIG['WHISPER_MODEL']} 模型 (设备: {SUBTITLE_CONFIG['WHISPER_DEVICE']})...")
-
-            from pathlib import Path
-            project_cache = Path(__file__).parent.parent.parent / ".cache" / "huggingface" / "hub"
+            logger.info(f"加载 Faster-Whisper 模型（本地离线模式，设备: {SUBTITLE_CONFIG['WHISPER_DEVICE']})...")
 
             self.model = WhisperModel(
                 SUBTITLE_CONFIG["WHISPER_MODEL"],
                 device=SUBTITLE_CONFIG["WHISPER_DEVICE"],
                 compute_type=SUBTITLE_CONFIG["WHISPER_COMPUTE_TYPE"],
-                download_root=str(project_cache),
+                local_files_only=True,
             )
             logger.info("Faster-Whisper 模型加载完成")
 

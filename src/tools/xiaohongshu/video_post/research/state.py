@@ -14,10 +14,27 @@ class ResearchState:
     max_videos: int
     output_dir: Path | None
 
+    # Track attempted keywords for variation strategy
+    attempted_keywords: List[str] = field(default_factory=list)
+
     message_history: list[ModelMessage] = field(default_factory=list)
     current_result: VideoResearchResult | None = None
 
     def inject_feedback(self, feedback: str) -> None:
+        # Enhance feedback with exploration guidance
+        enhanced_feedback = f"""{feedback}
+
+### Next Actions Required
+1. Scroll down MORE on each platform (at least 5 more scrolls)
+2. Try these alternative keyword variations:
+   - "{self.topic} tutorial"
+   - "{self.topic} vlog"
+   - "{self.topic} review"
+3. Click into video details you haven't visited yet
+4. Check other platform sections (Trending, Explore, etc.)
+
+IMPORTANT: Use natural browsing behavior, not direct search URLs!
+"""
         self.message_history.append(
-            ModelRequest(parts=[UserPromptPart(content=feedback)])
+            ModelRequest(parts=[UserPromptPart(content=enhanced_feedback)])
         )
