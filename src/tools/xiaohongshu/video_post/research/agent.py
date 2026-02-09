@@ -11,8 +11,7 @@ from .....utils.text_model_selector import get_text_model
 from .....utils.logger import get_logger
 from .....config.settings import RetryConfig, PathConfig, TimeoutConfig
 
-from .validator import VideoSearchValidator
-from .quality_validator import VideoListQualityFilter
+from .validator import VideoSearchValidator, VideoListQualityFilter
 from .prompts import research_system_prompt, research_user_prompt
 from .state import ResearchState
 
