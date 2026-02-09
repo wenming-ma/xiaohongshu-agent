@@ -9,6 +9,11 @@ from typing import Optional
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
+# 添加 CUDA cuBLAS DLL 路径到 PATH
+_venv_nvidia_bin = Path(__file__).parent.parent.parent / ".venv" / "Lib" / "site-packages" / "nvidia" / "cublas" / "bin"
+if _venv_nvidia_bin.exists():
+    os.environ["PATH"] = str(_venv_nvidia_bin) + os.pathsep + os.environ.get("PATH", "")
+
 from faster_whisper import WhisperModel
 from pydantic_ai import Agent
 
