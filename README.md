@@ -11,30 +11,39 @@
 
 - **pydantic-ai**: AI Agent 框架
 - **Playwright MCP Server**: 浏览器自动化
-- **MiniMax + OpenRouter**: 大语言模型（文本审核用 MiniMax，图片审核用 OpenRouter 的 Gemma）
+- **Anthropic + MiniMax + OpenRouter**: 文本生成、审核与路由
+- **Gemini**: 图像生成
 
 ## 项目结构
 
 ```
 xiaohongshu-agent/
 ├── src/
-│   ├── slices/
-│   │   ├── research/            # 研究切片（Agent/Validator/Prompts/Workflow）
-│   │   ├── content/             # 内容切片（Agent/Prompts/Workflow）
-│   │   ├── image/               # 图片切片（Agent/Validator/Prompts/Workflow）
-│   │   └── publish/             # 发布切片（Agent/Prompts/Workflow）
-│   ├── infra/                   # 基础设施（登录、提示词渲染等）
-│   ├── workflows/               # 编排入口与上下文定义
-│   ├── models/
-│   │   └── schemas.py           # 数据模型
-│   ├── utils/
-│   │   └── file_ops.py          # 文件操作
-│   └── main.py                  # 主程序
+│   ├── main.py                  # CLI 入口
+│   ├── orchestrator/            # 顶层路由（MasterAgent）
+│   ├── core/                    # BaseAgent、BasePlatformTool、ToolRegistry
+│   ├── config/                  # 配置定义
+│   ├── utils/                   # 共享工具和 provider 封装
+│   └── tools/                   # 平台工具，按 平台/内容类型 组织
+│       └── xiaohongshu/
+│           ├── image_post/      # 小红书图文工具
+│           │   ├── tool.py
+│           │   ├── schemas.py
+│           │   ├── research/
+│           │   ├── content/
+│           │   ├── image/
+│           │   ├── publish/
+│           │   └── login/
+│           ├── video_post/      # 小红书视频工具
+│           └── article_post/    # 文章工具占位（未实现）
+├── scripts/                     # 辅助脚本
+├── tests/                       # 测试与集成脚本
+├── workshop/                    # 选题与实验资料
 ├── submodules/
 │   ├── pydantic-ai/             # Pydantic-AI 子模块
 │   └── playwright-mcp/          # Playwright MCP 子模块
-├── requirements.txt
 ├── pyproject.toml
+├── uv.lock
 └── setup.py
 ```
 
@@ -43,22 +52,33 @@ xiaohongshu-agent/
 ### 1. 安装依赖
 
 ```bash
-python setup.py
+uv sync
 ```
 
 ### 2. 配置 API 密钥
 
-编辑 `.env` 文件，填入你的 MiniMax / OpenRouter API Key（Claude 不可用时不需要 Anthropic Key）：
+编辑 `.env` 文件。当前图文工作流至少需要以下环境变量：
 
 ```env
+ANTHROPIC_API_KEY=your-api-key-here
 MINIMAX_API_KEY=your-api-key-here
-OPENROUTER_API_KEY=your-api-key-here
+GEMINI_API_KEY=your-api-key-here
+# 可选：控制默认文本模型提供方（视频工作流会使用）
+MODEL_PROVIDER=minimax
+```
+
+如果你使用自建或代理 Anthropic 端点，也可以额外配置：
+
+```env
+ANTHROPIC_BASE_URL=https://your-primary-endpoint
+ANTHROPIC_FALLBACK_BASE_URL=https://your-fallback-endpoint
+ANTHROPIC_FALLBACK_API_KEY=your-fallback-key
 ```
 
 ### 3. 运行工作流
 
 ```bash
-python -m src.main --topic "西安公司避坑指南" --audience "求职者"
+uv run python -m src.main --topic "西安公司避坑指南" --audience "求职者"
 ```
 
 ### 4. 查看输出
@@ -87,8 +107,8 @@ python -m src.main --topic "西安公司避坑指南" --audience "求职者"
 
 ## 优势
 
-✅ **切片化**: 以业务能力为单位组织代码  
-✅ **编排清晰**: 统一的 workflow 接口便于扩展  
+✅ **工具隔离**: 按 `平台/内容类型` 组织代码  
+✅ **阶段清晰**: 每个工具内部按研究、创作、生成、发布拆分  
 ✅ **类型安全**: Pydantic 强制类型验证  
 ✅ **易维护**: 逻辑分层明确、职责更聚焦  
 

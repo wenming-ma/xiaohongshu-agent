@@ -23,6 +23,10 @@ from src.config.settings import (
 
 关键环境变量：
 - `ANTHROPIC_API_KEY` - Claude API
+- `ANTHROPIC_BASE_URL` - Anthropic 兼容主端点（可选）
+- `ANTHROPIC_FALLBACK_BASE_URL` - Anthropic 兼容回退端点（可选）
+- `ANTHROPIC_FALLBACK_API_KEY` - 回退端点密钥（可选）
 - `MINIMAX_API_KEY` - MiniMax API
 - `GEMINI_API_KEY` - Gemini API
+- `MODEL_PROVIDER` - 默认文本模型提供方
 - `TELEGRAM_BOT_TOKEN` - Telegram 通知

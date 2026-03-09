@@ -25,9 +25,7 @@ class GeminiImageClient:
     支持多 API key 轮换，遇到速率限制自动切换
     """
 
-    FALLBACK_API_KEYS: list[str] = [
-        "your-api-key",
-    ]
+    FALLBACK_API_KEYS: list[str] = APIConfig.GEMINI_FALLBACK_API_KEYS
 
     def __init__(
         self,
@@ -39,9 +37,11 @@ class GeminiImageClient:
         self.model = model or APIConfig.GEMINI_IMAGE_MODEL
         self.image_size = image_size or APIConfig.GEMINI_IMAGE_SIZE
 
-        self.api_keys: list[str] = [primary_key] + [
+        self.api_keys: list[str] = ([primary_key] if primary_key else []) + [
             k for k in self.FALLBACK_API_KEYS if k != primary_key
         ]
+        if not self.api_keys:
+            raise ValueError("GEMINI_API_KEY 环境变量未设置")
         self.current_key_index = 0
 
         self._init_client()

@@ -18,14 +18,17 @@ def install_dependencies() -> bool:
     """安装 Python 依赖"""
     print_section("安装 Python 依赖")
 
-    print("📦 安装依赖包...")
+    print("📦 使用 uv 同步依赖...")
     try:
         subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"],
+            ["uv", "sync"],
             check=True
         )
         print("   ✅ 完成")
         return True
+    except FileNotFoundError:
+        print("   ❌ 未找到 uv，请先安装 uv: https://docs.astral.sh/uv/")
+        return False
     except subprocess.CalledProcessError as e:
         print(f"   ❌ 失败: {e}")
         return False
@@ -68,16 +71,22 @@ def setup_env_file() -> bool:
     else:
         env_content = """# Pydantic-AI 小红书内容创作工具
 
-# Anthropic API（必需）
+# Anthropic API（图文工作流必需）
 ANTHROPIC_API_KEY=your-api-key-here
 
-# 可选：自定义 API 端点
+# MiniMax API（研究流程必需）
+MINIMAX_API_KEY=your-api-key-here
+
+# Gemini API（启用配图时必需）
+GEMINI_API_KEY=your-api-key-here
+
+# 可选：自定义 Anthropic API 端点
 # ANTHROPIC_BASE_URL=https://api.anthropic.com
 """
         env_file.write_text(env_content, encoding='utf-8')
         print("✅ 已创建 .env 文件")
 
-    print("\n⚠️  请编辑 .env 文件，填入你的 ANTHROPIC_API_KEY")
+    print("\n⚠️  请编辑 .env 文件，至少填入 ANTHROPIC_API_KEY、MINIMAX_API_KEY、GEMINI_API_KEY")
     return True
 
 
@@ -103,19 +112,21 @@ def print_next_steps() -> None:
 
 1️⃣  配置 API 密钥:
    编辑 .env 文件，填入：
-   - ANTHROPIC_API_KEY (必需)
+   - ANTHROPIC_API_KEY
+   - MINIMAX_API_KEY
+   - GEMINI_API_KEY
 
 2️⃣  运行第一个工作流:
-   python -m src.main --topic "西安公司避坑指南" --audience "求职者"
+   uv run python -m src.main --topic "西安公司避坑指南" --audience "求职者"
 
 3️⃣  查看输出:
    生成的内容保存在 posts/ 目录
 
 📚 快速开始:
-   - 查看 src/main.py 了解工作流
-   - 查看 src/slices/ 了解 Agent 实现
-   - 查看 src/workflows/ 了解编排逻辑
-   - 查看 .claude/mcp.json 了解 MCP 配置
+   - 查看 src/orchestrator/master_agent.py 了解顶层路由
+   - 查看 src/tools/AGENTS.md 了解平台工具组织方式
+   - 查看 src/tools/xiaohongshu/image_post/AGENTS.md 了解图文工具内部结构
+   - 查看 src/main.py 了解 CLI 入口
 
 🎉 祝你使用愉快！
 """)

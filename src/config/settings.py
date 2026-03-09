@@ -1,5 +1,46 @@
+import json
 import os
 from pathlib import Path
+
+
+def _split_csv_env(name: str) -> list[str]:
+    value = os.getenv(name, "")
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _build_endpoint(base_url_env: str, api_key_env: str) -> dict[str, str] | None:
+    base_url = os.getenv(base_url_env)
+    api_key = os.getenv(api_key_env)
+    if not base_url and not api_key:
+        return None
+
+    endpoint = {"api_key_env": api_key_env}
+    if base_url:
+        endpoint["base_url"] = base_url
+    return endpoint
+
+
+def _load_anthropic_endpoints() -> list[dict[str, str]]:
+    raw = os.getenv("ANTHROPIC_ENDPOINTS_JSON")
+    if raw:
+        endpoints = json.loads(raw)
+        if not isinstance(endpoints, list) or not all(isinstance(item, dict) for item in endpoints):
+            raise ValueError("ANTHROPIC_ENDPOINTS_JSON 必须是对象数组")
+        return endpoints
+
+    endpoints: list[dict[str, str]] = []
+
+    primary = _build_endpoint("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY")
+    if primary:
+        endpoints.append(primary)
+    else:
+        endpoints.append({"api_key_env": "ANTHROPIC_API_KEY"})
+
+    fallback = _build_endpoint("ANTHROPIC_FALLBACK_BASE_URL", "ANTHROPIC_FALLBACK_API_KEY")
+    if fallback:
+        endpoints.append(fallback)
+
+    return endpoints
 
 
 class RetryConfig:
@@ -53,33 +94,24 @@ class PathConfig:
 
 
 class APIConfig:
-    # 端点轮换：永久错误时自动切换
-    ANTHROPIC_ENDPOINTS = [
-        {
-            "base_url": "https://api.123577.xyz/api",
-            "api_key": "cr_e0004507949e2d9b4de61875aa885ee0533a43591645ba938bbb3a69789db43e",
-        },
-        {
-            "base_url": "http://127.0.0.1:8045",
-            "api_key": "your-api-key",
-        },
-    ]
+    ANTHROPIC_ENDPOINTS = _load_anthropic_endpoints()
 
-    DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
-    CLAUDE_IMAGE_MODEL = os.getenv("CLAUDE_IMAGE_MODEL", "claude-sonnet-4-5-20250929")
-    OPENROUTER_MODEL = "minimax/minimax-m2.1"
+    DEFAULT_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
+    CLAUDE_IMAGE_MODEL = os.getenv("CLAUDE_IMAGE_MODEL", DEFAULT_MODEL)
+    OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "minimax/minimax-m2.1")
     OPENROUTER_REVIEW_MODEL = os.getenv("OPENROUTER_REVIEW_MODEL", "qwen/qwen3-vl-30b-a3b-instruct")
     MISTRAL_REVIEW_MODEL = os.getenv("MISTRAL_REVIEW_MODEL", "pixtral-12b-latest")
-    MINIMAX_MODEL = "MiniMax-M2.1"
-    MINIMAX_BASE_URL = "https://nexus.itssx.com/api/claude_code/cc_minimax21"
+    MINIMAX_MODEL = os.getenv("MINIMAX_MODEL", "MiniMax-M2.1")
+    MINIMAX_BASE_URL = os.getenv("MINIMAX_BASE_URL", "https://nexus.itssx.com/api/claude_code/cc_minimax21")
     QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen-vl-plus")
     QWEN_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
     SAGEHUB_MODEL = os.getenv("SAGEHUB_MODEL", "claude-sonnet-4-5-20250929")
-    SAGEHUB_BASE_URL = "https://api.sagehub.cc/v1"
+    SAGEHUB_BASE_URL = os.getenv("SAGEHUB_BASE_URL", "https://api.sagehub.cc/v1")
     GOOGLE_MODEL = os.getenv("GOOGLE_MODEL", "gemini-3-flash-preview")
-    MODEL_PROVIDER = "minimax"
-    GEMINI_URL = "https://gemini.google.com/app"
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "your-api-key")
+    MODEL_PROVIDER = os.getenv("MODEL_PROVIDER", "minimax")
+    GEMINI_URL = os.getenv("GEMINI_URL", "https://gemini.google.com/app")
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+    GEMINI_FALLBACK_API_KEYS = _split_csv_env("GEMINI_FALLBACK_API_KEYS")
     GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3-pro-image-preview")
     GEMINI_IMAGE_SIZE = os.getenv("GEMINI_IMAGE_SIZE", "2K")
     RETRYABLE_STATUS_CODES = (429, 500, 502, 503, 504)

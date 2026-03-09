@@ -6,8 +6,8 @@ from pydantic_ai import Agent
 
 from ..core.base_agent import BaseAgent, ValidationResult
 from ..core.tool_registry import ToolRegistry
-from ..utils.anthropic_provider import get_anthropic_model
 from ..utils.logger import get_logger
+from ..utils.text_model_selector import get_text_model
 
 logger = get_logger(__name__)
 
@@ -28,14 +28,16 @@ class MasterAgent(BaseAgent):
 
     def init_tools(self) -> None:
         """加载所有已注册的平台工具"""
-        from ..tools.xiaohongshu.image_post import XHSImagePostTool  # noqa: 触发注册
+        from ..tools.xiaohongshu import register_tools
+
+        register_tools()
 
         self.platform_tools = ToolRegistry.get_pydantic_tools()
         logger.info(f"MasterAgent 已加载 {len(self.platform_tools)} 个工具")
 
     def init_agent(self) -> None:
         """初始化 pydantic_ai Agent"""
-        model = get_anthropic_model()
+        model = get_text_model()
 
         self.agent = Agent(
             model=model,
@@ -51,7 +53,8 @@ class MasterAgent(BaseAgent):
 
         return f"""# 社交媒体内容创作助手
 
-你是一个 AI 助手，帮助用户在多个社交媒体平台上创建和发布内容。
+你是一个 AI 助手，帮助用户使用当前已注册的工具创建和发布内容。
+当前重点支持小红书图文和视频工作流。
 
 ## 可用工具
 
@@ -61,7 +64,7 @@ class MasterAgent(BaseAgent):
 
 1. **理解用户意图**：分析用户想要创建什么内容，以及在哪个平台发布
 2. **选择合适的工具**：根据以下因素选择最合适的工具：
-   - 目标平台（小红书、B站、Twitter 等）
+   - 目标平台（当前主要支持小红书）
    - 内容类型（图文帖子、视频、文章等）
    - 用户的具体需求
 3. **提取参数**：从用户输入中提取主题、受众等参数
@@ -73,16 +76,16 @@ class MasterAgent(BaseAgent):
 - 如果用户没有指定平台，请询问确认
 - 如果主题不够明确，请要求更多细节
 - 如果未指定目标受众，请询问确认
-- 对于中文平台（小红书、B站），内容将以中文生成
-- 对于国际平台，内容将以相应语言生成
+- 如果请求的工具当前未实现，请明确说明暂不支持
+- 小红书工作流默认输出中文内容
 
 ## 交互示例
 
 用户: "帮我创建一篇关于上海咖啡店的小红书帖子，目标受众是年轻白领"
 操作: 使用 xiaohongshu_image_post 工具，topic="上海咖啡店"，audience="年轻白领"
 
-用户: "我想在B站发一个Python编程教程视频"
-操作: 使用 bilibili_video 工具，topic="Python编程教程"，video_type="tutorial"
+用户: "帮我找一些 cute cats compilation 视频，整理后发成小红书视频"
+操作: 使用 xiaohongshu_video_post 工具，topic="cute cats compilation"
 """
 
     async def forward(self, user_input: str) -> MasterAgentOutput:

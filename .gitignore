@@ -18,6 +18,11 @@ nul
 # Generated outputs (e.g., Playwright downloads)
 output/
 workshop/
-test_*
-.*
-*.xlsxsrc/config/settings.py
+/test_*
+*.xlsx
+
+# Local tool state
+.cache/
+.claude/
+.cursor/
+.serena/

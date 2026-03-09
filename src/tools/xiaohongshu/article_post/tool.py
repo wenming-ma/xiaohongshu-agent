@@ -1,9 +1,7 @@
 from ....core.base_tool import BasePlatformTool
-from ....core.tool_registry import ToolRegistry
 from .schemas import XHSArticlePostInput, XHSArticlePostOutput
 
 
-@ToolRegistry.register
 class XHSArticlePostTool(BasePlatformTool[XHSArticlePostInput, XHSArticlePostOutput]):
     name = "xiaohongshu_article_post"
     description = "创建并发布小红书文章。根据主题生成长文内容并发布到小红书平台。"
