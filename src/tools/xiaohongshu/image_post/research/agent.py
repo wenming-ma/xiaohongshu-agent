@@ -8,10 +8,10 @@
 
 核心循环：
     for iteration in range(max_iterations):
-        await step(state)      # 执行研究
+        await step(state)      # 执行研究（每轮全新 prompt）
         passed = validate(state)  # 验证
         if passed: return       # 通过 → 返回
-        state.inject_feedback() # 失败 → 注入反馈继续
+        build_continuation()   # 失败 → 构建续研 prompt 继续
 """
 import logfire
 from pathlib import Path
@@ -30,10 +30,9 @@ from ..login import LoginAgent
 
 from .validator import ResearchDepthValidator, ResearchReviewValidator
 from .tools import ImageReaderAgent, WebSearchAgent
-from .prompts import research_system_prompt, research_user_prompt
+from .prompts import research_system_prompt, research_user_prompt, research_continuation_prompt
 from .state import (
     ResearchState,
-    simplify_message_history,
     build_progress_snapshot,
     combine_feedback,
 )
@@ -124,10 +123,10 @@ class ResearchAgent(BaseAgent):
         执行研究任务（主入口）
 
         核心循环一目了然：
-        1. step() 执行研究
+        1. step() 执行研究（每轮全新 prompt）
         2. validate() 验证结果
         3. 通过 → 返回
-        4. 失败 → 注入反馈继续
+        4. 失败 → 构建续研 prompt 继续
 
         Args:
             topic: 研究主题
@@ -190,25 +189,26 @@ class ResearchAgent(BaseAgent):
         )
 
     async def step(self, state: ResearchState, iteration: int) -> None:
-        """单次研究迭代"""
+        """单次研究迭代（每轮全新 prompt，不携带历史消息）"""
         logger.info("=" * 50)
         logger.info(f"第 {iteration + 1}/{self.max_iterations} 轮研究")
         logger.info("=" * 50)
 
-        # 执行生成（首轮用完整提示，后续轮次用消息历史）
+        # 构建提示词：首轮用完整研究提示，后续轮次用续研提示
         if iteration == 0:
             prompt = research_user_prompt(
                 topic=state.topic,
                 target_audience=state.target_audience,
                 min_posts=ResearchConfig.MIN_POSTS_RESEARCHED,
             )
-            result = await self.generator.run(prompt)
         else:
-            result = await self.generator.run(message_history=state.message_history)
+            prompt = state.continuation_prompt
+
+        # 每轮都用全新 prompt 启动，丢弃历史对话以节省上下文
+        result = await self.generator.run(prompt)
 
         # 更新状态
         state.current_result = result.output
-        state.message_history = list(result.all_messages())
         state.tracked_stats = self.navigate_tracker.get_stats()
 
         # 保存 state 供 validate 使用
@@ -298,8 +298,8 @@ class ResearchAgent(BaseAgent):
         iteration: int,
         feedback: str
     ) -> None:
-        """验证失败时的处理"""
-        logger.warning("验证未通过，注入反馈继续探索...")
+        """验证失败时的处理：构建下一轮的续研提示词"""
+        logger.warning("验证未通过，准备下一轮研究...")
 
         # 保存本轮结果
         saved_file = save_iteration_result(
@@ -309,16 +309,18 @@ class ResearchAgent(BaseAgent):
         state.iteration_results.append(state.current_result)
         logger.info(f"本轮数据已保存至: {saved_file}")
 
-        # 简化历史消息（在轮次之间执行，而非每次 LLM 调用前）
-        # 这样单次 run 内 agent 能看到完整历史，只在进入下一轮时才简化
-        state.message_history = simplify_message_history(state.message_history)
-
-        # 注入进度快照
+        # 构建进度快照
         snapshot = build_progress_snapshot(state, saved_file)
-        state.inject_progress_snapshot(snapshot)
 
-        # 注入反馈
-        state.inject_feedback(feedback)
+        # 构建下一轮续研提示词（全新 prompt，不注入到历史消息）
+        state.continuation_prompt = research_continuation_prompt(
+            round_number=iteration + 2,
+            progress_snapshot=snapshot,
+            validation_feedback=feedback,
+            topic=state.topic,
+            target_audience=state.target_audience,
+            min_posts=ResearchConfig.MIN_POSTS_RESEARCHED,
+        )
 
     # ========================================================================
     # 日志方法

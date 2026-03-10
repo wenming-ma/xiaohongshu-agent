@@ -32,6 +32,24 @@ if sys.platform == "win32":
 from dotenv import load_dotenv  # noqa: E402
 load_dotenv(PROJECT_ROOT / ".env")
 
+import logfire  # noqa: E402
+from src.utils.logfire_telegram_handler import TelegramSpanProcessor  # noqa: E402
+
+logfire.configure(
+    send_to_logfire='if-token-present',
+    environment='development',
+    service_name='xiaohongshu-agent-batch',
+    additional_span_processors=[
+        TelegramSpanProcessor(
+            min_interval_sec=1.0,
+            include_http_requests=False,
+            include_tool_args=True,
+            max_arg_length=200,
+        ),
+    ],
+)
+logfire.instrument_pydantic_ai()
+
 from src.tools.xiaohongshu.image_post import XHSImagePostInput, XHSImagePostTool  # noqa: E402
 from src.utils.logger import get_logger, setup_logging  # noqa: E402
 

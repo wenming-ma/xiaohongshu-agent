@@ -1,13 +1,7 @@
 """研究状态管理"""
-import json
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-
-from pydantic_ai.messages import (
-    ModelMessage, ModelRequest, ModelResponse,
-    UserPromptPart, ToolReturnPart, TextPart, ToolCallPart, ThinkingPart
-)
 
 from ..schemas import ResearchResult
 
@@ -19,24 +13,11 @@ class ResearchState:
     target_audience: str
     output_dir: Path | None
 
-    message_history: list[ModelMessage] = field(default_factory=list)
     iteration_results: list[ResearchResult] = field(default_factory=list)
     saved_files: list[str] = field(default_factory=list)
-    last_progress_snapshot: str | None = None
     tracked_stats: dict = field(default_factory=dict)
     current_result: ResearchResult | None = None
-
-    def inject_feedback(self, feedback: str) -> None:
-        self.message_history.append(
-            ModelRequest(parts=[UserPromptPart(content=feedback)])
-        )
-
-    def inject_progress_snapshot(self, snapshot: str) -> None:
-        if snapshot and snapshot != self.last_progress_snapshot:
-            self.message_history.append(
-                ModelRequest(parts=[UserPromptPart(content=snapshot)])
-            )
-            self.last_progress_snapshot = snapshot
+    continuation_prompt: str | None = None
 
 
 def build_progress_snapshot(state: ResearchState, saved_file: str, max_items: int = 10) -> str:
@@ -121,78 +102,3 @@ def combine_feedback(depth_result, review_result) -> str:
         f"- 不要在输出中重复之前轮次已收集的内容\n\n"
         f"**请基于已搜索的内容发散思维，尝试不同关键词组合和细分角度，进入更多帖子详情页收集【新的】数据。**"
     )
-
-
-def simplify_message_history(messages: list[ModelMessage]) -> list[ModelMessage]:
-    """简化消息历史，减少 token 消耗"""
-    positions = {"tool_return": None, "tool_call": None, "thinking": None}
-
-    for msg_idx, msg in enumerate(messages):
-        if isinstance(msg, ModelRequest):
-            for part_idx, part in enumerate(msg.parts):
-                if isinstance(part, ToolReturnPart):
-                    positions["tool_return"] = (msg_idx, part_idx)
-        elif isinstance(msg, ModelResponse):
-            for part_idx, part in enumerate(msg.parts):
-                if isinstance(part, ToolCallPart):
-                    positions["tool_call"] = (msg_idx, part_idx)
-                elif isinstance(part, ThinkingPart):
-                    positions["thinking"] = (msg_idx, part_idx)
-
-    simplified = []
-    for msg_idx, msg in enumerate(messages):
-        if isinstance(msg, ModelRequest):
-            new_parts = []
-            for part_idx, part in enumerate(msg.parts):
-                if isinstance(part, ToolReturnPart):
-                    is_last = (msg_idx, part_idx) == positions["tool_return"]
-                    if is_last:
-                        new_parts.append(part)
-                    else:
-                        new_parts.append(ToolReturnPart(
-                            tool_name=part.tool_name,
-                            tool_call_id=part.tool_call_id,
-                            content="...",
-                            timestamp=part.timestamp
-                        ))
-                else:
-                    new_parts.append(part)
-            simplified.append(replace(msg, parts=new_parts))
-
-        elif isinstance(msg, ModelResponse):
-            new_parts = []
-            for part_idx, part in enumerate(msg.parts):
-                if isinstance(part, ThinkingPart):
-                    if (msg_idx, part_idx) == positions["thinking"]:
-                        new_parts.append(part)
-                elif isinstance(part, ToolCallPart):
-                    is_last = (msg_idx, part_idx) == positions["tool_call"]
-                    if is_last:
-                        new_parts.append(part)
-                    else:
-                        args = part.args
-                        if isinstance(args, str):
-                            try:
-                                args = json.loads(args)
-                            except (json.JSONDecodeError, TypeError):
-                                if len(args) > 200:
-                                    args = args[:150] + "...[truncated]..."
-                        if isinstance(args, dict):
-                            args = {k: (v[:100] + f"...[{len(v)} chars truncated]..." if isinstance(v, str) and len(v) > 200 else v) for k, v in args.items()}
-                        new_parts.append(ToolCallPart(
-                            tool_name=part.tool_name,
-                            tool_call_id=part.tool_call_id,
-                            args=args
-                        ))
-                elif isinstance(part, TextPart):
-                    if len(part.content) > 500:
-                        new_parts.append(TextPart(content=part.content[:400] + "\n...[truncated]..."))
-                    else:
-                        new_parts.append(part)
-                else:
-                    new_parts.append(part)
-            simplified.append(replace(msg, parts=new_parts))
-        else:
-            simplified.append(msg)
-
-    return simplified

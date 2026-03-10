@@ -58,6 +58,35 @@ class NavigateTracker(WrapperToolset):
         """帖子详情页 URL 列表"""
         return self._post_detail_urls_storage
 
+    _REVISIT_HINT = (
+        "\n\n⚠️ 提醒：此页面已在之前访问过，其内容已被记录。"
+        "请返回搜索结果页面，向下滚动加载更多结果，或更换关键词搜索，选择未访问过的帖子继续研究。"
+    )
+
+    def _is_navigate_call(self, name: str) -> bool:
+        """判断工具调用是否是导航操作"""
+        return (
+            name == 'playwright_navigate'
+            or name == 'playwright_browser_navigate'
+            or (name.startswith('playwright_') and 'navigate' in name)
+        )
+
+    def _get_navigate_url(self, tool_args: dict[str, Any]) -> str:
+        """从工具参数中提取导航目标 URL"""
+        return (
+            tool_args.get('url')
+            or tool_args.get('target')
+            or tool_args.get('href')
+            or ''
+        )
+
+    def _append_revisit_hint(self, result: Any, url: str) -> Any:
+        """在工具返回结果中追加重复访问提示"""
+        logger.info("[追踪] 重复访问: %s", url[:80])
+        if isinstance(result, str):
+            return result + self._REVISIT_HINT
+        return str(result) + self._REVISIT_HINT
+
     async def call_tool(
         self,
         name: str,
@@ -75,25 +104,30 @@ class NavigateTracker(WrapperToolset):
             tool: 工具定义
 
         Returns:
-            工具执行结果
+            工具执行结果（重复访问时追加提示）
         """
-        # 先执行工具调用
+        # 在执行前检查是否重复访问
+        is_revisit = False
+        if self._is_navigate_call(name):
+            url = self._get_navigate_url(tool_args)
+            normalized = self._normalize_url(url)
+            if normalized and normalized in self._visited_urls:
+                is_revisit = True
+
+        # 执行工具调用
         result = await super().call_tool(name, tool_args, ctx, tool)
 
-        # 追踪 navigate 调用（兼容带前缀的工具名）
-        if name == 'playwright_navigate' or name == 'playwright_browser_navigate' or (
-            name.startswith('playwright_') and 'navigate' in name
-        ):
-            url = (
-                tool_args.get('url')
-                or tool_args.get('target')
-                or tool_args.get('href')
-                or ''
-            )
+        # 追踪 navigate 调用
+        if self._is_navigate_call(name):
+            url = self._get_navigate_url(tool_args)
             self._track_navigation(url)
 
         # 对于点击等导航操作，解析工具返回内容中的 Page URL
         self._track_from_result(result)
+
+        # 重复访问时追加提示
+        if is_revisit:
+            result = self._append_revisit_hint(result, normalized)
 
         return result
 

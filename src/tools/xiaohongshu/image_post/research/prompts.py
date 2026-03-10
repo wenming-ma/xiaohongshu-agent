@@ -27,6 +27,7 @@ RESEARCH_SYSTEM_PROMPT = """# 角色定义
 4. **具体优于泛泛**：提取具体名称、数字、地点等具体信息
 5. **数量为王**：目标收集 15+ 个内容项
 6. **标注来源**：记录信息出处便于追溯
+7. **登录处理**：如果在浏览或搜索过程中遇到登录页面或登录弹窗，**必须立即调用 `request_auth` 工具**完成登录，不要跳过或忽略需要登录的内容
 
 ## 输出格式
 严格按照 ResearchResult schema 输出结构化数据。
@@ -38,6 +39,12 @@ RESEARCH_USER_PROMPT_TEMPLATE = """## 研究任务
 **目标受众**：{target_audience}
 
 ## 研究策略（三阶段深度研究）
+
+### 登录检查（首要步骤）
+- 在开始搜索前或搜索过程中，如果页面出现登录提示、登录弹窗或跳转到登录页面
+- **必须立即调用 `request_auth` 工具**，传入当前页面 URL：
+  `request_auth(url="当前页面URL", action="login", hint="小红书研究需要登录")`
+- 等待登录完成后再继续研究
 
 ### 第一阶段：搜索与筛选
 1. 在小红书搜索主题关键词
@@ -149,6 +156,53 @@ RESEARCH_USER_PROMPT_TEMPLATE = """## 研究任务
 - [ ] 时效性主题是否选择了近期内容？
 
 开始深度研究！
+"""
+
+RESEARCH_CONTINUATION_PROMPT_TEMPLATE = """## 研究任务（第 {round_number} 轮 — 继续研究）
+
+> 这是第 {round_number} 轮研究。之前轮次的对话记录已被清除以节省上下文空间。
+> 以下提供了历史进度快照和验证反馈，请基于这些信息继续研究。
+
+---
+
+{progress_snapshot}
+
+---
+
+## 验证反馈
+
+{validation_feedback}
+
+---
+
+## 研究任务（简要回顾）
+
+**主题**：{topic}
+**目标受众**：{target_audience}
+
+### 核心要求
+- **必须进入至少 {min_posts} 个高热帖子详情页**（URL 包含 /explore/）
+- 每个帖子：阅读主帖 + **读取图片内容**（使用 read_image 工具）+ **深挖评论区**
+- 内容项目标 >= 15 个，评论区数据 >= 30%
+- 所有信息必须具体（不能是"某XX"）
+
+### 登录检查
+- 如遇登录提示，**立即调用 `request_auth` 工具**完成登录
+
+### 重要提醒
+- 进度快照中的历史数据已自动保存到文件，系统会自动合并所有轮次
+- **本轮你只需输出【新收集】的数据**，不要重复输出历史数据
+- 请使用**不同的关键词组合和细分角度**，探索新帖子
+
+### 自检清单
+- [ ] 是否进入了新的帖子详情页？
+- [ ] 是否读取了图片内容？
+- [ ] 是否深挖了评论区？
+- [ ] 内容项是否具体（非"某XX"）？
+- [ ] source_ref 是否标注？
+- [ ] sources 列表是否完整（含 url、title、domain）？
+
+开始第 {round_number} 轮研究！
 """
 
 RESEARCH_REVIEW_SYSTEM_PROMPT = """# 角色定义
@@ -269,6 +323,10 @@ def research_user_prompt(**variables: object) -> str:
     return render_template(RESEARCH_USER_PROMPT_TEMPLATE, **variables)
 
 
+def research_continuation_prompt(**variables: object) -> str:
+    return render_template(RESEARCH_CONTINUATION_PROMPT_TEMPLATE, **variables)
+
+
 def research_review_system_prompt(**variables: object) -> str:
     return render_template(RESEARCH_REVIEW_SYSTEM_PROMPT, **variables)
 
@@ -288,6 +346,7 @@ def image_reader_user_prompt(**variables: object) -> str:
 __all__ = [
     "research_system_prompt",
     "research_user_prompt",
+    "research_continuation_prompt",
     "research_review_system_prompt",
     "research_review_user_prompt",
     "image_reader_system_prompt",

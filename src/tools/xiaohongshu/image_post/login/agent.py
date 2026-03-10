@@ -264,7 +264,14 @@ class LoginAgent(BaseAgent):
         action: str = "login",
         hint: str = "",
     ) -> AuthResult:
-        """forward 的别名，用于 Tool 暴露"""
+        """请求登录或注册。当检测到页面需要登录（出现登录按钮、登录表单、未登录提示等）时，
+        必须立即调用此工具完成登录，而不是等待用户手动操作。
+
+        Args:
+            url: 需要登录的页面 URL
+            action: 操作类型，"login"（登录）或 "register"（注册）
+            hint: 可选的提示信息，例如"需要手机验证码登录"
+        """
         return await self.forward(url, action, hint)
 
     def get_tool(self) -> Tool:

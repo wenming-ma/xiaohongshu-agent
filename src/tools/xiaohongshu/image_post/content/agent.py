@@ -211,9 +211,13 @@ class ContentAgent(BaseAgent):
         """验证失败时的处理"""
         review = state.current_review
 
-        logger.warning(f"内容审核未通过 (第{iteration+1}轮): {review.summary}")
-        for issue in review.issues:
-            logger.warning(f"  - [{issue.severity}] {issue.description}")
+        if review is None:
+            # 基础验证失败（如标题过长），未执行 AI 审核
+            logger.warning(f"内容验证未通过 (第{iteration+1}轮): {feedback}")
+        else:
+            logger.warning(f"内容审核未通过 (第{iteration+1}轮): {review.summary}")
+            for issue in review.issues:
+                logger.warning(f"  - [{issue.severity}] {issue.description}")
 
         # 注入反馈
         state.inject_feedback(feedback)
