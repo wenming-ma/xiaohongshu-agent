@@ -5,7 +5,7 @@ from pydantic_ai import Agent, BinaryContent
 from .....core.base_validator import ExternalValidator
 from ..schemas import ImageQualityReview
 from .....utils.image_compression import compress_image_for_review
-from .....utils.minimax_provider import get_minimax_model
+from .....utils.google_provider import get_google_model
 from .....utils.logger import get_logger
 from .....config.settings import APIConfig
 from .prompts import image_quality_review_system_prompt, image_quality_review_user_prompt
@@ -30,7 +30,7 @@ class ImageQualityValidator(ExternalValidator):
         if self._agent is None:
             from .....config.settings import RetryConfig
             self._agent = Agent(
-                model=get_minimax_model(),
+                model=get_google_model("gemini-2.5-pro"),
                 output_type=ImageQualityReview,
                 instrument=True,
                 retries=RetryConfig.AGENT_RETRIES,
