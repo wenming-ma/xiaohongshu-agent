@@ -30,6 +30,7 @@ from .....config.settings import (
     RetryConfig,
     PathConfig,
     UserProfileConfig,
+    FeishuConfig,
 )
 from .....core.base_agent import BaseAgent, ValidationResult
 from .....utils.minimax_provider import get_minimax_model
@@ -506,8 +507,9 @@ class LoginAgent(BaseAgent):
         return "截图发送失败"
 
     async def ask_for_user_reply(self, prompt: str) -> str:
-        """发送提示信息并等待用户回复"""
+        """发送提示信息并等待用户回复（自动 @指定用户）"""
         self._last_action = "waiting:user_reply"
-        await self.notifier.send_message(prompt)
+        mention = f'<at user_id="{FeishuConfig.MENTION_USER_ID}">{FeishuConfig.MENTION_USER_NAME}</at> '
+        await self.notifier.send_message(mention + prompt)
         reply = await self.notifier.wait_for_reply()
         return reply

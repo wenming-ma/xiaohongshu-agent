@@ -17,7 +17,7 @@ if sys.platform == "win32":
 import logfire
 
 from .utils.logfire_telegram_handler import TelegramSpanProcessor
-telegram_processor = TelegramSpanProcessor(
+feishu_processor = TelegramSpanProcessor(
     min_interval_sec=1.0,
     include_http_requests=False,
     include_tool_args=True,
@@ -28,7 +28,7 @@ logfire.configure(
     send_to_logfire='if-token-present',
     environment='development',
     service_name='xiaohongshu-agent',
-    additional_span_processors=[telegram_processor],
+    additional_span_processors=[feishu_processor],
 )
 logfire.instrument_pydantic_ai()
 

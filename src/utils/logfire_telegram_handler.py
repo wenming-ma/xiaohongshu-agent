@@ -1,7 +1,7 @@
 """
-Logfire Telegram Handler
+Logfire Feishu Handler
 
-通过 OpenTelemetry SpanProcessor 将 logfire 的日志事件发送到 Telegram。
+通过 OpenTelemetry SpanProcessor 将 logfire 的日志事件发送到飞书。
 捕获：
 - 工具调用（playwright_browser_*, 等）
 - LLM 调用（chat MiniMax-M2.1, 等）
@@ -18,15 +18,15 @@ from opentelemetry.sdk.trace import ReadableSpan, Span, SpanProcessor
 from opentelemetry.trace import SpanKind
 
 from .logger import get_logger
-from .telegram_notifier import TelegramNotifier, get_telegram_notifier
-from ..config.settings import TelegramConfig
+from .feishu_notifier import FeishuNotifier, get_feishu_notifier
+from ..config.settings import FeishuConfig
 
 logger = get_logger(__name__)
 
 
 class TelegramSpanProcessor(SpanProcessor):
     """
-    自定义 SpanProcessor，将 logfire 捕获的事件发送到 Telegram
+    自定义 SpanProcessor，将 logfire 捕获的事件发送到飞书
 
     特点：
     - 过滤感兴趣的事件（工具调用、LLM 调用）
@@ -36,7 +36,7 @@ class TelegramSpanProcessor(SpanProcessor):
 
     def __init__(
         self,
-        notifier: Optional[TelegramNotifier] = None,
+        notifier: Optional[FeishuNotifier] = None,
         *,
         min_interval_sec: float = 1.0,
         include_http_requests: bool = False,
@@ -46,14 +46,14 @@ class TelegramSpanProcessor(SpanProcessor):
     ):
         """
         Args:
-            notifier: Telegram 通知器（可选，默认使用全局单例）
+            notifier: 飞书通知器（可选，默认使用全局单例）
             min_interval_sec: 最小发送间隔（秒），避免刷屏
             include_http_requests: 是否包含 HTTP 请求日志
             include_tool_args: 是否包含工具调用参数
             max_arg_length: 工具参数最大长度（超过会截断）
-            status_key: Telegram 状态消息 key
+            status_key: 状态消息 key
         """
-        self.notifier = notifier or get_telegram_notifier()
+        self.notifier = notifier or get_feishu_notifier()
         self.min_interval_sec = min_interval_sec
         self.include_http_requests = include_http_requests
         self.include_tool_args = include_tool_args
@@ -64,12 +64,10 @@ class TelegramSpanProcessor(SpanProcessor):
         self._event_loop: Optional[asyncio.AbstractEventLoop] = None
 
     def _enabled(self) -> bool:
-        """检查是否启用 Telegram 反馈"""
-        if not TelegramConfig.TOOL_FEEDBACK_ENABLED:
+        """检查是否启用飞书反馈"""
+        if self.notifier is None:
             return False
-        if self.notifier is None or getattr(self.notifier, "bot", None) is None:
-            return False
-        if not getattr(self.notifier, "chat_id", None):
+        if not getattr(self.notifier, "chat_id", None) and not FeishuConfig.CHAT_ID:
             return False
         return True
 
@@ -200,9 +198,9 @@ class TelegramSpanProcessor(SpanProcessor):
         if not self._should_emit():
             return
 
-        # 发送消息
+        # 原地刷新状态消息（编辑同一条，避免刷屏）
         self._fire_and_forget(
-            self.notifier.send_message(message)
+            self.notifier.upsert_status(message, key=self.status_key)
         )
 
     def on_end(self, span: ReadableSpan) -> None:

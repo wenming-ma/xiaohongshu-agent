@@ -145,6 +145,8 @@ class FeishuConfig:
     APP_ID = os.getenv("FEISHU_APP_ID")
     APP_SECRET = os.getenv("FEISHU_APP_SECRET")
     CHAT_ID = os.getenv("FEISHU_CHAT_ID")
+    MENTION_USER_ID = os.getenv("FEISHU_MENTION_USER_ID", "ou_4f24c411b1b8363b40a0ca18507db836")
+    MENTION_USER_NAME = os.getenv("FEISHU_MENTION_USER_NAME", "马旖旎")
 
 
 class UserProfileConfig:
