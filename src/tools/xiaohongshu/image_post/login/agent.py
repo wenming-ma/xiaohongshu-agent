@@ -230,7 +230,7 @@ class LoginAgent(BaseAgent):
                 user_prompt,
                 usage_limits=UsageLimits(request_limit=None)
             )
-            await self.notifier.send_message("✅ LoginAgent 已完成（模型返回结果）")
+            await self.notifier.send_message("✅ 登录完成")
             return result.output
 
     # ========================================================================
