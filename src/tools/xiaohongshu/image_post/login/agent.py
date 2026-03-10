@@ -1,6 +1,6 @@
 """
 登录/注册 Agent - ML 模型风格
-通过 Telegram 与用户交互完成任意网站的登录或注册
+通过飞书 Bot 与用户交互完成任意网站的登录或注册
 
 使用方式：
     agent = LoginAgent(mcp_server=mcp_server)
@@ -11,7 +11,7 @@
 - 支持短信验证码登录
 - 支持扫码登录
 - 支持自动注册新账号
-- 通过 Telegram 与用户交互获取凭证
+- 通过飞书与用户交互获取凭证
 
 其他 Agent 可以将 LoginAgent 的方法作为 Tool 调用
 """
@@ -33,7 +33,7 @@ from .....config.settings import (
 )
 from .....core.base_agent import BaseAgent, ValidationResult
 from .....utils.minimax_provider import get_minimax_model
-from .....utils.telegram_notifier import get_telegram_notifier
+from .....utils.feishu_notifier import get_feishu_notifier
 from .....utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -69,7 +69,7 @@ class LoginAgent(BaseAgent):
     """通用登录/注册助手"""
 
     role = "登录助手"
-    goal = "通过Telegram交互完成网站登录或注册"
+    goal = "通过飞书交互完成网站登录或注册"
 
     def __init__(self, *, mcp_server: MCPServerStdio):
         """初始化 LoginAgent"""
@@ -132,8 +132,8 @@ class LoginAgent(BaseAgent):
         }
 
     def init_tools(self) -> None:
-        """初始化工具集（Telegram 通知器）"""
-        self.telegram = get_telegram_notifier()
+        """初始化工具集（飞书通知器）"""
+        self.notifier = get_feishu_notifier()
 
     def init_agent(self) -> None:
         """初始化认证 Agent"""
@@ -141,8 +141,8 @@ class LoginAgent(BaseAgent):
         system_prompt = self.build_system_prompt()
 
         function_tools = [
-            Tool(self.send_telegram_message, takes_ctx=False),
-            Tool(self.send_telegram_image, takes_ctx=False),
+            Tool(self.send_message_to_user, takes_ctx=False),
+            Tool(self.send_image_to_user, takes_ctx=False),
             Tool(self.send_current_page_screenshot, takes_ctx=False),
             Tool(self.ask_for_user_reply, takes_ctx=False),
         ]
@@ -186,8 +186,8 @@ class LoginAgent(BaseAgent):
 
         user_prompt = self.build_user_prompt(url, action, hint)
 
-        # 启动 Telegram 轮询
-        await self.telegram.start_polling()
+        # 启动飞书消息轮询
+        await self.notifier.start_polling()
 
         try:
             result = await self.step(user_prompt, url)
@@ -200,7 +200,7 @@ class LoginAgent(BaseAgent):
             return result
         except Exception as e:
             logger.error(f"认证失败: {e}")
-            await self.telegram.send_message(f"❌ LoginAgent 出错: {type(e).__name__}: {str(e)[:200]}")
+            await self.notifier.send_message(f"❌ LoginAgent 出错: {type(e).__name__}: {str(e)[:200]}")
             return AuthResult(
                 success=False,
                 auth_type="manual",
@@ -230,7 +230,7 @@ class LoginAgent(BaseAgent):
                 user_prompt,
                 usage_limits=UsageLimits(request_limit=None)
             )
-            await self.telegram.send_message("✅ LoginAgent 已完成（模型返回结果）")
+            await self.notifier.send_message("✅ LoginAgent 已完成（模型返回结果）")
             return result.output
 
     # ========================================================================
@@ -317,7 +317,7 @@ class LoginAgent(BaseAgent):
         return f"{mm:02d}:{ss:02d}"
 
     async def start_heartbeat(self, *, phase: str, interval_seconds: float = 8.0) -> None:
-        """启动 Telegram 状态心跳"""
+        """启动状态心跳"""
         if self._heartbeat_task is not None and not self._heartbeat_task.done():
             return
 
@@ -330,7 +330,7 @@ class LoginAgent(BaseAgent):
                         f"最近动作：{self._last_action}\n"
                         f"（若长时间不变，可能卡在页面加载/验证码/等待你回复）"
                     )
-                    await self.telegram.send_message(status)
+                    await self.notifier.send_message(status)
                     await asyncio.sleep(interval_seconds)
                 except asyncio.CancelledError:
                     break
@@ -344,7 +344,7 @@ class LoginAgent(BaseAgent):
         """停止心跳"""
         if final_text:
             try:
-                await self.telegram.send_message(final_text)
+                await self.notifier.send_message(final_text)
             except Exception:
                 pass
         if self._heartbeat_task is not None:
@@ -410,14 +410,14 @@ class LoginAgent(BaseAgent):
 ## 核心能力
 
 1. **网页操作**：使用 Playwright 工具操作浏览器
-2. **用户交互**：通过 Telegram 与用户沟通，获取必要的凭证
+2. **用户交互**：通过飞书消息与用户沟通，获取必要的凭证
 
 ## 可用工具
 
-### Telegram 交互工具
-- `send_telegram_message(text)`: 发送消息给用户
-- `send_telegram_image(image_path, caption)`: 发送图片（如二维码）给用户
-- `send_current_page_screenshot(caption)`: 截图当前页面并通过 Telegram 发送给用户
+### 消息交互工具
+- `send_message_to_user(text)`: 发送消息给用户
+- `send_image_to_user(image_path, caption)`: 发送图片（如二维码）给用户
+- `send_current_page_screenshot(caption)`: 截图当前页面并发送给用户
 - `ask_for_user_reply(prompt)`: 发送提示信息并等待用户回复。**必须传入 prompt 参数**
 
 ### Playwright 网页操作工具
@@ -436,25 +436,18 @@ class LoginAgent(BaseAgent):
 2. 获取页面快照，分析登录方式
 3. 识别登录/注册方式（账号密码、短信验证码、扫码等）
 4. **检查并勾选协议**
-5. 如果需要用户提供信息，通过 Telegram 询问
+5. 如果需要用户提供信息，通过消息询问
 6. 使用获取到的信息完成登录/注册
 7. 验证登录是否成功
 
 ## 交互规范
 
-### 请求密码
-```
-ask_for_user_reply(prompt="🔐 检测到需要登录 [网站名称]\\n\\n已填写账号：[账号]\\n请回复密码：")
-```
+用自然、简洁的口语风格和用户沟通，不要用模板化的格式。
+所有需要等待用户输入的场景都必须调用 `ask_for_user_reply(prompt=...)`。
 
-### 请求验证码
-```
-ask_for_user_reply(prompt="📱 已发送验证码到 [手机号/邮箱]\\n\\n请回复收到的验证码：")
-```
-
-### 扫码登录
-1. 截取二维码图片并发送
-2. 使用 `ask_for_user_reply` 提示用户扫码
+- 需要密码：`ask_for_user_reply(prompt="请发一下密码")`
+- 需要验证码：`ask_for_user_reply(prompt="验证码发到你手机了，发给我")`
+- 扫码登录：先用 `send_current_page_screenshot` 发送二维码截图，再 `ask_for_user_reply(prompt="扫一下这个码，扫完回我")`，用户回复后检查页面状态即可，不要要求用户回复特定格式
 
 {user_info}
 ## 输出格式
@@ -468,26 +461,26 @@ ask_for_user_reply(prompt="📱 已发送验证码到 [手机号/邮箱]\\n\\n�
 """
 
     # ========================================================================
-    # Telegram 工具方法
+    # 消息交互工具方法
     # ========================================================================
 
-    async def send_telegram_message(self, text: str) -> str:
-        """发送 Telegram 消息给用户"""
-        result = await self.telegram.send_message(text)
+    async def send_message_to_user(self, text: str) -> str:
+        """发送消息给用户"""
+        result = await self.notifier.send_message(text)
         if result:
             return f"消息已发送（ID: {result}）"
         return "消息发送失败"
 
-    async def send_telegram_image(self, image_path: str, caption: str = "") -> str:
+    async def send_image_to_user(self, image_path: str, caption: str = "") -> str:
         """发送图片给用户"""
         path = Path(image_path)
-        result = await self.telegram.send_image(path, caption)
+        result = await self.notifier.send_image(path, caption)
         if result:
             return f"图片已发送（ID: {result}）"
         return "图片发送失败"
 
     async def send_current_page_screenshot(self, caption: str = "") -> str:
-        """截图当前页面并通过 Telegram 发送"""
+        """截图当前页面并发送给用户"""
         filename = f"login-page-{datetime.now().strftime('%Y%m%d-%H%M%S')}.png"
         try:
             await self.mcp_server.direct_call_tool(
@@ -507,7 +500,7 @@ ask_for_user_reply(prompt="📱 已发送验证码到 [手机号/邮箱]\\n\\n�
         if not screenshot_path.exists():
             return f"截图文件不存在: {screenshot_path}"
 
-        result = await self.telegram.send_image(screenshot_path, caption or "当前页面截图")
+        result = await self.notifier.send_image(screenshot_path, caption or "当前页面截图")
         if result:
             return f"截图已发送（ID: {result}）"
         return "截图发送失败"
@@ -515,6 +508,6 @@ ask_for_user_reply(prompt="📱 已发送验证码到 [手机号/邮箱]\\n\\n�
     async def ask_for_user_reply(self, prompt: str) -> str:
         """发送提示信息并等待用户回复"""
         self._last_action = "waiting:user_reply"
-        await self.telegram.send_message(prompt)
-        reply = await self.telegram.wait_for_reply()
+        await self.notifier.send_message(prompt)
+        reply = await self.notifier.wait_for_reply()
         return reply

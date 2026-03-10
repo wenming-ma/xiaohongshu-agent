@@ -126,7 +126,7 @@ class PublishConfig:
 
 
 class ResearchConfig:
-    MIN_POSTS_RESEARCHED = 17
+    MIN_POSTS_RESEARCHED = 1
     MIN_KEY_INFOS = 15
     MIN_CASES = 10
     MIN_COMMENT_DATA_RATIO = 0.4
@@ -138,6 +138,12 @@ class TelegramConfig:
     BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
     TOOL_FEEDBACK_ENABLED = os.getenv("TELEGRAM_TOOL_FEEDBACK_ENABLED", "0").lower() in ("1", "true", "yes", "on")
+
+
+class FeishuConfig:
+    APP_ID = os.getenv("FEISHU_APP_ID")
+    APP_SECRET = os.getenv("FEISHU_APP_SECRET")
+    CHAT_ID = os.getenv("FEISHU_CHAT_ID")
 
 
 class UserProfileConfig:
