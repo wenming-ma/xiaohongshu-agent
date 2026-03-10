@@ -1,5 +1,44 @@
 """Content slice prompts."""
+from typing import TYPE_CHECKING
+
 from .....utils.prompting import render_template
+
+if TYPE_CHECKING:
+    from ..schemas import GroupSpec, ResearchItem
+
+
+def build_groups_section(
+    groups: "list[GroupSpec]",
+    research_items: "list[ResearchItem]",
+) -> str:
+    """将分组结构格式化为正文创作提示词段落。
+
+    当 groups 为空时返回空字符串，模板中对应位置不显示任何内容。
+    """
+    if not groups:
+        return ""
+
+    lines = [
+        "## 内容分组结构（重要！正文必须按此分组组织）",
+        "",
+        "研究数据已按语义分为以下板块。正文中的条目必须按板块顺序排列，",
+        "同一板块的条目放在一起，不要跨板块混排。板块间用 emoji 小标题或分割线过渡。",
+        "",
+    ]
+    for i, g in enumerate(groups, 1):
+        title = g.get("title", f"板块{i}") if isinstance(g, dict) else g.title
+        indices = g.get("indices", []) if isinstance(g, dict) else g.indices
+
+        lines.append(f"### 板块{i}：{title}")
+        for idx in indices:
+            if 0 <= idx < len(research_items):
+                item = research_items[idx]
+                item_title = item.title if hasattr(item, "title") else item.get("title", "")
+                item_content = item.content if hasattr(item, "content") else item.get("content", "")
+                lines.append(f"  - {item_title}: {item_content}")
+        lines.append("")
+
+    return "\n".join(lines)
 
 CONTENT_SYSTEM_PROMPT = """# 角色定义
 你是一位小红书爆款内容创作者。
@@ -65,6 +104,8 @@ CONTENT_USER_PROMPT_TEMPLATE = """## 创作任务
 ```json
 {research_data}
 ```
+
+{groups_section}
 
 ## 爆款内容模板
 
@@ -257,6 +298,9 @@ CONTENT_REVIEW_USER_PROMPT_TEMPLATE = """## 审核任务
 - 是否有行动号召？
 - 如有问题，记录为 `format_error` (severity: info)
 
+### 5. 分组对齐检查（当提供分组结构时）
+{groups_review_section}
+
 ## 评分标准
 
 基础分 100 分，按以下规则扣分：
@@ -280,23 +324,56 @@ CONTENT_REVIEW_USER_PROMPT_TEMPLATE = """## 审核任务
 """
 
 
+def _build_groups_review_section(groups_json: str) -> str:
+    """构建分组对齐审核段落。groups_json 为空时返回跳过提示。"""
+    if not groups_json:
+        return "（未提供分组结构，跳过此项检查）"
+    return (
+        f"分组结构如下：\n```json\n{groups_json}\n```\n"
+        "- 检查正文条目是否按分组板块顺序排列（同一板块的条目应连续出现）\n"
+        "- 如条目明显跨板块混排或顺序与分组不一致，记录为 `group_mismatch` (severity: critical)"
+    )
+
+
 def content_system_prompt(**variables: object) -> str:
     return render_template(CONTENT_SYSTEM_PROMPT, **variables)
 
 
-def content_user_prompt(**variables: object) -> str:
-    return render_template(CONTENT_USER_PROMPT_TEMPLATE, **variables)
+def content_user_prompt(
+    *,
+    topic: str,
+    research_data: str,
+    groups_section: str = "",
+) -> str:
+    return render_template(
+        CONTENT_USER_PROMPT_TEMPLATE,
+        topic=topic,
+        research_data=research_data,
+        groups_section=groups_section,
+    )
 
 
 def content_review_system_prompt(**variables: object) -> str:
     return render_template(CONTENT_REVIEW_SYSTEM_PROMPT, **variables)
 
 
-def content_review_user_prompt(**variables: object) -> str:
-    return render_template(CONTENT_REVIEW_USER_PROMPT_TEMPLATE, **variables)
+def content_review_user_prompt(
+    *,
+    content: str,
+    research: str,
+    groups_json: str = "",
+) -> str:
+    groups_review_section = _build_groups_review_section(groups_json)
+    return render_template(
+        CONTENT_REVIEW_USER_PROMPT_TEMPLATE,
+        content=content,
+        research=research,
+        groups_review_section=groups_review_section,
+    )
 
 
 __all__ = [
+    "build_groups_section",
     "content_system_prompt",
     "content_user_prompt",
     "content_review_system_prompt",

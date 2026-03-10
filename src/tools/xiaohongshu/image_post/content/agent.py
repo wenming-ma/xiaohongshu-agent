@@ -13,17 +13,19 @@
         if passed: return       # 通过 → 返回
         state.inject_feedback() # 失败 → 注入反馈继续
 """
+import json
 from typing import Any
 
 from pydantic_ai import Agent
 
 from .....core.base_agent import BaseAgent, ValidationResult
-from ..schemas import ResearchResult, XHSContent, ReviewResult
+from ..schemas import ResearchResult, XHSContent, ReviewResult, GroupSpec
 from .....utils.minimax_provider import get_minimax_model
 from .....utils.logger import get_logger
 from .....config.settings import RetryConfig, ReviewConfig
 
 from .prompts import (
+    build_groups_section,
     content_system_prompt,
     content_user_prompt,
     content_review_system_prompt,
@@ -86,7 +88,8 @@ class ContentAgent(BaseAgent):
     async def forward(
         self,
         research: ResearchResult,
-        topic: str
+        topic: str,
+        groups: list[GroupSpec] | None = None,
     ) -> XHSContent:
         """
         创作小红书内容（主入口）
@@ -100,12 +103,13 @@ class ContentAgent(BaseAgent):
         Args:
             research: 研究结果
             topic: 主题
+            groups: 预计算的语义分组（可选，用于对齐正文与图片结构）
 
         Returns:
             XHSContent: 创作的内容（已通过审核或达到最大迭代次数）
         """
         # 初始化状态
-        state = ContentState(research=research, topic=topic)
+        state = ContentState(research=research, topic=topic, groups=groups)
 
         logger.info(f"开始生成内容：{topic}")
         logger.info(f"最大迭代次数：{self.max_iterations}")
@@ -135,13 +139,19 @@ class ContentAgent(BaseAgent):
     async def step(self, state: ContentState, iteration: int) -> None:
         """单次生成迭代"""
         if iteration == 0:
+            groups_section = (
+                build_groups_section(state.groups, state.research.items)
+                if state.groups
+                else ""
+            )
             prompt = content_user_prompt(
                 topic=state.topic,
                 research_data=state.research.model_dump_json(indent=2),
+                groups_section=groups_section,
             )
             logger.info("开始创作内容...")
         else:
-            prompt = "请根据反馈修订内容，确保数量一致、数据准确。"
+            prompt = "请根据反馈修订内容，确保数量一致、数据准确，并保持与分组结构一致。"
             logger.info(f"根据反馈修订内容 (第{iteration+1}轮)...")
 
         # 执行生成（只传递最近 N 轮历史）
@@ -182,9 +192,15 @@ class ContentAgent(BaseAgent):
         # AI 审核
         state = self._current_state
         logger.info("审核内容...")
+        groups_json = (
+            json.dumps(state.groups, ensure_ascii=False, indent=2)
+            if state.groups
+            else ""
+        )
         review_prompt = content_review_user_prompt(
             content=output.model_dump_json(indent=2),
             research=state.research.model_dump_json(indent=2),
+            groups_json=groups_json,
         )
 
         # 只传递最近 N 轮历史

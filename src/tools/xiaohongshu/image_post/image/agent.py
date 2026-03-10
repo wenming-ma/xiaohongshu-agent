@@ -20,12 +20,14 @@ from ..schemas import (
     GeneratedImage,
     XHSContent,
     ResearchResult,
+    GroupSpec,
     ImageGroupingPlan,
     ImageGroupingReviewResult,
     ImageTypeSpec,
     ImageGenContext,
 )
 from .....utils.minimax_provider import get_minimax_model
+from .....utils.google_provider import get_google_model
 from .....utils.logger import get_logger
 from .....config.settings import RetryConfig
 from .validator import ImageQualityValidator
@@ -102,13 +104,50 @@ class ImageAgent(BaseAgent):
             system_prompt=(image_grouping_system_prompt(),),
         )
 
-        # 分组审核 Agent（使用 Claude 模型）
+        # 分组审核 Agent（使用 Gemini 2.5 Pro，语义审核能力更强）
         self.grouping_reviewer = Agent(
-            model=get_minimax_model(),
+            model=get_google_model("gemini-2.5-pro"),
             output_type=ImageGroupingReviewResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(image_grouping_review_system_prompt(),),
+        )
+
+    # ========================================================================
+    # 语义分组（可独立调用）
+    # ========================================================================
+
+    async def compute_groups(
+        self,
+        research: ResearchResult,
+        topic: str,
+    ) -> list[GroupSpec]:
+        """
+        独立的语义分组入口，供 tool.py 在 Content 之前调用。
+
+        Args:
+            research: 研究数据
+            topic: 主题
+
+        Returns:
+            list[GroupSpec]: 分组结果
+        """
+        item_count = len(research.items)
+        if item_count == 0:
+            return []
+
+        target_groups, target_group_size, max_group_size_cap = calculate_grouping_params(item_count)
+        compact_items = build_compact_items(research.items or [])
+
+        return await run_grouping_with_review(
+            grouping_agent=self.grouping_agent,
+            grouping_reviewer=self.grouping_reviewer,
+            topic=topic,
+            research=research,
+            compact_items=compact_items,
+            target_groups=target_groups,
+            target_group_size=target_group_size,
+            max_group_size_cap=max_group_size_cap,
         )
 
     # ========================================================================
@@ -120,7 +159,8 @@ class ImageAgent(BaseAgent):
         content: XHSContent,
         research: ResearchResult,
         topic: str,
-        output_dir: Path
+        output_dir: Path,
+        groups: list[GroupSpec] | None = None,
     ) -> ImageResult:
         """
         生成配图（主入口）
@@ -128,45 +168,30 @@ class ImageAgent(BaseAgent):
         类似 PyTorch 的 forward 方法。
 
         流程：
-        1. 计算分组参数
-        2. 语义分组 + 审核循环
-        3. 构建图片类型列表
-        4. 逐张生成图片
+        1. 使用预计算分组或内部计算
+        2. 构建图片类型列表
+        3. 逐张生成图片
 
         Args:
             content: 内容数据
             research: 研究数据
             topic: 主题
             output_dir: 输出目录
+            groups: 预计算的语义分组（可选，为 None 时内部计算）
 
         Returns:
             ImageResult: 图片结果（包含多张图片）
         """
+        # 1. 使用预计算分组，或内部计算
+        if groups is None:
+            groups = await self.compute_groups(research, topic)
+
+        # 2. 构建图片生成规格
         item_count = len(research.items)
-
-        # 1. 计算分组参数
-        target_groups, target_group_size, max_group_size_cap = calculate_grouping_params(item_count)
-
-        # 2. 构造 compact_items
-        compact_items = build_compact_items(research.items or [])
-
-        # 3. 语义分组 + 审核
-        groups = await run_grouping_with_review(
-            grouping_agent=self.grouping_agent,
-            grouping_reviewer=self.grouping_reviewer,
-            topic=topic,
-            research=research,
-            compact_items=compact_items,
-            target_groups=target_groups,
-            target_group_size=target_group_size,
-            max_group_size_cap=max_group_size_cap,
-        )
-
-        # 4. 构建图片生成规格
         image_specs = groups_to_image_specs(groups)
         logger.info("开始生成 %d 张配图 (%d 个内容项)", len(image_specs), item_count)
 
-        # 5. 生成图片
+        # 3. 生成图片
         generated_images = await self.generate_all_images(
             content=content,
             research=research,

@@ -186,7 +186,7 @@ async def run_grouping_with_review(
             topic=topic,
             compact_items=compact_items,
             groups=groups,
-            target_groups=len(groups),
+            target_groups=target_groups,
             max_group_size=max_group_size_cap,
             max_groups=max_detail_images,
             message_history=history_mgr.get_review_history(),

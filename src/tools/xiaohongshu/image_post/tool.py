@@ -22,9 +22,10 @@ class XHSImagePostTool(BasePlatformTool[XHSImagePostInput, XHSImagePostOutput]):
 
     封装完整的工作流：
     1. 研究主题（ResearchAgent）
-    2. 创作内容（ContentAgent）
-    3. 生成图片（ImageAgent）
-    4. 发布帖子（PublisherAgent）
+    2. 语义分组（ImageAgent.compute_groups）
+    3. 创作内容（ContentAgent，按分组结构组织正文）
+    4. 生成图片（ImageAgent，使用预计算分组）
+    5. 发布帖子（PublisherAgent）
     """
 
     name = "xiaohongshu_image_post"
@@ -80,40 +81,55 @@ class XHSImagePostTool(BasePlatformTool[XHSImagePostInput, XHSImagePostOutput]):
 
             logger.info(f"研究完成: {len(research.items)} 个内容项")
 
-            # Phase 2: 内容创作
+            # Phase 2: 语义分组（在内容创作之前，确保正文与图片共享同一分组结构）
             logger.info("-" * 40)
-            logger.info("Phase 2: 内容创作")
+            logger.info("Phase 2: 语义分组")
+            logger.info("-" * 40)
+
+            image_agent = ImageAgent()
+            groups = await image_agent.compute_groups(
+                research=research,
+                topic=input_data.topic,
+            )
+            save_json(output_dir / "groups.json", groups)
+
+            logger.info(f"语义分组完成: {len(groups)} 个分组")
+
+            # Phase 3: 内容创作（传入分组结构，正文按分组顺序组织）
+            logger.info("-" * 40)
+            logger.info("Phase 3: 内容创作")
             logger.info("-" * 40)
 
             content_agent = ContentAgent()
             content = await content_agent.forward(
                 research=research,
                 topic=input_data.topic,
+                groups=groups,
             )
             save_json(output_dir / "content.json", content.model_dump())
 
             logger.info(f"内容创作完成: {content.title}")
 
-            # Phase 3: 图片生成
+            # Phase 4: 图片生成（使用预计算分组，跳过内部分组）
             logger.info("-" * 40)
-            logger.info("Phase 3: 图片生成")
+            logger.info("Phase 4: 图片生成")
             logger.info("-" * 40)
 
-            image_agent = ImageAgent()
             image_result = await image_agent.forward(
                 content=content,
                 research=research,
                 topic=input_data.topic,
                 output_dir=output_dir,
+                groups=groups,
             )
             save_json(output_dir / "image.json", image_result.model_dump())
 
             image_paths = [img.image_path for img in image_result.images]
             logger.info(f"图片生成完成: {len(image_paths)} 张")
 
-            # Phase 4: 发布
+            # Phase 5: 发布
             logger.info("-" * 40)
-            logger.info("Phase 4: 发布到小红书")
+            logger.info("Phase 5: 发布到小红书")
             logger.info("-" * 40)
 
             publisher_agent = PublisherAgent()

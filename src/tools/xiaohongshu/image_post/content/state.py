@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart, ToolReturnPart
 
-from ..schemas import ResearchResult, XHSContent, ReviewResult
+from ..schemas import ResearchResult, XHSContent, ReviewResult, GroupSpec
 
 
 @dataclass
@@ -11,6 +11,8 @@ class ContentState:
     """内容创作运行时状态"""
     research: ResearchResult
     topic: str
+
+    groups: list[GroupSpec] | None = None
 
     message_history: list[ModelMessage] = field(default_factory=list)
     review_history: list[ModelMessage] = field(default_factory=list)
