@@ -25,7 +25,7 @@ from ..schemas import (
     ImageTypeSpec,
     ImageGenContext,
 )
-from .....utils.anthropic_provider import get_anthropic_model
+from .....utils.minimax_provider import get_minimax_model
 from .....utils.logger import get_logger
 from .....config.settings import RetryConfig
 from .validator import ImageQualityValidator
@@ -70,7 +70,7 @@ class ImageAgent(BaseAgent):
 
     def init_agent(self) -> None:
         """初始化所有 Agent"""
-        model = get_anthropic_model()
+        model = get_minimax_model()
 
         # 提示词生成 Agent
         self.prompt_generator = Agent(
@@ -95,7 +95,7 @@ class ImageAgent(BaseAgent):
 
         # 语义分组 Agent（使用 Claude 模型）
         self.grouping_agent = Agent(
-            model=get_anthropic_model(),
+            model=get_minimax_model(),
             output_type=ImageGroupingPlan,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
@@ -104,7 +104,7 @@ class ImageAgent(BaseAgent):
 
         # 分组审核 Agent（使用 Claude 模型）
         self.grouping_reviewer = Agent(
-            model=get_anthropic_model(),
+            model=get_minimax_model(),
             output_type=ImageGroupingReviewResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,

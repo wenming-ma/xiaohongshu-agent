@@ -32,7 +32,7 @@ from .....config.settings import (
     UserProfileConfig,
 )
 from .....core.base_agent import BaseAgent, ValidationResult
-from .....utils.anthropic_provider import get_anthropic_model
+from .....utils.minimax_provider import get_minimax_model
 from .....utils.telegram_notifier import get_telegram_notifier
 from .....utils.logger import get_logger
 
@@ -137,7 +137,7 @@ class LoginAgent(BaseAgent):
 
     def init_agent(self) -> None:
         """初始化认证 Agent"""
-        model = get_anthropic_model()
+        model = get_minimax_model()
         system_prompt = self.build_system_prompt()
 
         function_tools = [

@@ -24,8 +24,8 @@ from ..schemas import ImageReadResult
 from .....utils.image_compression import compress_image_for_review
 from .....utils.logger import get_logger
 from .....config.settings import RetryConfig, APIConfig
-from .....utils.anthropic_provider import get_anthropic_model
 from .....utils.minimax_provider import get_minimax_model
+from .....utils.google_provider import get_google_model
 from .prompts import image_reader_system_prompt, image_reader_user_prompt
 
 logger = get_logger(__name__)
@@ -40,7 +40,7 @@ class ImageReaderAgent:
 
     def __init__(self):
         self._agent = Agent(
-            model=get_anthropic_model(APIConfig.CLAUDE_IMAGE_MODEL),
+            model=get_google_model(),
             output_type=ImageReadResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,

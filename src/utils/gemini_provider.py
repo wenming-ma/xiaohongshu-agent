@@ -61,21 +61,21 @@ class GeminiImageClient:
         self.client = genai.Client(api_key=current_key, http_options=http_options)
         logger.debug("使用 API key #%d", self.current_key_index + 1)
 
-    def _switch_to_next_key(self) -> bool:
-        """切换到下一个 API key"""
-        if self.current_key_index < len(self.api_keys) - 1:
-            self.current_key_index += 1
-            self._init_client()
-            logger.info("切换到备用 API key #%d", self.current_key_index + 1)
-            return True
-        return False
+    _MAX_RETRIES = 12  # 总重试次数，每次失败循环轮换 key
+
+    def _rotate_key(self) -> None:
+        """循环轮换到下一个 API key"""
+        old = self.current_key_index
+        self.current_key_index = (self.current_key_index + 1) % len(self.api_keys)
+        self._init_client()
+        logger.info("Gemini key 轮换: #%d -> #%d", old + 1, self.current_key_index + 1)
 
     async def generate_image(
         self,
         prompt: str,
         output_path: Path,
         image_size: Optional[str] = None,
-        max_retries: int = RetryConfig.MAX_RETRIES,
+        max_retries: int = _MAX_RETRIES,
     ) -> Path:
         """
         生成图片并保存到指定路径
@@ -149,47 +149,31 @@ class GeminiImageClient:
                 error_msg = str(e)
                 error_type = type(e).__name__
 
-                is_rate_limit_or_overload = any([
+                is_retryable = any([
                     "limited" in error_msg.lower(),
                     "429" in error_msg,
                     "quota" in error_msg.lower(),
                     "503" in error_msg,
                     "overloaded" in error_msg.lower(),
                     "unavailable" in error_msg.lower(),
-                ])
-                if is_rate_limit_or_overload:
-                    logger.warning("API 限流/过载: %s", error_msg)
-                    if self._switch_to_next_key():
-                        continue
-                    else:
-                        logger.error("所有 API key 都已用尽")
-                        raise
-
-                is_network_error = any([
                     isinstance(e, (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout)),
                     "disconnected" in error_msg.lower(),
                     "connection" in error_msg.lower(),
                     "timeout" in error_msg.lower(),
-                    "RemoteProtocolError" in error_type,
                 ])
 
-                if is_network_error:
-                    logger.warning(
-                        "网络错误 (尝试 %d/%d): [%s] %s",
-                        attempt + 1, max_retries, error_type, error_msg
-                    )
-                else:
-                    logger.warning(
-                        "图片生成失败 (尝试 %d/%d): [%s] %s",
-                        attempt + 1, max_retries, error_type, error_msg
-                    )
+                if not is_retryable:
+                    raise
+
+                logger.warning(
+                    "图片生成失败 (%d/%d): [%s] %s",
+                    attempt + 1, max_retries, error_type, error_msg
+                )
+                self._rotate_key()
 
                 if attempt < max_retries - 1:
                     import asyncio
-                    if is_network_error:
-                        delay = min(5 * (attempt + 1), 60)
-                    else:
-                        delay = min(2 ** attempt, 30)
+                    delay = min(5 * (attempt + 1), 60)
                     logger.info("等待 %d 秒后重试...", delay)
                     await asyncio.sleep(delay)
 

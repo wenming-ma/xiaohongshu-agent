@@ -5,7 +5,7 @@ from pydantic_ai import Agent
 from .....core.base_validator import InternalValidator, InternalValidationResult
 from ..schemas import ResearchResult, ReviewResult
 from .....config.settings import RetryConfig
-from .....utils.anthropic_provider import get_anthropic_model
+from .....utils.minimax_provider import get_minimax_model
 from .....utils.logger import get_logger
 from .prompts import research_review_system_prompt, research_review_user_prompt
 
@@ -83,7 +83,7 @@ class ResearchReviewValidator(InternalValidator):
     def reviewer(self) -> Agent:
         if self._reviewer is None:
             self._reviewer = Agent(
-                model=get_anthropic_model(),
+                model=get_minimax_model(),
                 output_type=ReviewResult,
                 instrument=True,
                 retries=RetryConfig.AGENT_RETRIES,
