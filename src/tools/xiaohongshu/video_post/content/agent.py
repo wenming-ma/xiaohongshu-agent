@@ -6,6 +6,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest
 from .....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import VideoResearchResult, VideoSource, XHSVideoContent, ContentReviewResult, TranscriptionResult
 from .....utils.text_model_selector import get_text_model
+from .....utils.review_provider import get_review_model
 from .....utils.logger import get_logger
 from .....config.settings import RetryConfig, ReviewConfig
 
@@ -55,7 +56,7 @@ class ContentAgent(BaseAgent):
         )
 
         self.reviewer = Agent(
-            model=model,
+            model=get_review_model(),
             output_type=ContentReviewResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,

@@ -114,6 +114,7 @@ class APIConfig:
     GEMINI_FALLBACK_API_KEYS = _split_csv_env("GEMINI_FALLBACK_API_KEYS")
     GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3-pro-image-preview")
     GEMINI_IMAGE_SIZE = os.getenv("GEMINI_IMAGE_SIZE", "2K")
+    REVIEW_MODEL = os.getenv("REVIEW_MODEL", "claude-sonnet-4-6")
     RETRYABLE_STATUS_CODES = (429, 500, 502, 503, 504)
 
 
@@ -126,7 +127,7 @@ class PublishConfig:
 
 
 class ResearchConfig:
-    MIN_POSTS_RESEARCHED = 1
+    MIN_POSTS_RESEARCHED = 17
     MIN_KEY_INFOS = 15
     MIN_CASES = 10
     MIN_COMMENT_DATA_RATIO = 0.4

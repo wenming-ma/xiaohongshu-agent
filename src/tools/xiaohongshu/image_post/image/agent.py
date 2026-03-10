@@ -28,6 +28,7 @@ from ..schemas import (
 )
 from .....utils.minimax_provider import get_minimax_model
 from .....utils.google_provider import get_google_model
+from .....utils.review_provider import get_review_model
 from .....utils.logger import get_logger
 from .....config.settings import RetryConfig
 from .validator import ImageQualityValidator
@@ -104,9 +105,9 @@ class ImageAgent(BaseAgent):
             system_prompt=(image_grouping_system_prompt(),),
         )
 
-        # 分组审核 Agent（使用 Gemini 2.5 Pro，语义审核能力更强）
+        # 分组审核 Agent（使用 Anthropic 中转审核模型）
         self.grouping_reviewer = Agent(
-            model=get_google_model("gemini-2.5-pro"),
+            model=get_review_model(),
             output_type=ImageGroupingReviewResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
