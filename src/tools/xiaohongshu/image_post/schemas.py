@@ -153,6 +153,15 @@ class ImageReadResult(BaseModel):
     issues: List[str] = []
 
 
+class VideoReadResult(BaseModel):
+    """视频语音转文字结果"""
+    success: bool = False
+    transcript: str = ""
+    language: str = "unknown"
+    duration_seconds: float = 0.0
+    error_message: str = ""
+
+
 class PublishResult(BaseModel):
     published: bool
     platform: str = "xiaohongshu"

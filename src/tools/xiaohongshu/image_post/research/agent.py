@@ -29,7 +29,7 @@ from .....config.settings import RetryConfig, ResearchConfig, PathConfig, Timeou
 from ..login import LoginAgent
 
 from .validator import ResearchDepthValidator, ResearchReviewValidator
-from .tools import ImageReaderAgent, WebSearchAgent
+from .tools import ImageReaderAgent, VideoReaderAgent, WebSearchAgent
 from .prompts import research_system_prompt, research_user_prompt, research_continuation_prompt
 from .state import (
     ResearchState,
@@ -78,6 +78,7 @@ class ResearchAgent(BaseAgent):
         """初始化工具集"""
         self.login_agent = LoginAgent(mcp_server=self.mcp_server)
         self.image_reader_agent = ImageReaderAgent()
+        self.video_reader_agent = VideoReaderAgent()
         self.web_search_agent = WebSearchAgent()
 
     def init_agent(self) -> None:
@@ -87,6 +88,7 @@ class ResearchAgent(BaseAgent):
         function_tools = [
             self.login_agent.get_tool(),
             self.image_reader_agent.get_tool(),
+            self.video_reader_agent.get_tool(),
         ]
 
         self.generator = Agent(
