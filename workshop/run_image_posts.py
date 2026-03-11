@@ -53,6 +53,21 @@ logfire.instrument_pydantic_ai()
 from src.tools.xiaohongshu.image_post import XHSImagePostInput, XHSImagePostTool  # noqa: E402
 from src.utils.logger import get_logger, setup_logging  # noqa: E402
 
+
+def get_sleep_seconds(override: int | None) -> int:
+    """根据当前时段返回休眠秒数。
+
+    - 5:00-9:59 / 17:00-21:59 → 45 分钟 (2700s)
+    - 其他时段 → 90 分钟 (5400s)
+    - 如果 override 不为 None，则使用固定值
+    """
+    if override is not None:
+        return override
+    hour = datetime.now().hour
+    if 5 <= hour < 10 or 17 <= hour < 22:
+        return 2700  # 45 min
+    return 5400  # 90 min
+
 setup_logging()
 logger = get_logger(__name__)
 
@@ -139,7 +154,8 @@ async def run_batch(args: argparse.Namespace) -> int:
     logger.info("XHS Image Post 批量执行")
     logger.info("话题文件: %s", args.topics_file)
     logger.info("范围: #%d ~ #%d (共 %d 个)", base_idx, base_idx + total - 1, total)
-    logger.info("最大重试: %d  重试间隔: %ds  话题间隔: %ds", args.max_retries, args.retry_delay, args.sleep)
+    sleep_mode = f"固定 {args.sleep}s" if args.sleep is not None else "动态 (5-10/17-22点=45min, 其余=90min)"
+    logger.info("最大重试: %d  重试间隔: %ds  休眠策略: %s", args.max_retries, args.retry_delay, sleep_mode)
     logger.info("=" * 60)
 
     results: list[dict[str, Any]] = []
@@ -154,9 +170,11 @@ async def run_batch(args: argparse.Namespace) -> int:
             failed.append(result)
 
         # 话题间休眠（最后一个不休眠）
-        if i < total - 1 and args.sleep > 0:
-            logger.info("休眠 %d 秒后继续 …", args.sleep)
-            await asyncio.sleep(args.sleep)
+        if i < total - 1:
+            sleep_sec = get_sleep_seconds(args.sleep)
+            if sleep_sec > 0:
+                logger.info("休眠 %d 秒 (%.0f 分钟) 后继续 …", sleep_sec, sleep_sec / 60)
+                await asyncio.sleep(sleep_sec)
 
     # 写出汇总
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -194,7 +212,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--limit", type=int, default=None, help="最多处理几个话题")
     p.add_argument("--max-retries", type=int, default=10, help="单个话题最大重试次数")
     p.add_argument("--retry-delay", type=int, default=5, help="重试间隔秒数")
-    p.add_argument("--sleep", type=int, default=5400, help="话题之间休眠秒数 (默认 5400 = 1.5 小时)")
+    p.add_argument("--sleep", type=int, default=None, help="话题之间固定休眠秒数 (留空则按时段自动: 5-10点/17-22点=45min, 其余=90min)")
     return p.parse_args()
 
 

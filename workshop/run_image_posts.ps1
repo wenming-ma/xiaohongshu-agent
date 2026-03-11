@@ -7,7 +7,7 @@
 #   .\workshop\run_image_posts.ps1
 #   .\workshop\run_image_posts.ps1 -StartIndex 3
 #   .\workshop\run_image_posts.ps1 -StartIndex 5 -Limit 2
-#   .\workshop\run_image_posts.ps1 -Sleep 3600
+#   .\workshop\run_image_posts.ps1 -Sleep 3600   # 固定休眠（覆盖动态策略）
 # ================================================
 
 param(
@@ -15,7 +15,7 @@ param(
     [int]$Limit = 0,
     [int]$MaxRetries = 10,
     [int]$RetryDelay = 5,
-    [int]$Sleep = 5400
+    [int]$Sleep = 0
 )
 
 $ErrorActionPreference = "Continue"
@@ -25,7 +25,11 @@ $projectRoot = Split-Path -Parent $scriptDir
 
 # 构建 Python 脚本参数
 $pyScript = Join-Path $scriptDir "run_image_posts.py"
-$pyArgs = @($pyScript, "--start-index", $StartIndex, "--max-retries", $MaxRetries, "--retry-delay", $RetryDelay, "--sleep", $Sleep)
+$pyArgs = @($pyScript, "--start-index", $StartIndex, "--max-retries", $MaxRetries, "--retry-delay", $RetryDelay)
+
+if ($Sleep -gt 0) {
+    $pyArgs += @("--sleep", $Sleep)
+}
 
 if ($Limit -gt 0) {
     $pyArgs += @("--limit", $Limit)
@@ -44,7 +48,11 @@ Write-Host "XHS Image Post Batch Runner" -ForegroundColor Cyan
 Write-Host "Agent: image_post (direct)" -ForegroundColor Cyan
 Write-Host "Topics: #$StartIndex ~ #$endIndex / $totalCount" -ForegroundColor Cyan
 Write-Host "Max retries: $MaxRetries" -ForegroundColor Cyan
-Write-Host "Sleep between topics: $([Math]::Round($Sleep / 60, 1)) min" -ForegroundColor Cyan
+if ($Sleep -gt 0) {
+    Write-Host "Sleep between topics: $([Math]::Round($Sleep / 60, 1)) min (fixed)" -ForegroundColor Cyan
+} else {
+    Write-Host "Sleep between topics: dynamic (5-10/17-22h=45min, else=90min)" -ForegroundColor Cyan
+}
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
