@@ -44,6 +44,7 @@ logfire.instrument_pydantic_ai()
 
 from src.tools.xiaohongshu.image_post import XHSImagePostInput, XHSImagePostTool
 from src.utils.logger import get_logger, setup_logging
+from src.utils.feishu_notifier import get_feishu_notifier
 
 setup_logging()
 logger = get_logger(__name__)
@@ -168,6 +169,25 @@ async def run_single_topic(
                 logger.info("成功: %s", result.title or topic)
                 if result.output_dir:
                     logger.info("输出目录: %s", result.output_dir)
+
+                # 飞书通知
+                if result.published:
+                    try:
+                        notifier = get_feishu_notifier()
+                        lines = [
+                            "✅ 帖子发布成功",
+                            f"主题：{topic}",
+                            f"标题：{result.title or '无'}",
+                            f"话题：{' '.join(result.hashtags) if result.hashtags else '无'}",
+                            f"图片数：{result.image_count} 张",
+                            f"帖子链接：{result.post_url or '未获取到'}",
+                        ]
+                        await notifier.send_message("\n".join(lines))
+                        if result.image_paths:
+                            await notifier.send_image(result.image_paths[0], caption="封面图")
+                    except Exception:
+                        logger.warning("飞书通知发送失败", exc_info=True)
+
                 return payload
 
             last_error = result.error_message or "未知错误"
