@@ -1,9 +1,6 @@
 """
-审核模型工厂
-复用 ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY 中转端点
-
-用于所有文本审核任务（内容审核、研究数据审核、分组审核等）。
-默认模型：claude-sonnet-4-6
+Anthropic 中转模型工厂
+复用 ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY 环境变量
 """
 import os
 import logging
@@ -11,7 +8,6 @@ from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.models.anthropic import AnthropicModel
-from ..config.settings import APIConfig
 
 
 logger = logging.getLogger(__name__)
@@ -19,9 +15,9 @@ logger = logging.getLogger(__name__)
 _shared_provider: AnthropicProvider | None = None
 
 
-def get_review_model(model_name: str | None = None) -> AnthropicModel:
+def get_anthropic_model(model_name: str = "claude-sonnet-4-6") -> AnthropicModel:
     """
-    获取审核专用模型（Anthropic 中转端点）
+    获取 Anthropic 中转模型
 
     Args:
         model_name: 模型名称，默认 claude-sonnet-4-6
@@ -30,7 +26,6 @@ def get_review_model(model_name: str | None = None) -> AnthropicModel:
         AnthropicModel 实例
     """
     global _shared_provider
-    model_name = model_name or APIConfig.REVIEW_MODEL
 
     if _shared_provider is None:
         api_key = os.getenv("ANTHROPIC_API_KEY")
@@ -50,6 +45,6 @@ def get_review_model(model_name: str | None = None) -> AnthropicModel:
         )
 
         _shared_provider = AnthropicProvider(anthropic_client=client)
-        logger.info("Review Provider 初始化完成: %s", base_url)
+        logger.info("Anthropic Provider 初始化完成: %s", base_url)
 
     return AnthropicModel(model_name, provider=_shared_provider)

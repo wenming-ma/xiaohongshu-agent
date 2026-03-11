@@ -12,7 +12,7 @@ import os
 import json
 import re
 import shutil
-import tempfile
+import time as _time
 import html as _html
 from pathlib import Path
 from typing import Any, Literal
@@ -28,7 +28,7 @@ from ..schemas import ImageReadResult, VideoReadResult
 from .....utils.image_compression import compress_image_for_review
 from .....utils.subtitle_generator import WhisperTranscriber
 from .....utils.logger import get_logger
-from .....config.settings import RetryConfig, APIConfig
+from .....config.settings import RetryConfig, APIConfig, PathConfig
 from .....utils.minimax_provider import get_minimax_model
 from .....utils.google_provider import get_google_model
 from .prompts import image_reader_system_prompt, image_reader_user_prompt
@@ -120,7 +120,8 @@ class VideoReaderAgent:
 
         tmp_dir = None
         try:
-            tmp_dir = Path(tempfile.mkdtemp(prefix="xhs_video_"))
+            tmp_dir = PathConfig.DOWNLOADS_DIR / f"xhs_video_{int(_time.time() * 1000)}"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
             video_path = tmp_dir / "video.mp4"
 
             # 1. 下载视频

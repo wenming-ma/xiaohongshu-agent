@@ -1,4 +1,3 @@
-import json
 import os
 from pathlib import Path
 
@@ -6,41 +5,6 @@ from pathlib import Path
 def _split_csv_env(name: str) -> list[str]:
     value = os.getenv(name, "")
     return [item.strip() for item in value.split(",") if item.strip()]
-
-
-def _build_endpoint(base_url_env: str, api_key_env: str) -> dict[str, str] | None:
-    base_url = os.getenv(base_url_env)
-    api_key = os.getenv(api_key_env)
-    if not base_url and not api_key:
-        return None
-
-    endpoint = {"api_key_env": api_key_env}
-    if base_url:
-        endpoint["base_url"] = base_url
-    return endpoint
-
-
-def _load_anthropic_endpoints() -> list[dict[str, str]]:
-    raw = os.getenv("ANTHROPIC_ENDPOINTS_JSON")
-    if raw:
-        endpoints = json.loads(raw)
-        if not isinstance(endpoints, list) or not all(isinstance(item, dict) for item in endpoints):
-            raise ValueError("ANTHROPIC_ENDPOINTS_JSON 必须是对象数组")
-        return endpoints
-
-    endpoints: list[dict[str, str]] = []
-
-    primary = _build_endpoint("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY")
-    if primary:
-        endpoints.append(primary)
-    else:
-        endpoints.append({"api_key_env": "ANTHROPIC_API_KEY"})
-
-    fallback = _build_endpoint("ANTHROPIC_FALLBACK_BASE_URL", "ANTHROPIC_FALLBACK_API_KEY")
-    if fallback:
-        endpoints.append(fallback)
-
-    return endpoints
 
 
 class RetryConfig:
@@ -80,41 +44,29 @@ class ImageConfig:
 class TimeoutConfig:
     DOWNLOAD_TIMEOUT = 60
     POLL_INTERVAL = 2
-    GEMINI_WAIT = 180
+    GEMINI_WAIT = 600
     MCP_INIT_TIMEOUT = 90
 
 
 class PathConfig:
-    DOWNLOADS_DIR = Path('./output/playwright-downloads')
-    IMAGE_PROJECT_DIR = Path('posts/image-posts')
-    VIDEO_PROJECT_DIR = Path('posts/video-posts')
-    BROWSER_SESSION_SHARED = './browser-sessions/shared'
+    _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+    DOWNLOADS_DIR = _PROJECT_ROOT / 'output' / 'playwright-downloads'
+    IMAGE_PROJECT_DIR = _PROJECT_ROOT / 'posts' / 'image-posts'
+    VIDEO_PROJECT_DIR = _PROJECT_ROOT / 'posts' / 'video-posts'
+    BROWSER_SESSION_SHARED = str(_PROJECT_ROOT / 'browser-sessions' / 'shared')
     BROWSER_SESSION_XHS = BROWSER_SESSION_SHARED
     BROWSER_SESSION_GEMINI = BROWSER_SESSION_SHARED
 
 
 class APIConfig:
-    ANTHROPIC_ENDPOINTS = _load_anthropic_endpoints()
-
-    DEFAULT_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
-    CLAUDE_IMAGE_MODEL = os.getenv("CLAUDE_IMAGE_MODEL", DEFAULT_MODEL)
-    OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "minimax/minimax-m2.1")
-    OPENROUTER_REVIEW_MODEL = os.getenv("OPENROUTER_REVIEW_MODEL", "qwen/qwen3-vl-30b-a3b-instruct")
-    MISTRAL_REVIEW_MODEL = os.getenv("MISTRAL_REVIEW_MODEL", "pixtral-12b-latest")
     MINIMAX_MODEL = os.getenv("MINIMAX_MODEL", "MiniMax-M2.5")
     MINIMAX_BASE_URL = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/anthropic")
-    QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen-vl-plus")
-    QWEN_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-    SAGEHUB_MODEL = os.getenv("SAGEHUB_MODEL", "claude-sonnet-4-5-20250929")
-    SAGEHUB_BASE_URL = os.getenv("SAGEHUB_BASE_URL", "https://api.sagehub.cc/v1")
     GOOGLE_MODEL = os.getenv("GOOGLE_MODEL", "gemini-2.5-flash")
     MODEL_PROVIDER = os.getenv("MODEL_PROVIDER", "minimax")
-    GEMINI_URL = os.getenv("GEMINI_URL", "https://gemini.google.com/app")
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
     GEMINI_FALLBACK_API_KEYS = _split_csv_env("GEMINI_FALLBACK_API_KEYS")
     GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3-pro-image-preview")
     GEMINI_IMAGE_SIZE = os.getenv("GEMINI_IMAGE_SIZE", "2K")
-    REVIEW_MODEL = os.getenv("REVIEW_MODEL", "claude-sonnet-4-6")
     RETRYABLE_STATUS_CODES = (429, 500, 502, 503, 504)
 
 

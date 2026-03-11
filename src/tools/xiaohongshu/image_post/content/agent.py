@@ -21,7 +21,6 @@ from pydantic_ai import Agent
 from .....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import ResearchResult, XHSContent, ReviewResult, GroupSpec
 from .....utils.minimax_provider import get_minimax_model
-from .....utils.review_provider import get_review_model
 from .....utils.logger import get_logger
 from .....config.settings import RetryConfig, ReviewConfig
 
@@ -75,7 +74,7 @@ class ContentAgent(BaseAgent):
     def init_reviewer(self) -> None:
         """初始化审核 Agent"""
         self.reviewer = Agent(
-            model=get_review_model(),
+            model=get_minimax_model(),
             output_type=ReviewResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
@@ -204,8 +203,8 @@ class ContentAgent(BaseAgent):
             groups_json=groups_json,
         )
 
-        # 只传递最近 N 轮历史
-        recent_review_history = state.review_history[-self.MAX_HISTORY_ROUNDS * 2:] if len(state.review_history) > self.MAX_HISTORY_ROUNDS * 2 else state.review_history
+        # 只传递最近 N 轮历史（安全截取，避免 tool_use/tool_result 断裂）
+        recent_review_history = state.get_recent_review_history(self.MAX_HISTORY_ROUNDS)
 
         review_result = await self.reviewer.run(
             review_prompt,

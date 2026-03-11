@@ -28,7 +28,7 @@ logfire.configure(
     send_to_logfire='if-token-present',
     environment='development',
     service_name='xiaohongshu-agent',
-    additional_span_processors=[feishu_processor],
+    additional_span_processors=[],  # feishu_processor 暂时关闭
 )
 logfire.instrument_pydantic_ai()
 

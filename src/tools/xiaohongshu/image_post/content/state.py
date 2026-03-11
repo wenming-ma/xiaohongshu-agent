@@ -28,20 +28,28 @@ class ContentState:
 
     def get_recent_history(self, max_rounds: int) -> list[ModelMessage]:
         """获取最近 N 轮对话历史，确保 tool_use/tool_result 配对完整"""
-        max_messages = max_rounds * 2
-        if len(self.message_history) <= max_messages:
-            return self.message_history
+        return _safe_truncate(self.message_history, max_rounds * 2)
 
-        start_idx = len(self.message_history) - max_messages
+    def get_recent_review_history(self, max_rounds: int) -> list[ModelMessage]:
+        """获取最近 N 轮审核历史，确保 tool_use/tool_result 配对完整"""
+        return _safe_truncate(self.review_history, max_rounds * 2)
 
-        while start_idx > 0:
-            msg = self.message_history[start_idx]
-            if isinstance(msg, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in msg.parts):
-                start_idx -= 1
-            else:
-                break
 
-        return self.message_history[start_idx:]
+def _safe_truncate(history: list[ModelMessage], max_messages: int) -> list[ModelMessage]:
+    """截取最近 N 条消息，保证不以 ToolReturnPart 开头（避免 tool_use_id 孤立）"""
+    if len(history) <= max_messages:
+        return history
+
+    start_idx = len(history) - max_messages
+
+    while start_idx > 0:
+        msg = history[start_idx]
+        if isinstance(msg, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in msg.parts):
+            start_idx -= 1
+        else:
+            break
+
+    return history[start_idx:]
 
 
 def simplify_content_history(messages: list[ModelMessage]) -> list[ModelMessage]:

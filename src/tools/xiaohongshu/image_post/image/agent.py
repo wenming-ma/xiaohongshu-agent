@@ -28,7 +28,7 @@ from ..schemas import (
 )
 from .....utils.minimax_provider import get_minimax_model
 from .....utils.google_provider import get_google_model
-from .....utils.review_provider import get_review_model
+from .....utils.anthropic_provider import get_anthropic_model
 from .....utils.logger import get_logger
 from .....config.settings import RetryConfig
 from .validator import ImageQualityValidator
@@ -98,7 +98,7 @@ class ImageAgent(BaseAgent):
 
         # 语义分组 Agent（使用 Claude 模型）
         self.grouping_agent = Agent(
-            model=get_minimax_model(),
+            model=get_anthropic_model("claude-opus-4-6"),
             output_type=ImageGroupingPlan,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
@@ -107,7 +107,7 @@ class ImageAgent(BaseAgent):
 
         # 分组审核 Agent（使用 Anthropic 中转审核模型）
         self.grouping_reviewer = Agent(
-            model=get_review_model(),
+            model=get_minimax_model(),
             output_type=ImageGroupingReviewResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
