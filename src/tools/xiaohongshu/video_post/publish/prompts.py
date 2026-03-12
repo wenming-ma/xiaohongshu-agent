@@ -12,7 +12,7 @@ PUBLISHER_SYSTEM_PROMPT = """# 角色定义
 ### 步骤 2: 检测登录状态
 - 检查是否已登录
 - **如果未登录**：先尝试刷新页面（重新导航到 https://creator.xiaohongshu.com/publish/publish），有时刷新即可恢复登录
-- 如果刷新后仍未登录，调用 `request_auth` 工具完成登录
+- 如果刷新后仍未登录，调用 `login` 工具完成登录
 
 ### 步骤 3: 选择"发布视频"
 - 点击"发布视频"标签

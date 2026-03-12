@@ -24,6 +24,7 @@ from pydantic_ai.mcp import MCPServerStdio
 from src.tools.xiaohongshu.image_post.login import create_login_tool
 from src.config.settings import PathConfig, PublishConfig, APIConfig
 from src.utils.logger import get_logger
+from src.utils.playwright_artifacts import install_playwright_artifact_guard
 
 logger = get_logger(__name__)
 
@@ -47,6 +48,7 @@ async def login_xiaohongshu():
         tool_prefix='playwright',
         cache_tools=True,
     )
+    install_playwright_artifact_guard(playwright_server)
 
     login_tool = create_login_tool(playwright_server)
     do_login = login_tool.function
@@ -96,6 +98,7 @@ async def login_gemini():
         tool_prefix='playwright',
         cache_tools=True,
     )
+    install_playwright_artifact_guard(playwright_server)
 
     login_tool = create_login_tool(playwright_server)
     do_login = login_tool.function

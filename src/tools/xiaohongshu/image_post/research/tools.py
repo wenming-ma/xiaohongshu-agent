@@ -2,33 +2,26 @@
 
 包含：
 - ImageReaderAgent: 读图（OCR/视觉理解）工具
-- VideoReaderAgent: 视频语音转文字工具
 - WebSearchAgent: Web搜索工具
 """
 from __future__ import annotations
 
-import asyncio
-import os
 import json
 import re
-import shutil
-import time as _time
 import html as _html
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit, parse_qs, unquote, urlunsplit, parse_qsl, urlencode
 
-import aiohttp
 import httpx
 import logfire
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, Tool, BinaryContent
 
-from ..schemas import ImageReadResult, VideoReadResult
+from ..schemas import ImageReadResult
 from .....utils.image_compression import compress_image_for_review
-from .....utils.subtitle_generator import WhisperTranscriber
 from .....utils.logger import get_logger
-from .....config.settings import RetryConfig, APIConfig, PathConfig
+from .....config.settings import RetryConfig, APIConfig
 from .....utils.providers import get_text_model, get_google_model
 from .prompts import image_reader_system_prompt, image_reader_user_prompt
 
@@ -91,87 +84,6 @@ class ImageReaderAgent:
     def get_tool(self) -> Tool:
         """获取可供其它 Agent 使用的 Tool。"""
         return Tool(self.read_image, takes_ctx=False)
-
-
-# ============================================================================
-# VideoReaderAgent
-# ============================================================================
-
-class VideoReaderAgent:
-    """视频语音转文字工具 — 下载视频 + Whisper 本地转录。"""
-
-    def __init__(self):
-        self._transcriber = WhisperTranscriber()
-
-    async def read_video(self, video_url: str) -> str:
-        """
-        下载视频并转录语音内容（speech-to-text）。
-
-        Args:
-            video_url: 视频文件的直接 URL（从页面 <video> 元素提取的 CDN 地址）
-
-        Returns:
-            VideoReadResult 的 JSON 字符串
-        """
-        url = (video_url or "").strip()
-        if not url:
-            return VideoReadResult(error_message="video_url 为空").model_dump_json(indent=2)
-
-        tmp_dir = None
-        try:
-            tmp_dir = PathConfig.DOWNLOADS_DIR / f"xhs_video_{int(_time.time() * 1000)}"
-            tmp_dir.mkdir(parents=True, exist_ok=True)
-            video_path = tmp_dir / "video.mp4"
-
-            # 1. 下载视频
-            logger.info("VideoReaderAgent: downloading %s", url[:80])
-            await self._download_video(url, video_path)
-
-            # 2. Whisper 转录
-            logger.info("VideoReaderAgent: transcribing %s", video_path.name)
-            transcription = await self._transcriber.transcribe(video_path)
-
-            if transcription.success:
-                result = VideoReadResult(
-                    success=True,
-                    transcript=transcription.transcript,
-                    language=transcription.language,
-                    duration_seconds=transcription.duration_seconds,
-                )
-            else:
-                result = VideoReadResult(error_message=f"转录失败: {transcription.error_message}")
-
-        except Exception as e:
-            logger.warning("VideoReaderAgent failed: %s", e)
-            result = VideoReadResult(error_message=f"{type(e).__name__}: {e}")
-        finally:
-            if tmp_dir:
-                shutil.rmtree(tmp_dir, ignore_errors=True)
-
-        return result.model_dump_json(indent=2)
-
-    @staticmethod
-    async def _download_video(url: str, dest: Path) -> None:
-        """用 aiohttp 流式下载视频文件"""
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                          "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer": "https://www.xiaohongshu.com/",
-        }
-        timeout = aiohttp.ClientTimeout(total=120, connect=15)
-        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-            async with session.get(url) as resp:
-                resp.raise_for_status()
-                with open(dest, "wb") as f:
-                    async for chunk in resp.content.iter_chunked(1024 * 64):
-                        f.write(chunk)
-
-        if not dest.exists() or dest.stat().st_size < 10_000:
-            raise RuntimeError(f"下载的视频文件太小或不存在: {dest.stat().st_size if dest.exists() else 0} bytes")
-
-    def get_tool(self) -> Tool:
-        """获取可供其它 Agent 使用的 Tool。"""
-        return Tool(self.read_video, takes_ctx=False)
 
 
 # ============================================================================

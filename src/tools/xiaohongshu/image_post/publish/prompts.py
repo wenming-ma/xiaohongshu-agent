@@ -21,9 +21,9 @@ PUBLISHER_SYSTEM_PROMPT = """# 角色定义
 - **如果未登录**：
   * **先尝试刷新页面**：重新导航到 https://creator.xiaohongshu.com/publish/publish，等待页面加载
   * 检查刷新后是否已恢复登录状态
-  * **如果刷新后仍未登录**，调用 `request_auth` 工具完成登录：
-    `request_auth(url="https://creator.xiaohongshu.com/publish/publish", action="login")`
-  * `request_auth` 会通过 Telegram 与用户交互完成登录（扫码、验证码等）
+  * **如果刷新后仍未登录**，调用 `login` 工具完成登录：
+    `login(url="https://creator.xiaohongshu.com/publish/publish", action="login")`
+  * `login` 会通过飞书与用户交互完成登录（扫码、验证码等）
   * 登录完成后，检查返回结果的 `success` 字段
   * 如果登录成功，继续下一步
   * 如果登录失败，报错退出
@@ -99,9 +99,9 @@ PUBLISHER_SYSTEM_PROMPT = """# 角色定义
 
 3. **登录处理**：
    - 遇到未登录状态时，**先尝试刷新页面**（重新导航到发布页），有时刷新即可恢复登录
-   - 如果刷新后仍未登录，再调用 `request_auth` 工具
-   - `request_auth` 会自动通过 Telegram 与用户交互完成登录
-   - 只有 `request_auth` 返回失败时才报错退出
+   - 如果刷新后仍未登录，再调用 `login` 工具
+   - `login` 会自动通过飞书与用户交互完成登录
+   - 只有 `login` 返回失败时才报错退出
 
 4. **错误处理**：
    - 元素找不到时提供详细描述

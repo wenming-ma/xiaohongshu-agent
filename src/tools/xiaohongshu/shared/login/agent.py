@@ -25,6 +25,7 @@ from .....config.settings import (
 from .....utils.providers import get_text_model
 from .....utils.feishu_notifier import get_feishu_notifier
 from .....utils.logger import get_logger
+from .....utils.playwright_artifacts import install_playwright_artifact_guard
 
 logger = get_logger(__name__)
 
@@ -176,6 +177,7 @@ def create_login_tool(mcp_server: MCPServerStdio) -> Tool:
         mcp_server: 父 Agent 已创建的 Playwright MCP Server 实例
     """
     notifier = get_feishu_notifier()
+    install_playwright_artifact_guard(mcp_server)
     _install_mcp_guard(mcp_server)
 
     user_profile = {

@@ -29,7 +29,7 @@ RESEARCH_SYSTEM_PROMPT = """# 角色定义
 5. **具体优于泛泛**：提取具体名称、数字、地点等具体信息
 6. **数量为王**：目标收集 15+ 个内容项
 7. **标注来源**：记录信息出处便于追溯
-8. **登录处理**：如果在浏览或搜索过程中遇到登录页面或登录弹窗，**先尝试回到主页重新搜索**（导航到 https://www.xiaohongshu.com，在搜索框重新输入关键词搜索），很多时候这样就能绕过登录弹窗。如果回到主页重新搜索后仍然遇到登录要求，再调用 `request_auth` 工具完成登录
+8. **登录处理**：如果在浏览或搜索过程中遇到登录页面或登录弹窗，**先尝试回到主页重新搜索**（导航到 https://www.xiaohongshu.com，在搜索框重新输入关键词搜索），很多时候这样就能绕过登录弹窗。如果回到主页重新搜索后仍然遇到登录要求，再调用 `login` 工具完成登录
 
 ## 输出格式
 严格按照 ResearchResult schema 输出结构化数据。
@@ -46,8 +46,8 @@ RESEARCH_USER_PROMPT_TEMPLATE = """## 研究任务
 - 在搜索过程中，如果页面出现登录提示、登录弹窗或跳转到登录页面：
   1. **先尝试回到主页重新搜索**：导航到 https://www.xiaohongshu.com，在搜索框重新输入关键词搜索
   2. 很多时候回到主页重新搜索就能绕过登录弹窗，无需真正登录
-  3. **只有回到主页重新搜索后仍然遇到登录要求时**，才调用 `request_auth` 工具：
-     `request_auth(url="当前页面URL", action="login", hint="小红书研究需要登录")`
+  3. **只有回到主页重新搜索后仍然遇到登录要求时**，才调用 `login` 工具：
+     `login(url="当前页面URL", action="login", hint="小红书研究需要登录")`
 - 等待登录完成后再继续研究
 
 ### 第一阶段：搜索与筛选
@@ -76,17 +76,19 @@ RESEARCH_USER_PROMPT_TEMPLATE = """## 研究任务
    - **识别并读取图片内容（关键步骤！）**：
      * 小红书的核心信息常在图片中（清单、菜单、价格表、攻略截图、产品合集等）
      * 如果图片包含关键信息，使用 browser_take_screenshot 对图片元素截图
+     * 调用 browser_take_screenshot 时，`filename` 只能传纯文件名，例如 `post_1_main.png`，不要包含 `output/`、`playwright-downloads/` 等目录
      * 截图会保存到本地（output/playwright-downloads/ 目录）
      * 然后使用 read_image 工具读取截图文件，提取图片中的文字和结构化信息
      * 特别关注：产品清单、价格表、地址信息、营业时间、品牌名称、具体数字等
      * 如果图片包含表格或列表，务必完整提取每一项
    - **识别并读取视频内容（关键步骤！）**：
      * 如果帖子是视频帖（页面有视频播放器），需提取视频语音内容
-     * 第一步：用 playwright_browser_evaluate 执行 JS 获取视频 URL：
-       `document.querySelector('video')?.src || document.querySelector('video source')?.src`
-     * 第二步：调用 read_video(video_url="获取到的视频URL") 提取语音文字
+     * **先调用我们的专有提取工具**：`extract_xhs_video_url(page_url="当前帖子URL")`
+     * 如果提取成功并返回真实 mp4 直链，再调用：`read_video(video_url="提取出的直链", page_url="当前帖子URL")`
+     * 如果提取失败，再调用：`read_video(page_url="当前帖子URL")` 作为兜底
+     * 不要先用浏览器 JS 读取 `video.src`，小红书详情页里的 `video.src` 经常是 `blob:`，这不是实际媒体地址
      * 视频口播通常包含详细讲解、推荐理由、使用体验等核心信息
-     * 如果提取失败（如非视频帖、URL 过期），忽略错误继续研究
+     * 如果工具返回失败，再忽略错误继续研究，不要仅因为 `blob:` URL 就跳过视频语音
    - 提取作者分享的案例和经历
    - 记录帖子的内容格式（清单式？众筹式？）
 
@@ -208,7 +210,7 @@ RESEARCH_CONTINUATION_PROMPT_TEMPLATE = """## 研究任务（第 {round_number} 
 
 ### 登录处理
 - 如遇登录提示，**先回到主页（https://www.xiaohongshu.com）重新搜索关键词**，通常可以绕过登录弹窗
-- 只有重新搜索后仍遇到登录要求时，才调用 `request_auth` 工具完成登录
+- 只有重新搜索后仍遇到登录要求时，才调用 `login` 工具完成登录
 
 ### 重要提醒
 - 进度快照中的历史数据已自动保存到文件，系统会自动合并所有轮次

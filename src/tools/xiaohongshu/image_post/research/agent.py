@@ -25,11 +25,13 @@ from ..schemas import ResearchResult
 from .....utils.providers import get_text_model
 from .....utils.navigate_tracker import NavigateTracker
 from .....utils.logger import get_logger
+from .....utils.playwright_artifacts import install_playwright_artifact_guard
 from .....config.settings import RetryConfig, ResearchConfig, PathConfig, TimeoutConfig
-from ..login import create_login_tool
+from ...shared.video_extract import create_video_extract_tool
+from ...shared.login import create_login_tool
 
 from .validator import ResearchDepthValidator, ResearchReviewValidator
-from .tools import ImageReaderAgent, VideoReaderAgent, WebSearchAgent
+from .tools import ImageReaderAgent, WebSearchAgent
 from .prompts import research_system_prompt, research_user_prompt, research_continuation_prompt
 from .state import (
     ResearchState,
@@ -72,13 +74,14 @@ class ResearchAgent(BaseAgent):
             max_retries=RetryConfig.MCP_RETRIES,
             timeout=TimeoutConfig.MCP_INIT_TIMEOUT,
         )
+        install_playwright_artifact_guard(self.mcp_server)
         self.navigate_tracker = NavigateTracker(self.mcp_server)
 
     def init_tools(self) -> None:
         """初始化工具集"""
         self.login_tool = create_login_tool(self.mcp_server)
         self.image_reader_agent = ImageReaderAgent()
-        self.video_reader_agent = VideoReaderAgent()
+        self.video_extract_tool = create_video_extract_tool(self.mcp_server)
         self.web_search_agent = WebSearchAgent()
 
     def init_agent(self) -> None:
@@ -88,7 +91,8 @@ class ResearchAgent(BaseAgent):
         function_tools = [
             self.login_tool,
             self.image_reader_agent.get_tool(),
-            self.video_reader_agent.get_tool(),
+            self.video_extract_tool.get_extract_tool(),
+            self.video_extract_tool.get_read_tool(),
         ]
 
         self.generator = Agent(

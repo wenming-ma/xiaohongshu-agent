@@ -10,6 +10,7 @@ from ..schemas import XHSVideoContent, VideoPublishResult
 from .....utils.providers import get_text_model
 from .....utils.retry_handler import with_retry
 from .....utils.logger import get_logger
+from .....utils.playwright_artifacts import install_playwright_artifact_guard
 from .....config.settings import RetryConfig, PathConfig, TimeoutConfig, PublishConfig
 from .prompts import publisher_system_prompt, publisher_user_prompt
 
@@ -39,6 +40,7 @@ class PublisherAgent(BaseAgent):
             max_retries=RetryConfig.MCP_RETRIES,
             timeout=TimeoutConfig.MCP_INIT_TIMEOUT,
         )
+        install_playwright_artifact_guard(self.mcp_server)
 
     def init_tools(self) -> None:
         pass

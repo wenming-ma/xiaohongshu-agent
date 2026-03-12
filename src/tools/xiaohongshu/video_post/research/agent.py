@@ -9,6 +9,7 @@ from .....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import VideoResearchResult, Platform
 from .....utils.providers import get_text_model
 from .....utils.logger import get_logger
+from .....utils.playwright_artifacts import install_playwright_artifact_guard
 from .....config.settings import RetryConfig, PathConfig, TimeoutConfig
 
 from .validator import VideoSearchValidator, VideoListQualityFilter
@@ -49,6 +50,7 @@ class ResearchAgent(BaseAgent):
             max_retries=RetryConfig.MCP_RETRIES,
             timeout=TimeoutConfig.MCP_INIT_TIMEOUT,
         )
+        install_playwright_artifact_guard(self.mcp_server)
 
     def init_tools(self) -> None:
         pass

@@ -13,6 +13,10 @@ tool.py (XHSImagePostTool.execute)
     └── publish/   → PublisherAgent.forward()  # 发布帖子
 ```
 
+共享能力不放在 `image_post/` 内：
+- `src/tools/xiaohongshu/shared/login/` 供 research 和 publish 复用登录能力
+- `src/tools/xiaohongshu/shared/video_extract/` 供 research 复用视频直链提取与转录能力
+
 ## 各 Agent 文件结构
 
 每个 Agent 目录遵循统一结构：
