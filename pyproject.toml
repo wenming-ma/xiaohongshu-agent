@@ -5,11 +5,10 @@ description = "Xiaohongshu content creation agent powered by Pydantic-AI"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    # 本地 pydantic-ai（从 submodules 加载）
-    "pydantic-ai-slim",
-    "pydantic-graph",
+    # pydantic-ai（官方 PyPI 包）
+    "pydantic-ai",
     # LLM Provider
-    "anthropic>=0.40.0",
+    "anthropic>=0.80.0",
     "google-genai>=1.0.0",
     # 其他依赖
     "mcp>=1.0.0",
@@ -37,11 +36,12 @@ dependencies = [
     "huggingface-hub>=1.4.1",
     "playwright>=1.58.0",
     "nvidia-cublas-cu12>=12.9.1.4",
+    "lark-oapi>=1.5.3",
+    "pycryptodome>=3.23.0",
+    "requests-toolbelt>=1.0.0",
+    "jieba>=0.42.1",
+    "griffe>=2.0.0",
 ]
-
-[tool.uv.sources]
-pydantic-ai-slim = { path = "submodules/pydantic-ai/pydantic_ai_slim", editable = true }
-pydantic-graph = { path = "submodules/pydantic-ai/pydantic_graph", editable = true }
 
 [project.scripts]
 xhs-agent = "src.main:main"

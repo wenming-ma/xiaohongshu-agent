@@ -33,20 +33,11 @@ from dotenv import load_dotenv  # noqa: E402
 load_dotenv(PROJECT_ROOT / ".env")
 
 import logfire  # noqa: E402
-from src.utils.logfire_telegram_handler import TelegramSpanProcessor  # noqa: E402
 
 logfire.configure(
     send_to_logfire='if-token-present',
     environment='development',
     service_name='xiaohongshu-agent-batch',
-    additional_span_processors=[
-        TelegramSpanProcessor(
-            min_interval_sec=1.0,
-            include_http_requests=False,
-            include_tool_args=True,
-            max_arg_length=200,
-        ),
-    ],
 )
 logfire.instrument_pydantic_ai()
 
@@ -135,7 +126,7 @@ async def run_single(
                         await notifier.send_message("\n".join(lines))
                         # 发送封面图预览
                         if result.image_paths:
-                            await notifier.send_image(result.image_paths[0], caption="封面图")
+                            await notifier.send_image(Path(result.image_paths[0]), caption="封面图")
                     except Exception:
                         logger.warning("飞书通知发送失败", exc_info=True)
 

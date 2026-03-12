@@ -184,7 +184,7 @@ async def run_single_topic(
                         ]
                         await notifier.send_message("\n".join(lines))
                         if result.image_paths:
-                            await notifier.send_image(result.image_paths[0], caption="封面图")
+                            await notifier.send_image(Path(result.image_paths[0]), caption="封面图")
                     except Exception:
                         logger.warning("飞书通知发送失败", exc_info=True)
 
