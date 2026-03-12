@@ -13,7 +13,7 @@ from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.models.anthropic import AnthropicModel
-from ..config.settings import APIConfig
+from ...config.settings import APIConfig
 
 
 logger = logging.getLogger(__name__)

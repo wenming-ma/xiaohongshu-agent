@@ -22,7 +22,7 @@ from pydantic_ai.providers.google import GoogleProvider
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai._run_context import RunContext
 
-from ..config.settings import APIConfig
+from ...config.settings import APIConfig
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,23 @@ _RETRYABLE_KEYWORDS = (
 )
 
 
+def _is_network_error(error: Exception) -> bool:
+    """判断是否为网络层错误（httpx / httpcore 抛出的所有异常）。"""
+    module = type(error).__module__ or ""
+    return module.startswith(("httpx", "httpcore"))
+
+
 def _is_retryable(error: Exception) -> bool:
+    # httpx / httpcore 所有网络错误均可重试
+    if _is_network_error(error):
+        return True
+    # 检查异常链（cause），网络错误经常被包装
+    cause = error.__cause__
+    while cause is not None:
+        if _is_network_error(cause):
+            return True
+        cause = cause.__cause__
+    # 按错误信息关键词匹配（速率限制、配额、服务不可用）
     msg = str(error).lower()
     return any(kw in msg for kw in _RETRYABLE_KEYWORDS)
 

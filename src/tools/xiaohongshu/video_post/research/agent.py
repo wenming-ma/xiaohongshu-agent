@@ -7,7 +7,7 @@ from pydantic_ai.mcp import MCPServerStdio
 
 from .....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import VideoResearchResult, Platform
-from .....utils.text_model_selector import get_text_model
+from .....utils.providers import get_text_model
 from .....utils.logger import get_logger
 from .....config.settings import RetryConfig, PathConfig, TimeoutConfig
 

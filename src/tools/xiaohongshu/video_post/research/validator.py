@@ -4,7 +4,7 @@ from pydantic_ai import Agent
 
 from .....core.base_validator import InternalValidator, InternalValidationResult
 from ..schemas import VideoResearchResult, VideoSource, Platform
-from .....utils.text_model_selector import get_text_model
+from .....utils.providers import get_text_model
 from .....utils.logger import get_logger
 from .prompts import video_quality_system_prompt, video_quality_user_prompt
 

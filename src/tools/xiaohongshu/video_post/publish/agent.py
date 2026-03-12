@@ -7,7 +7,7 @@ from pydantic_ai.usage import UsageLimits
 
 from .....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import XHSVideoContent, VideoPublishResult
-from .....utils.text_model_selector import get_text_model
+from .....utils.providers import get_text_model
 from .....utils.retry_handler import with_retry
 from .....utils.logger import get_logger
 from .....config.settings import RetryConfig, PathConfig, TimeoutConfig, PublishConfig

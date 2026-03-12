@@ -1,6 +1,6 @@
-from ..config.settings import APIConfig
-from .minimax_provider import get_minimax_model
-from .google_provider import get_google_model
+from ...config.settings import APIConfig
+from .minimax import get_minimax_model
+from .google_text import get_google_model
 
 
 def get_text_model(model_name: str | None = None):

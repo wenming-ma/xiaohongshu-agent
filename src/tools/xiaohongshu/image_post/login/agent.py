@@ -33,7 +33,7 @@ from .....config.settings import (
     FeishuConfig,
 )
 from .....core.base_agent import BaseAgent, ValidationResult
-from .....utils.minimax_provider import get_minimax_model
+from .....utils.providers import get_text_model
 from .....utils.feishu_notifier import get_feishu_notifier
 from .....utils.logger import get_logger
 
@@ -138,7 +138,7 @@ class LoginAgent(BaseAgent):
 
     def init_agent(self) -> None:
         """初始化认证 Agent"""
-        model = get_minimax_model()
+        model = get_text_model()
         system_prompt = self.build_system_prompt()
 
         function_tools = [

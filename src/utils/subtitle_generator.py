@@ -17,7 +17,7 @@ if _venv_nvidia_bin.exists():
 from faster_whisper import WhisperModel
 from pydantic_ai import Agent
 
-from ..utils.text_model_selector import get_text_model
+from ..utils.providers import get_text_model
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)

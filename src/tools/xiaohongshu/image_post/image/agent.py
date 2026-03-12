@@ -26,9 +26,7 @@ from ..schemas import (
     ImageTypeSpec,
     ImageGenContext,
 )
-from .....utils.minimax_provider import get_minimax_model
-from .....utils.google_provider import get_google_model
-from .....utils.anthropic_provider import get_anthropic_model
+from .....utils.providers import get_text_model, get_anthropic_model, GeminiImageClient
 from .....utils.logger import get_logger
 from .....config.settings import RetryConfig
 from .validator import ImageQualityValidator
@@ -38,7 +36,6 @@ from .prompts import (
     image_grouping_system_prompt,
     image_grouping_review_system_prompt,
 )
-from .....utils.gemini_provider import GeminiImageClient
 from .utils import (
     build_compact_items,
     calculate_grouping_params,
@@ -73,7 +70,7 @@ class ImageAgent(BaseAgent):
 
     def init_agent(self) -> None:
         """初始化所有 Agent"""
-        model = get_minimax_model()
+        model = get_text_model()
 
         # 提示词生成 Agent
         self.prompt_generator = Agent(
@@ -107,7 +104,7 @@ class ImageAgent(BaseAgent):
 
         # 分组审核 Agent（使用 Anthropic 中转审核模型）
         self.grouping_reviewer = Agent(
-            model=get_minimax_model(),
+            model=get_text_model(),
             output_type=ImageGroupingReviewResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,

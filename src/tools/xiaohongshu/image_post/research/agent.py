@@ -22,7 +22,7 @@ from pydantic_ai.mcp import MCPServerStdio
 
 from .....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import ResearchResult
-from .....utils.minimax_provider import get_minimax_model
+from .....utils.providers import get_text_model
 from .....utils.navigate_tracker import NavigateTracker
 from .....utils.logger import get_logger
 from .....config.settings import RetryConfig, ResearchConfig, PathConfig, TimeoutConfig
@@ -83,7 +83,7 @@ class ResearchAgent(BaseAgent):
 
     def init_agent(self) -> None:
         """初始化研究生成 Agent"""
-        model = get_minimax_model()
+        model = get_text_model()
 
         function_tools = [
             self.login_agent.get_tool(),

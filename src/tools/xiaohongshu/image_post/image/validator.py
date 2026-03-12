@@ -5,7 +5,7 @@ from pydantic_ai import Agent, BinaryContent
 from .....core.base_validator import ExternalValidator
 from ..schemas import ImageQualityReview
 from .....utils.image_compression import compress_image_for_review
-from .....utils.google_provider import get_google_model
+from .....utils.providers import get_google_model
 from .....utils.logger import get_logger
 from .....config.settings import APIConfig
 from .prompts import image_quality_review_system_prompt, image_quality_review_user_prompt

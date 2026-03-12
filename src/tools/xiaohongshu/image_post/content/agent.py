@@ -20,7 +20,7 @@ from pydantic_ai import Agent
 
 from .....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import ResearchResult, XHSContent, ReviewResult, GroupSpec
-from .....utils.minimax_provider import get_minimax_model
+from .....utils.providers import get_text_model
 from .....utils.logger import get_logger
 from .....config.settings import RetryConfig, ReviewConfig
 
@@ -61,7 +61,7 @@ class ContentAgent(BaseAgent):
 
     def init_generator(self) -> None:
         """初始化生成 Agent"""
-        model = get_minimax_model()
+        model = get_text_model()
         self.generator = Agent(
             model=model,
             output_type=XHSContent,
@@ -74,7 +74,7 @@ class ContentAgent(BaseAgent):
     def init_reviewer(self) -> None:
         """初始化审核 Agent"""
         self.reviewer = Agent(
-            model=get_minimax_model(),
+            model=get_text_model(),
             output_type=ReviewResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,

@@ -29,8 +29,7 @@ from .....utils.image_compression import compress_image_for_review
 from .....utils.subtitle_generator import WhisperTranscriber
 from .....utils.logger import get_logger
 from .....config.settings import RetryConfig, APIConfig, PathConfig
-from .....utils.minimax_provider import get_minimax_model
-from .....utils.google_provider import get_google_model
+from .....utils.providers import get_text_model, get_google_model
 from .prompts import image_reader_system_prompt, image_reader_user_prompt
 
 logger = get_logger(__name__)
@@ -535,7 +534,7 @@ class WebSearchAgent:
                 "- Avoid adding URLs or tracking tokens.\n"
             )
             self._expander_agent = Agent(
-                model=get_minimax_model(),
+                model=get_text_model(),
                 output_type=WebSearchExpansionResult,
                 instrument=True,
                 retries=RetryConfig.AGENT_RETRIES,
@@ -555,7 +554,7 @@ class WebSearchAgent:
                 "- Do NOT paste long webpage content; synthesize succinctly.\n"
             )
             self._synthesis_agent = Agent(
-                model=get_minimax_model(),
+                model=get_text_model(),
                 output_type=WebSearchSynthesisResult,
                 instrument=True,
                 retries=RetryConfig.AGENT_RETRIES,

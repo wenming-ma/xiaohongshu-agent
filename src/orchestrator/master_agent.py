@@ -7,7 +7,7 @@ from pydantic_ai import Agent
 from ..core.base_agent import BaseAgent, ValidationResult
 from ..core.tool_registry import ToolRegistry
 from ..utils.logger import get_logger
-from ..utils.text_model_selector import get_text_model
+from ..utils.providers import get_text_model
 
 logger = get_logger(__name__)
 
