@@ -90,7 +90,6 @@ def _build_system_prompt(user_profile: dict) -> str:
 
 ### 消息交互工具
 - `send_message_to_user(text)`: 发送消息给用户
-- `send_image_to_user(image_path, caption)`: 发送图片（如二维码）给用户
 - `send_current_page_screenshot(caption)`: 截图当前页面并发送给用户
 - `ask_for_user_reply(prompt)`: 发送提示信息并等待用户回复。**必须传入 prompt 参数**
 
@@ -197,14 +196,6 @@ def create_login_tool(mcp_server: MCPServerStdio) -> Tool:
             return f"消息已发送（ID: {result}）"
         return "消息发送失败"
 
-    async def send_image_to_user(image_path: str, caption: str = "") -> str:
-        """发送图片给用户"""
-        path = Path(image_path)
-        result = await notifier.send_image(path, caption)
-        if result:
-            return f"图片已发送（ID: {result}）"
-        return "图片发送失败"
-
     async def send_current_page_screenshot(caption: str = "") -> str:
         """截图当前页面并发送给用户"""
         filename = f"login-page-{datetime.now().strftime('%Y%m%d-%H%M%S')}.png"
@@ -245,7 +236,6 @@ def create_login_tool(mcp_server: MCPServerStdio) -> Tool:
         toolsets=[mcp_server],
         tools=[
             Tool(send_message_to_user, takes_ctx=False),
-            Tool(send_image_to_user, takes_ctx=False),
             Tool(send_current_page_screenshot, takes_ctx=False),
             Tool(ask_for_user_reply, takes_ctx=False),
         ],

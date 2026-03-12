@@ -189,14 +189,18 @@ class ImageAgent(BaseAgent):
         image_specs = groups_to_image_specs(groups)
         logger.info("开始生成 %d 张配图 (%d 个内容项)", len(image_specs), item_count)
 
-        # 3. 生成图片
-        generated_images = await self.generate_all_images(
-            content=content,
-            research=research,
-            topic=topic,
-            output_dir=output_dir,
-            image_specs=image_specs,
-        )
+        # 3. 逐张生成图片
+        generated_images: list[GeneratedImage] = []
+        for spec in image_specs:
+            generated_image = await self.step(
+                content=content,
+                research=research,
+                topic=topic,
+                output_dir=output_dir,
+                image_spec=spec,
+            )
+            generated_images.append(generated_image)
+            logger.info("%s 生成完成", spec["type"])
 
         result = ImageResult(
             images=generated_images,
@@ -291,31 +295,6 @@ class ImageAgent(BaseAgent):
     # ========================================================================
     # 图片生成方法
     # ========================================================================
-
-    async def generate_all_images(
-        self,
-        *,
-        content: XHSContent,
-        research: ResearchResult,
-        topic: str,
-        output_dir: Path,
-        image_specs: list[ImageTypeSpec],
-    ) -> list[GeneratedImage]:
-        """逐张生成图片"""
-        generated_images: list[GeneratedImage] = []
-
-        for spec in image_specs:
-            generated_image = await self.step(
-                content=content,
-                research=research,
-                topic=topic,
-                output_dir=output_dir,
-                image_spec=spec,
-            )
-            generated_images.append(generated_image)
-            logger.info("%s 生成完成", spec["type"])
-
-        return generated_images
 
     async def generate_prompt(
         self,
