@@ -1,4 +1,4 @@
-"""Login Agent for XHS Image Post Tool"""
-from .agent import LoginAgent
+"""Login Tool for XHS Image Post Tool"""
+from .agent import create_login_tool, AuthResult
 
-__all__ = ["LoginAgent"]
+__all__ = ["create_login_tool", "AuthResult"]

@@ -26,7 +26,7 @@ from .....utils.providers import get_text_model
 from .....utils.navigate_tracker import NavigateTracker
 from .....utils.logger import get_logger
 from .....config.settings import RetryConfig, ResearchConfig, PathConfig, TimeoutConfig
-from ..login import LoginAgent
+from ..login import create_login_tool
 
 from .validator import ResearchDepthValidator, ResearchReviewValidator
 from .tools import ImageReaderAgent, VideoReaderAgent, WebSearchAgent
@@ -76,7 +76,7 @@ class ResearchAgent(BaseAgent):
 
     def init_tools(self) -> None:
         """初始化工具集"""
-        self.login_agent = LoginAgent(mcp_server=self.mcp_server)
+        self.login_tool = create_login_tool(self.mcp_server)
         self.image_reader_agent = ImageReaderAgent()
         self.video_reader_agent = VideoReaderAgent()
         self.web_search_agent = WebSearchAgent()
@@ -86,7 +86,7 @@ class ResearchAgent(BaseAgent):
         model = get_text_model()
 
         function_tools = [
-            self.login_agent.get_tool(),
+            self.login_tool,
             self.image_reader_agent.get_tool(),
             self.video_reader_agent.get_tool(),
         ]

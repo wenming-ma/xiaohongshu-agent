@@ -17,7 +17,7 @@ from .....utils.providers import get_text_model
 from .....utils.retry_handler import with_retry
 from .....utils.logger import get_logger
 from .....config.settings import RetryConfig, PathConfig, TimeoutConfig, PublishConfig
-from ..login import LoginAgent
+from ..login import create_login_tool
 from .prompts import publisher_system_prompt, publisher_user_prompt
 
 logger = get_logger(__name__)
@@ -52,12 +52,12 @@ class PublisherAgent(BaseAgent):
 
     def init_tools(self) -> None:
         """初始化工具集"""
-        self.login_agent = LoginAgent(mcp_server=self.mcp_server)
+        self.login_tool = create_login_tool(self.mcp_server)
 
     def init_agent(self) -> None:
         """初始化发布 Agent"""
         model = get_text_model()
-        function_tools = [self.login_agent.get_tool()]
+        function_tools = [self.login_tool]
 
         self.publisher = Agent(
             model=model,

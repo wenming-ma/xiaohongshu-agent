@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from pydantic_ai.mcp import MCPServerStdio
-from src.tools.xiaohongshu.image_post.login import LoginAgent
+from src.tools.xiaohongshu.image_post.login import create_login_tool
 from src.config.settings import PathConfig, PublishConfig, APIConfig
 from src.utils.logger import get_logger
 
@@ -48,14 +48,16 @@ async def login_xiaohongshu():
         cache_tools=True,
     )
 
-    login_agent = LoginAgent(mcp_server=playwright_server)
+    login_tool = create_login_tool(playwright_server)
+    do_login = login_tool.function
 
     try:
-        result = await login_agent.forward(
-            url=PublishConfig.XHS_PUBLISH_URL,
-            action="login",
-            hint="小红书创作者平台，用于后续自动发布帖子"
-        )
+        async with playwright_server:
+            result = await do_login(
+                url=PublishConfig.XHS_PUBLISH_URL,
+                action="login",
+                hint="小红书创作者平台，用于后续自动发布帖子",
+            )
 
         print()
         print("-" * 40)
@@ -95,14 +97,16 @@ async def login_gemini():
         cache_tools=True,
     )
 
-    login_agent = LoginAgent(mcp_server=playwright_server)
+    login_tool = create_login_tool(playwright_server)
+    do_login = login_tool.function
 
     try:
-        result = await login_agent.forward(
-            url=APIConfig.GEMINI_URL,
-            action="login",
-            hint="Gemini 平台，用于生成图片"
-        )
+        async with playwright_server:
+            result = await do_login(
+                url=APIConfig.GEMINI_URL,
+                action="login",
+                hint="Gemini 平台，用于生成图片",
+            )
 
         print()
         print("-" * 40)
