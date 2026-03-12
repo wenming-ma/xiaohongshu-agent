@@ -16,10 +16,12 @@ PUBLISHER_SYSTEM_PROMPT = """# 角色定义
 - 使用 `playwright_browser_navigate` 访问：https://creator.xiaohongshu.com/publish/publish
 - 等待页面加载完成
 
-### 步骤 2：检测登录状态并调用登录工具
+### 步骤 2：检测登录状态并处理
 - 检查页面是否有登录提示或登录按钮
 - **如果未登录**：
-  * **立即调用 `request_auth` 工具**完成登录，传入当前页面 URL：
+  * **先尝试刷新页面**：重新导航到 https://creator.xiaohongshu.com/publish/publish，等待页面加载
+  * 检查刷新后是否已恢复登录状态
+  * **如果刷新后仍未登录**，调用 `request_auth` 工具完成登录：
     `request_auth(url="https://creator.xiaohongshu.com/publish/publish", action="login")`
   * `request_auth` 会通过 Telegram 与用户交互完成登录（扫码、验证码等）
   * 登录完成后，检查返回结果的 `success` 字段
@@ -96,8 +98,8 @@ PUBLISHER_SYSTEM_PROMPT = """# 角色定义
    - 话题格式：空格 + # + 话题名，多个话题用空格分隔
 
 3. **登录处理**：
-   - 遇到未登录状态时，**必须立即调用 `request_auth` 工具**
-   - 不要等待用户手动登录，不要轮询登录状态
+   - 遇到未登录状态时，**先尝试刷新页面**（重新导航到发布页），有时刷新即可恢复登录
+   - 如果刷新后仍未登录，再调用 `request_auth` 工具
    - `request_auth` 会自动通过 Telegram 与用户交互完成登录
    - 只有 `request_auth` 返回失败时才报错退出
 
