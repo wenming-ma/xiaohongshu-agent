@@ -26,7 +26,7 @@ from ..schemas import (
     ImageTypeSpec,
     ImageGenContext,
 )
-from .....utils.providers import get_text_model, get_anthropic_model, GeminiImageClient
+from .....utils.providers import get_text_model, get_google_model, GeminiImageClient
 from .....utils.logger import get_logger
 from .....config.settings import RetryConfig
 from .validator import ImageQualityValidator
@@ -93,9 +93,9 @@ class ImageAgent(BaseAgent):
                 )
             return base_prompt
 
-        # 语义分组 Agent（使用 Claude 模型）
+        # 语义分组 Agent（使用 Google 高推理模型）
         self.grouping_agent = Agent(
-            model=get_anthropic_model("claude-opus-4-6"),
+            model=get_google_model("gemini-3.1-pro-preview"),
             output_type=ImageGroupingPlan,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
