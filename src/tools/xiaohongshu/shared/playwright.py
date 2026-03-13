@@ -39,10 +39,13 @@ def create_shared_playwright_mcp_server(
     tool_prefix: str = "playwright",
     headless: bool = False,
 ) -> MCPServerStdio:
+    artifacts_dir = Path(output_dir or PathConfig.DOWNLOADS_DIR)
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
     server = MCPServerStdio(
         command="npx",
         args=build_shared_playwright_mcp_args(output_dir),
         env=build_shared_playwright_mcp_env(headless=headless),
+        cwd=str(artifacts_dir),
         tool_prefix=tool_prefix,
         cache_tools=True,
         max_retries=RetryConfig.MCP_RETRIES,
