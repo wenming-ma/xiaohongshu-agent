@@ -1,12 +1,12 @@
 """
 Google Gemini Model 工厂
-支持多 API key 轮换：请求失败时自动切换到下一个 key 重试
+支持多 API key 轮换，并在指定模型失败后自动降级到备用模型
 
 Key 来源（按优先级）：
 1. GOOGLE_API_KEY / GEMINI_API_KEY
 2. GEMINI_FALLBACK_API_KEYS（逗号分隔）
 
-对上层 Agent 完全透明——返回的 Model 在 HTTP 层自动处理 key 轮换。
+对上层 Agent 完全透明——返回的 Model 在 HTTP 层自动处理 key 轮换和模型降级。
 """
 from __future__ import annotations
 
@@ -32,6 +32,10 @@ _RETRYABLE_KEYWORDS = (
     "503", "overloaded", "unavailable", "capacity",
 )
 
+_MODEL_FALLBACKS: dict[str, tuple[str, ...]] = {
+    "gemini-2.5-pro": ("gemini-2.5-flash",),
+}
+
 
 def _is_network_error(error: Exception) -> bool:
     """判断是否为网络层错误（httpx / httpcore 抛出的所有异常）。"""
@@ -52,6 +56,14 @@ def _is_retryable(error: Exception) -> bool:
     # 按错误信息关键词匹配（速率限制、配额、服务不可用）
     msg = str(error).lower()
     return any(kw in msg for kw in _RETRYABLE_KEYWORDS)
+
+
+def _resolve_model_chain(model_name: str) -> list[str]:
+    models = [model_name]
+    for fallback in _MODEL_FALLBACKS.get(model_name, ()):
+        if fallback not in models:
+            models.append(fallback)
+    return models
 
 
 # ── Key Pool ─────────────────────────────────────────────────────────────────
@@ -108,14 +120,17 @@ def _get_key_pool() -> GoogleKeyPool:
 
 class ResilientGoogleModel(Model):
     """
-    GoogleModel 包装器 —— 在 HTTP 层自动轮换 API key。
+    GoogleModel 包装器 —— 在 HTTP 层自动轮换 API key，并按模型链降级。
 
     继承 pydantic-ai Model ABC，对 Agent 完全透明。
-    当请求因速率限制/配额耗尽失败时，自动切换 key 并重建内部 GoogleModel 重试。
+    单轮顺序为：主模型轮完全部 key，再尝试备用模型轮完全部 key。
+    若整轮都失败，则进入下一轮退避重试。
     """
 
     def __init__(self, model_name: str, key_pool: GoogleKeyPool) -> None:
-        self._model_name_str = model_name
+        self._model_names = _resolve_model_chain(model_name)
+        self._model_index = 0
+        self._model_name_str = self._model_names[0]
         self._key_pool = key_pool
         self._inner = self._build()
         # 用内部 GoogleModel 的 settings 和 profile 初始化基类
@@ -127,12 +142,81 @@ class ResilientGoogleModel(Model):
 
     # ── Model 协议（必须实现） ─────────────────────────────────────────────
 
-    _MAX_RETRIES = 12  # 总重试次数，每次失败轮换 key
+    _MAX_RETRIES = 12  # 总轮数；每轮会遍历模型链，每个模型轮完全部 key
 
     @staticmethod
     def _backoff(attempt: int) -> float:
         """退避时间：5, 10, 15, ... 封顶 60s"""
         return min(5 * (attempt + 1), 60)
+
+    def _set_model(self, model_name: str) -> None:
+        self._model_name_str = model_name
+        self._inner = self._build()
+        self.settings = self._inner.settings
+        self.profile = self._inner.profile
+
+    def _reset_to_primary_model(self) -> None:
+        self._model_index = 0
+        self._set_model(self._model_names[0])
+
+    def _attempts_per_model(self) -> int:
+        return max(1, self._key_pool.key_count)
+
+    def _advance_retry_state(
+        self,
+        action: str,
+        round_index: int,
+        model_index: int,
+        key_attempt: int,
+        error: Exception,
+    ) -> float:
+        delay = self._backoff(round_index)
+        self._key_pool.rotate()
+
+        attempts_per_model = self._attempts_per_model()
+        is_last_key_attempt = key_attempt + 1 >= attempts_per_model
+        has_next_model = model_index + 1 < len(self._model_names)
+
+        if not is_last_key_attempt:
+            self._inner = self._build()
+            logger.warning(
+                "Google %s 失败 (第 %d/%d 轮, model=%s, key=%d/%d): %s — %ds 后轮换 key 重试",
+                action,
+                round_index + 1,
+                self._MAX_RETRIES,
+                self._model_name_str,
+                key_attempt + 1,
+                attempts_per_model,
+                error,
+                delay,
+            )
+            return delay
+
+        if has_next_model:
+            next_model = self._model_names[model_index + 1]
+            logger.warning(
+                "Google %s 失败 (第 %d/%d 轮, model=%s 已轮完全部 key): %s — %ds 后降级到 %s",
+                action,
+                round_index + 1,
+                self._MAX_RETRIES,
+                self._model_name_str,
+                error,
+                delay,
+                next_model,
+            )
+            self._model_index = model_index + 1
+            self._set_model(next_model)
+            return delay
+
+        logger.warning(
+            "Google %s 失败 (第 %d/%d 轮, 所有模型和 key 已轮完): %s — %ds 后开始下一轮",
+            action,
+            round_index + 1,
+            self._MAX_RETRIES,
+            error,
+            delay,
+        )
+        return delay
 
     async def request(
         self,
@@ -141,20 +225,22 @@ class ResilientGoogleModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         last_error: Exception | None = None
-        for attempt in range(self._MAX_RETRIES):
-            try:
-                return await self._inner.request(messages, model_settings, model_request_parameters)
-            except Exception as e:
-                last_error = e
-                if _is_retryable(e):
-                    self._key_pool.rotate()
-                    self._inner = self._build()
-                    delay = self._backoff(attempt)
-                    logger.warning("Google request 失败 (%d/%d): %s — %ds 后轮换 key 重试",
-                                   attempt + 1, self._MAX_RETRIES, e, delay)
-                    await asyncio.sleep(delay)
-                    continue
-                raise
+        for round_index in range(self._MAX_RETRIES):
+            self._reset_to_primary_model()
+            for model_index, model_name in enumerate(self._model_names):
+                if self._model_name_str != model_name:
+                    self._model_index = model_index
+                    self._set_model(model_name)
+                for key_attempt in range(self._attempts_per_model()):
+                    try:
+                        return await self._inner.request(messages, model_settings, model_request_parameters)
+                    except Exception as e:
+                        last_error = e
+                        if not _is_retryable(e):
+                            raise
+                        delay = self._advance_retry_state("request", round_index, model_index, key_attempt, e)
+                        await asyncio.sleep(delay)
+                        continue
         raise last_error  # type: ignore[misc]
 
     @asynccontextmanager
@@ -166,24 +252,26 @@ class ResilientGoogleModel(Model):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         last_error: Exception | None = None
-        for attempt in range(self._MAX_RETRIES):
-            try:
-                async with self._inner.request_stream(
-                    messages, model_settings, model_request_parameters, run_context=run_context
-                ) as stream:
-                    yield stream
-                    return
-            except Exception as e:
-                last_error = e
-                if _is_retryable(e):
-                    self._key_pool.rotate()
-                    self._inner = self._build()
-                    delay = self._backoff(attempt)
-                    logger.warning("Google stream 失败 (%d/%d): %s — %ds 后轮换 key 重试",
-                                   attempt + 1, self._MAX_RETRIES, e, delay)
-                    await asyncio.sleep(delay)
-                    continue
-                raise
+        for round_index in range(self._MAX_RETRIES):
+            self._reset_to_primary_model()
+            for model_index, model_name in enumerate(self._model_names):
+                if self._model_name_str != model_name:
+                    self._model_index = model_index
+                    self._set_model(model_name)
+                for key_attempt in range(self._attempts_per_model()):
+                    try:
+                        async with self._inner.request_stream(
+                            messages, model_settings, model_request_parameters, run_context=run_context
+                        ) as stream:
+                            yield stream
+                            return
+                    except Exception as e:
+                        last_error = e
+                        if not _is_retryable(e):
+                            raise
+                        delay = self._advance_retry_state("stream", round_index, model_index, key_attempt, e)
+                        await asyncio.sleep(delay)
+                        continue
         raise last_error  # type: ignore[misc]
 
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
