@@ -49,9 +49,9 @@ Write-Host "Agent: image_post (direct)" -ForegroundColor Cyan
 Write-Host "Topics: #$StartIndex ~ #$endIndex / $totalCount" -ForegroundColor Cyan
 Write-Host "Max retries: $MaxRetries" -ForegroundColor Cyan
 if ($Sleep -gt 0) {
-    Write-Host "Sleep between topics: $([Math]::Round($Sleep / 60, 1)) min (fixed)" -ForegroundColor Cyan
+    Write-Host "Sleep between topics: $([Math]::Round($Sleep / 60, 1)) min" -ForegroundColor Cyan
 } else {
-    Write-Host "Sleep between topics: dynamic (5-10/17-22h=45min, else=90min)" -ForegroundColor Cyan
+    Write-Host "Sleep between topics: none" -ForegroundColor Cyan
 }
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""

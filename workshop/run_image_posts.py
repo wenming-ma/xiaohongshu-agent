@@ -181,12 +181,10 @@ async def run_batch(args: argparse.Namespace) -> int:
         if not result.get("success"):
             failed.append(result)
 
-        # 话题间休眠（最后一个不休眠）
-        if i < total - 1:
-            sleep_sec = get_sleep_seconds(args.sleep)
-            if sleep_sec > 0:
-                logger.info("休眠 %d 秒 (%.0f 分钟) 后继续 …", sleep_sec, sleep_sec / 60)
-                await asyncio.sleep(sleep_sec)
+        # 话题间休眠（仅当通过 --sleep 显式指定时才休眠）
+        if i < total - 1 and args.sleep is not None and args.sleep > 0:
+            logger.info("休眠 %d 秒 (%.0f 分钟) 后继续 …", args.sleep, args.sleep / 60)
+            await asyncio.sleep(args.sleep)
 
     # 写出汇总
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
