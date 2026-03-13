@@ -11,6 +11,7 @@
 """
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -23,11 +24,22 @@ from src.config.settings import PathConfig
 SITES = [
     ("Google 账号", "https://accounts.google.com"),
     ("小红书创作者平台", "https://creator.xiaohongshu.com/publish/publish"),
+    ("Medium", "https://medium.com"),
+    ("Allure", "https://www.allure.com"),
+    ("Byrdie", "https://www.byrdie.com"),
+    ("Who What Wear", "https://www.whowhatwear.com"),
     ("X (Twitter)", "https://x.com/home"),
-    ("Instagram", "https://www.instagram.com"),
-    ("Facebook", "https://www.facebook.com"),
     ("TikTok", "https://www.tiktok.com"),
 ]
+
+
+def extra_sites() -> list[tuple[str, str]]:
+    raw = os.getenv("ARTICLE_LOGIN_URLS", "")
+    sites: list[tuple[str, str]] = []
+    for idx, url in enumerate((item.strip() for item in raw.split(",")), start=1):
+        if url:
+            sites.append((f"自定义站点 {idx}", url))
+    return sites
 
 
 async def main():
@@ -39,8 +51,10 @@ async def main():
     print("=" * 60)
     print(f"Session 缓存目录: {session_dir}")
     print()
+    all_sites = SITES + extra_sites()
+
     print("将打开以下站点：")
-    for i, (name, url) in enumerate(SITES, start=1):
+    for i, (name, url) in enumerate(all_sites, start=1):
         print(f"  {i}. {name} - {url}")
     print()
     print("请在浏览器中逐个标签页登录你的账号。")
@@ -62,14 +76,14 @@ async def main():
         )
 
         # 打开所有站点
-        for name, url in SITES:
+        for name, url in all_sites:
             page = await context.new_page()
             await page.goto(url)
             print(f"已打开: {name}")
 
         # 关闭默认空白页
         pages = context.pages
-        if len(pages) > len(SITES) and pages[0].url == "about:blank":
+        if len(pages) > len(all_sites) and pages[0].url == "about:blank":
             await pages[0].close()
 
         print()
@@ -77,14 +91,19 @@ async def main():
         print("登录完成后，直接关闭浏览器窗口即可。")
         print()
 
-        # 等待用户关闭浏览器
+        while True:
+            await asyncio.sleep(1)
+            try:
+                open_pages = [page for page in context.pages if not page.is_closed()]
+            except Exception:
+                break
+            if not open_pages:
+                break
+
         try:
-            await context.pages[0].wait_for_event("close", timeout=0)
+            await context.close()
         except Exception:
             pass
-
-        # 确保 context 正确关闭以保存状态
-        await context.close()
 
     print()
     print("=" * 60)

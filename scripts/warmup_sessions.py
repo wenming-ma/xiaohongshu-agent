@@ -13,6 +13,7 @@
 import shutil
 import subprocess
 import sys
+import os
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -27,10 +28,22 @@ CHROME_PATHS = [
 SITES = [
     ("小红书创作者平台", "https://creator.xiaohongshu.com/publish/publish"),
     ("Google 账号", "https://accounts.google.com"),
+    ("Medium", "https://medium.com"),
+    ("Allure", "https://www.allure.com"),
+    ("Byrdie", "https://www.byrdie.com"),
+    ("Who What Wear", "https://www.whowhatwear.com"),
     ("X (Twitter)", "https://x.com/home"),
-    ("Instagram", "https://www.instagram.com"),
     ("TikTok", "https://www.tiktok.com"),
 ]
+
+
+def extra_sites() -> list[tuple[str, str]]:
+    raw = os.getenv("ARTICLE_LOGIN_URLS", "")
+    sites: list[tuple[str, str]] = []
+    for idx, url in enumerate((item.strip() for item in raw.split(",")), start=1):
+        if url:
+            sites.append((f"自定义站点 {idx}", url))
+    return sites
 
 
 def find_chrome() -> str:
@@ -49,7 +62,8 @@ def main():
     session_dir = str(Path(PathConfig.BROWSER_SESSION_SHARED).resolve())
     Path(session_dir).mkdir(parents=True, exist_ok=True)
 
-    urls = [url for _, url in SITES]
+    all_sites = SITES + extra_sites()
+    urls = [url for _, url in all_sites]
 
     print("=" * 60)
     print("浏览器会话预热")
@@ -58,7 +72,7 @@ def main():
     print(f"会话目录: {session_dir}")
     print()
     print("待登录站点:")
-    for i, (name, url) in enumerate(SITES):
+    for i, (name, url) in enumerate(all_sites):
         print(f"  {i+1}. {name} — {url}")
     print()
     print("【重要】请先关闭所有已打开的 Chrome 窗口！")

@@ -3,14 +3,13 @@ from pathlib import Path
 from typing import Any, List
 
 from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPServerStdio
 
 from .....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import VideoResearchResult, Platform
 from .....utils.providers import get_text_model
 from .....utils.logger import get_logger
-from .....utils.playwright_artifacts import install_playwright_artifact_guard
-from .....config.settings import RetryConfig, PathConfig, TimeoutConfig
+from .....config.settings import RetryConfig, PathConfig
+from ...shared import create_shared_playwright_mcp_server
 
 from .validator import VideoSearchValidator, VideoListQualityFilter
 from .prompts import research_system_prompt, research_user_prompt
@@ -32,25 +31,11 @@ class ResearchAgent(BaseAgent):
         self.init_validators()
 
     def init_mcp_server(self) -> None:
-        self.mcp_server = MCPServerStdio(
-            command='npx',
-            args=[
-                '-y', '@playwright/mcp@latest',
-                '--browser', 'chromium',
-                '--user-data-dir', PathConfig.BROWSER_SESSION_SHARED,
-                '--output-dir', str(PathConfig.DOWNLOADS_DIR),
-            ],
-            env={
-                'HEADLESS': 'false',
-                'BROWSER_TYPE': 'chromium',
-                'USER_DATA_DIR': PathConfig.BROWSER_SESSION_SHARED,
-            },
+        self.mcp_server = create_shared_playwright_mcp_server(
+            output_dir=PathConfig.DOWNLOADS_DIR,
             tool_prefix='playwright',
-            cache_tools=True,
-            max_retries=RetryConfig.MCP_RETRIES,
-            timeout=TimeoutConfig.MCP_INIT_TIMEOUT,
+            headless=False,
         )
-        install_playwright_artifact_guard(self.mcp_server)
 
     def init_tools(self) -> None:
         pass

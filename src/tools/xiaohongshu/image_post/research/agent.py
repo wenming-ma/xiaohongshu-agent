@@ -18,15 +18,14 @@ from pathlib import Path
 from typing import Any
 
 from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPServerStdio
 
 from .....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import ResearchResult
 from .....utils.providers import get_text_model
 from .....utils.navigate_tracker import NavigateTracker
 from .....utils.logger import get_logger
-from .....utils.playwright_artifacts import install_playwright_artifact_guard
-from .....config.settings import RetryConfig, ResearchConfig, PathConfig, TimeoutConfig
+from .....config.settings import RetryConfig, ResearchConfig, PathConfig
+from ...shared import create_shared_playwright_mcp_server
 from ...shared.video_extract import create_video_extract_tool
 from ...shared.login import create_login_tool
 
@@ -61,20 +60,11 @@ class ResearchAgent(BaseAgent):
 
     def init_mcp_server(self) -> None:
         """初始化 Playwright MCP Server"""
-        self.mcp_server = MCPServerStdio(
-            command='npx',
-            args=['-y', '@playwright/mcp@latest', '--output-dir', str(PathConfig.DOWNLOADS_DIR)],
-            env={
-                'HEADLESS': 'false',
-                'BROWSER_TYPE': 'chromium',
-                'USER_DATA_DIR': PathConfig.BROWSER_SESSION_SHARED
-            },
+        self.mcp_server = create_shared_playwright_mcp_server(
+            output_dir=PathConfig.DOWNLOADS_DIR,
             tool_prefix='playwright',
-            cache_tools=True,
-            max_retries=RetryConfig.MCP_RETRIES,
-            timeout=TimeoutConfig.MCP_INIT_TIMEOUT,
+            headless=False,
         )
-        install_playwright_artifact_guard(self.mcp_server)
         self.navigate_tracker = NavigateTracker(self.mcp_server)
 
     def init_tools(self) -> None:

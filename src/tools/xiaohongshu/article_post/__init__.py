@@ -1,3 +1,6 @@
-from .tool import XHSArticlePostTool
+"""XHS Article Post Tool exports."""
 
-__all__ = ["XHSArticlePostTool"]
+from .tool import XHSArticlePostTool
+from .schemas import XHSArticlePostInput, XHSArticlePostOutput
+
+__all__ = ["XHSArticlePostTool", "XHSArticlePostInput", "XHSArticlePostOutput"]

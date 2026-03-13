@@ -52,6 +52,7 @@ class PathConfig:
     _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
     DOWNLOADS_DIR = _PROJECT_ROOT / 'output' / 'playwright-downloads'
     IMAGE_PROJECT_DIR = _PROJECT_ROOT / 'posts' / 'image-posts'
+    ARTICLE_PROJECT_DIR = _PROJECT_ROOT / 'posts' / 'article-posts'
     VIDEO_PROJECT_DIR = _PROJECT_ROOT / 'posts' / 'video-posts'
     BROWSER_SESSION_SHARED = str(_PROJECT_ROOT / 'browser-sessions' / 'shared')
     BROWSER_SESSION_XHS = BROWSER_SESSION_SHARED
@@ -59,10 +60,16 @@ class PathConfig:
 
 
 class APIConfig:
+    ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL")
+    ANTHROPIC_FALLBACK_BASE_URL = os.getenv("ANTHROPIC_FALLBACK_BASE_URL")
+    ANTHROPIC_ENDPOINTS = [
+        {"api_key_env": "ANTHROPIC_API_KEY"},
+    ]
     MINIMAX_MODEL = os.getenv("MINIMAX_MODEL", "MiniMax-M2.5")
     MINIMAX_BASE_URL = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/anthropic")
     GOOGLE_MODEL = os.getenv("GOOGLE_MODEL", "gemini-2.5-flash")
     MODEL_PROVIDER = os.getenv("MODEL_PROVIDER", "minimax")
+    GEMINI_URL = os.getenv("GEMINI_URL", "https://gemini.google.com/app")
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
     GEMINI_FALLBACK_API_KEYS = _split_csv_env("GEMINI_FALLBACK_API_KEYS")
     GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3-pro-image-preview")

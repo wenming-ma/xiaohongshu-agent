@@ -4,8 +4,8 @@
 
 ## 核心功能
 
-- **智能研究**：使用 Playwright MCP 自动搜索和分析小红书内容
-- **内容创作**：基于研究数据生成高质量的小红书帖子
+- **智能研究**：支持站内研究、跨站深搜、文章精读和视频转录
+- **内容创作**：基于研究数据生成图文、视频文案和小红书长文
 
 ## 技术栈
 
@@ -35,7 +35,7 @@ xiaohongshu-agent/
 │           │   ├── publish/
 │           │   └── login/
 │           ├── video_post/      # 小红书视频工具
-│           └── article_post/    # 文章工具占位（未实现）
+│           └── article_post/    # 小红书长文工具
 ├── scripts/                     # 辅助脚本
 ├── tests/                       # 测试与集成脚本
 ├── workshop/                    # 选题与实验资料
@@ -57,7 +57,7 @@ uv sync
 
 ### 2. 配置 API 密钥
 
-编辑 `.env` 文件。当前图文工作流至少需要以下环境变量：
+编辑 `.env` 文件。当前工作流至少需要以下环境变量：
 
 ```env
 ANTHROPIC_API_KEY=your-api-key-here
@@ -75,13 +75,21 @@ ANTHROPIC_FALLBACK_BASE_URL=https://your-fallback-endpoint
 ANTHROPIC_FALLBACK_API_KEY=your-fallback-key
 ```
 
-### 3. 运行工作流
+### 3. 预热浏览器登录态（可选但推荐）
+
+```bash
+uv run python scripts/open_browser_for_login.py
+```
+
+可通过 `ARTICLE_LOGIN_URLS` 追加需要预登录的站点，例如 `Medium` 或其它有会员登录要求的媒体站。
+
+### 4. 运行工作流
 
 ```bash
 uv run python -m src.main --topic "西安公司避坑指南" --audience "求职者"
 ```
 
-### 4. 查看输出
+### 5. 查看输出
 
 生成的内容保存在 `posts/` 目录下，包括：
 - `research.json`: 研究结果
@@ -93,16 +101,16 @@ uv run python -m src.main --topic "西安公司避坑指南" --audience "求职�
 
 ```
 1. 研究阶段 (ResearchAgent)
-   └─> 搜索小红书 → 阅读帖子和评论 → 提取实体和案例
+   └─> 小红书站内研究 / 海外女性向媒体深搜 / 视频转录
 
 2. 创作阶段 (ContentAgent)
    └─> 分析研究数据 → 生成标题和正文 → 输出结构化内容
 
 3. 配图阶段 (ImageAgent)
-   └─> 语义分组 → 生成图片提示词 → Gemini 生成 → 质量验证
+   └─> 基于内容结构生成头图和章节配图
 
 4. 发布阶段 (PublisherAgent)
-   └─> 自动登录 → 批量上传图片 → 填写内容 → 发布
+   └─> 自动登录 / 复用缓存会话 → 填写内容 → 发布
 ```
 
 ## 优势
