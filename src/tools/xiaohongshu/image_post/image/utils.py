@@ -60,7 +60,11 @@ def calculate_grouping_params(item_count: int) -> tuple[int, int, int]:
     else:
         target_group_size = ImageConfig.ENTITIES_PER_DETAIL
     target_group_size = max(ImageConfig.ENTITIES_PER_DETAIL, target_group_size)
-    max_group_size_cap = max(ImageConfig.MAX_GROUP_SIZE_CAP, ImageConfig.ENTITIES_PER_DETAIL)
+    max_group_size_cap = max(
+        ImageConfig.MAX_GROUP_SIZE_CAP,
+        ImageConfig.ENTITIES_PER_DETAIL,
+        target_group_size,  # 确保 cap >= 实际每组需要的数量，避免数学上不可能通过验证
+    )
     return target_groups, target_group_size, max_group_size_cap
 
 
