@@ -17,7 +17,7 @@ def build_shared_playwright_mcp_args(output_dir: Path | None = None) -> list[str
         "-y",
         "@playwright/mcp@latest",
         "--browser",
-        "chromium",
+        "chrome",
         "--user-data-dir",
         session_dir,
         "--output-dir",
@@ -28,7 +28,7 @@ def build_shared_playwright_mcp_args(output_dir: Path | None = None) -> list[str
 def build_shared_playwright_mcp_env(*, headless: bool = False) -> dict[str, str]:
     return {
         "HEADLESS": "true" if headless else "false",
-        "BROWSER_TYPE": "chromium",
+        "BROWSER_TYPE": "chrome",
         "USER_DATA_DIR": str(Path(PathConfig.BROWSER_SESSION_SHARED)),
     }
 
