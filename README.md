@@ -44,6 +44,7 @@ xiaohongshu-agent/
 │   ├── playwright-mcp/          # Playwright MCP 子模块
 │   ├── autogen/                 # AutoGen 参考实现子模块
 │   ├── crewai/                  # crewAI 参考实现子模块
+│   ├── deepagents/              # DeepAgents 参考实现子模块
 │   ├── langgraph/               # LangGraph 参考实现子模块
 │   ├── playwright/              # Playwright 源码子模块
 │   └── reference/               # 仅供参考的独立仓库
