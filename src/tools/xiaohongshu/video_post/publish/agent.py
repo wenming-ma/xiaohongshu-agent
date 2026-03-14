@@ -25,9 +25,9 @@ class PublisherAgent(BaseAgent):
         self.init_mcp_server()
         super().__init__()
 
-    def init_mcp_server(self):
+    def init_mcp_server(self, output_dir: Path | None = None):
         self.mcp_server = create_shared_playwright_mcp_server(
-            output_dir=PathConfig.DOWNLOADS_DIR,
+            output_dir=output_dir or PathConfig.DOWNLOADS_DIR,
             tool_prefix='playwright',
             headless=False,
         )
@@ -54,6 +54,12 @@ class PublisherAgent(BaseAgent):
         output_dir: Path,
     ) -> VideoPublishResult:
         logger.info("准备发布视频到小红书: %s", content.title)
+
+        # 重新初始化 MCP Server，使其 cwd 指向帖子目录，
+        # 这样 Playwright 才能访问该目录下的视频文件进行上传
+        self.init_mcp_server(output_dir)
+        self.init_tools()
+        self.init_agent()
 
         self._check_video(video_path)
 

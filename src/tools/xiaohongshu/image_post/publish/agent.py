@@ -34,10 +34,10 @@ class PublisherAgent(BaseAgent):
         self.init_mcp_server()
         super().__init__()
 
-    def init_mcp_server(self):
+    def init_mcp_server(self, output_dir: Path | None = None):
         """初始化 Playwright MCP Server"""
         self.mcp_server = create_shared_playwright_mcp_server(
-            output_dir=PathConfig.DOWNLOADS_DIR,
+            output_dir=output_dir or PathConfig.DOWNLOADS_DIR,
             tool_prefix='playwright',
             headless=False,
         )
@@ -86,6 +86,12 @@ class PublisherAgent(BaseAgent):
             PublishResult: 发布结果
         """
         logger.info("准备发布到小红书: %s (%d 张图片)", content.title, len(images))
+
+        # 重新初始化 MCP Server，使其 cwd 指向帖子目录，
+        # 这样 Playwright 才能访问该目录下的图片进行上传
+        self.init_mcp_server(output_dir)
+        self.init_tools()
+        self.init_agent()
 
         # 验证图片输入
         self._check_images(images)
