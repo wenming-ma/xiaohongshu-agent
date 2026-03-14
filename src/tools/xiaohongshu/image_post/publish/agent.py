@@ -173,22 +173,20 @@ class PublisherAgent(BaseAgent):
             for i, img in enumerate(images)
         ])
 
-        # 预先拼接正文、行动号召和话题，避免 LLM 在浏览器操作时遗漏或覆盖
+        # 预先拼接正文和行动号召
         full_body = content.body
 
         # 添加行动号召
         if content.call_to_action:
             full_body = f"{full_body}\n\n{content.call_to_action}"
 
-        # 添加话题到正文末尾（小红书话题格式：#话题名 空格分隔）
-        if content.hashtags:
-            hashtags_formatted = " ".join([f"#{tag}" for tag in content.hashtags])
-            full_body = f"{full_body} {hashtags_formatted}"
+        # 话题通过"# 话题"按钮单独添加，不拼接到正文中
+        hashtags_str = "\n".join([f"   - {tag}" for tag in content.hashtags]) if content.hashtags else "无"
 
         return publisher_user_prompt(
             title=content.title,
             body=full_body,
-            hashtags="",  # 话题已拼接到正文中，传空字符串
+            hashtags=hashtags_str,
             image_count=len(images),
             image_paths=image_paths_str,
         )

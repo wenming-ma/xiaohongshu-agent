@@ -57,10 +57,12 @@ class PublisherAgent(BaseAgent):
         output_dir: Path,
     ) -> ArticlePublishResult:
         logger.info("准备发布长文: %s", content.title)
+        hashtags_str = "\n".join([f"   - {tag}" for tag in content.hashtags]) if content.hashtags else "无"
         result = await self.step(
             publish_user_prompt(
                 title=content.title,
                 body=content.rendered_body,
+                hashtags=hashtags_str,
             )
         )
         validation = await self.validate(result)
