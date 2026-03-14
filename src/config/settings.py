@@ -86,7 +86,7 @@ class PublishConfig:
 
 
 class ResearchConfig:
-    MIN_POSTS_RESEARCHED = 19
+    MIN_POSTS_RESEARCHED = 21
     MIN_KEY_INFOS = 15
     MIN_CASES = 10
     MIN_COMMENT_DATA_RATIO = 0.4
