@@ -63,6 +63,9 @@ Always use Context7 MCP when I need library/API documentation, code generation, 
 
 When necessary, always refer to and use information from code repositories in the submodules directory.
 
+Treat `submodules/` top-level entries as managed submodules and `submodules/reference/` as reference-only repositories.
+Do not import runtime code from `submodules/reference/` unless the current task explicitly migrates it into the main project.
+
 Use uv to manage the project and run python code
 
 Always keep comments minimal in code

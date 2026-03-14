@@ -39,12 +39,27 @@ def save_iteration_result(
         "timestamp": timestamp,
         "validation_feedback": validation_feedback,
         "error_message": error_message,
+        "brief": _dump_model(state.brief),
+        "supervisor_iteration": state.supervisor_iteration,
         "query_plan": state.current_plan.model_dump() if state.current_plan else None,
+        "pending_tasks": [_dump_model(task) for task in state.pending_tasks],
+        "completed_task_results": [
+            _dump_model(task_result) for task_result in state.completed_task_results
+        ],
+        "current_notes": [_dump_model(note) for note in state.current_notes],
+        "aggregated_notes": [_dump_model(note) for note in state.aggregated_notes],
         "candidate_count": len(state.current_candidates),
         "candidates": [
             {"query": query, "result": result.model_dump()}
             for query, result in state.current_candidates
         ],
+        "current_task_candidates": {
+            task_id: [
+                {"query": query, "result": result.model_dump()}
+                for query, result in candidates
+            ]
+            for task_id, candidates in state.current_task_candidates.items()
+        },
         "new_collected_count": len(state.current_collected),
         "current_collected_sources": [
             collect_source_payload(source) for source in state.current_collected

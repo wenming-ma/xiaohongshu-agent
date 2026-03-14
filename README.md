@@ -41,11 +41,24 @@ xiaohongshu-agent/
 ├── workshop/                    # 选题与实验资料
 ├── submodules/
 │   ├── pydantic-ai/             # Pydantic-AI 子模块
-│   └── playwright-mcp/          # Playwright MCP 子模块
+│   ├── playwright-mcp/          # Playwright MCP 子模块
+│   ├── autogen/                 # AutoGen 参考实现子模块
+│   ├── crewai/                  # crewAI 参考实现子模块
+│   ├── langgraph/               # LangGraph 参考实现子模块
+│   ├── playwright/              # Playwright 源码子模块
+│   └── reference/               # 仅供参考的独立仓库
+│       ├── gemini-watermark-remover/
+│       └── external-reference-agent/
 ├── pyproject.toml
 ├── uv.lock
 └── setup.py
 ```
+
+## 子模块约定
+
+- `submodules/` 顶层只保留长期维护的正式子模块。
+- `submodules/reference/` 只放参考仓库，不作为主仓运行时依赖。
+- `external-reference-agent` 与 `gemini-watermark-remover` 保留独立仓库边界，本仓只引用其实现思路或历史结构，不直接复用运行时代码。
 
 ## 快速开始
 

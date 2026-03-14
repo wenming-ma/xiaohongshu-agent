@@ -5,8 +5,55 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from pydantic import BaseModel, Field
+
 from ..schemas import ArticleResearchResult, ArticleStrategy, SourceDigest
 from .tools import CollectedSource, SearchPlan, SearchResult
+
+
+class ResearchBrief(BaseModel):
+    objective: str = ""
+    audience_focus: str = ""
+    article_focuses: list[str] = Field(default_factory=list, max_length=4)
+    video_focuses: list[str] = Field(default_factory=list, max_length=3)
+    must_cover: list[str] = Field(default_factory=list, max_length=5)
+    avoid_patterns: list[str] = Field(default_factory=list, max_length=4)
+    iteration_guidance: str = ""
+
+
+class ResearchTask(BaseModel):
+    task_id: str = ""
+    goal: str = ""
+    source_focus: str = "balanced"
+    article_queries: list[str] = Field(default_factory=list, max_length=3)
+    video_queries: list[str] = Field(default_factory=list, max_length=2)
+    done_when: str = ""
+    avoid_patterns: list[str] = Field(default_factory=list, max_length=4)
+
+
+class SupervisorPlan(BaseModel):
+    summary: str = ""
+    tasks: list[ResearchTask] = Field(default_factory=list, max_length=4)
+
+
+class ResearchTaskResult(BaseModel):
+    task_id: str
+    goal: str = ""
+    candidate_results: list[SearchResult] = Field(default_factory=list)
+    collected_source_refs: list[str] = Field(default_factory=list)
+    new_digests: list[SourceDigest] = Field(default_factory=list)
+    raw_findings: list[str] = Field(default_factory=list)
+    gaps: list[str] = Field(default_factory=list)
+    suggested_followups: list[str] = Field(default_factory=list)
+
+
+class CompressedResearchNote(BaseModel):
+    task_id: str
+    summary: str = ""
+    key_findings: list[str] = Field(default_factory=list, max_length=5)
+    unresolved_gaps: list[str] = Field(default_factory=list, max_length=4)
+    recommended_next_queries: list[str] = Field(default_factory=list, max_length=4)
+    source_refs: list[str] = Field(default_factory=list)
 
 
 @dataclass
@@ -17,9 +64,17 @@ class ResearchState:
     output_dir: Path | None
     working_dir: Path | None = None
 
+    brief: ResearchBrief | None = None
+    supervisor_iteration: int = 0
+    pending_tasks: list[ResearchTask] = field(default_factory=list)
+    completed_task_results: list[ResearchTaskResult] = field(default_factory=list)
+    current_notes: list[CompressedResearchNote] = field(default_factory=list)
+    aggregated_notes: list[CompressedResearchNote] = field(default_factory=list)
+
     current_result: ArticleResearchResult | None = None
     current_plan: SearchPlan | None = None
     current_candidates: list[tuple[str, SearchResult]] = field(default_factory=list)
+    current_task_candidates: dict[str, list[tuple[str, SearchResult]]] = field(default_factory=dict)
     current_collected: list[CollectedSource] = field(default_factory=list)
     current_digests: list[SourceDigest] = field(default_factory=list)
 
@@ -53,6 +108,21 @@ def build_progress_snapshot(
         if len(previews) >= max_sources:
             break
 
+    task_lines = []
+    for task in state.pending_tasks[:4]:
+        task_lines.append(f"- {task.task_id or 'task'} | {task.goal}")
+    task_text = "\n".join(task_lines) if task_lines else "- (none)"
+
+    gap_lines = []
+    for note in state.aggregated_notes[-4:]:
+        for gap in note.unresolved_gaps[:2]:
+            gap_lines.append(f"- [{note.task_id}] {gap}")
+            if len(gap_lines) >= max_sources:
+                break
+        if len(gap_lines) >= max_sources:
+            break
+    gap_text = "\n".join(gap_lines) if gap_lines else "- (none)"
+
     preview_text = "\n".join(previews) if previews else "- (none)"
     saved_files = state.saved_files[:]
     if saved_file and saved_file not in saved_files:
@@ -68,6 +138,8 @@ def build_progress_snapshot(
         f"累计有效来源: {len(state.collected_sources)}\n"
         f"累计 digest 数: {len(state.digests_by_source)}\n"
         f"digest 来源:\n{digest_text}\n\n"
+        f"最近任务:\n{task_text}\n\n"
+        f"待补证据缺口:\n{gap_text}\n\n"
         f"已收集来源预览:\n{preview_text}\n\n"
         "请避免重复之前的 query 和页面，优先补足缺失域名、缺失视频来源或缺失 claim 支撑。"
     )

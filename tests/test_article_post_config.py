@@ -2,6 +2,14 @@ import asyncio
 import json
 from pathlib import Path
 
+from src.tools.xiaohongshu.article_post.research.agent import ResearchAgent
+from src.tools.xiaohongshu.article_post.research.state import (
+    CompressedResearchNote,
+    ResearchBrief,
+    ResearchState,
+    ResearchTask,
+    ResearchTaskResult,
+)
 from src.tools.xiaohongshu.article_post.schemas import (
     ArticleClaim,
     ArticleResearchResult,
@@ -12,7 +20,6 @@ from src.tools.xiaohongshu.article_post.schemas import (
     XHSArticlePostInput,
     XHSArticlePostOutput,
 )
-from src.tools.xiaohongshu.article_post.research.state import ResearchState
 from src.tools.xiaohongshu.article_post.research.tools import build_site_queries
 from src.tools.xiaohongshu.article_post.research.tools import (
     CollectedSource,
@@ -65,11 +72,32 @@ def test_article_research_iteration_result_is_saved(tmp_path) -> None:
         strategy=ArticleStrategy.AUTO,
         output_dir=tmp_path,
     )
+    state.brief = ResearchBrief(
+        objective="形成可发布的小红书长文研究底稿",
+        audience_focus="25-35岁女性",
+        article_focuses=["capsule wardrobe", "spring basics"],
+        video_focuses=["capsule wardrobe video"],
+        must_cover=["趋势", "案例"],
+        avoid_patterns=["重复 query"],
+        iteration_guidance="优先补齐来源广度",
+    )
+    state.supervisor_iteration = 1
     state.current_plan = SearchPlan(
         article_queries=["capsule wardrobe"],
         video_queries=["capsule wardrobe video"],
         notes="focus on spring style",
     )
+    state.pending_tasks = [
+        ResearchTask(
+            task_id="iter_1_task_1",
+            goal="验证春季 capsule wardrobe 主论点",
+            source_focus="article",
+            article_queries=["capsule wardrobe"],
+            video_queries=["capsule wardrobe video"],
+            done_when="至少拿到 2 个来源",
+            avoid_patterns=["重复 query"],
+        )
+    ]
     state.current_candidates = [
         (
             'site:allure.com "capsule wardrobe"',
@@ -82,6 +110,9 @@ def test_article_research_iteration_result_is_saved(tmp_path) -> None:
             ),
         )
     ]
+    state.current_task_candidates = {
+        "iter_1_task_1": state.current_candidates[:],
+    }
     state.current_collected = [
         CollectedSource(
             ref="source_1",
@@ -116,6 +147,29 @@ def test_article_research_iteration_result_is_saved(tmp_path) -> None:
         )
     ]
     state.digests_by_source = {"source_1": state.current_digests[0]}
+    state.completed_task_results = [
+        ResearchTaskResult(
+            task_id="iter_1_task_1",
+            goal="验证春季 capsule wardrobe 主论点",
+            candidate_results=[state.current_candidates[0][1]],
+            collected_source_refs=["source_1"],
+            new_digests=state.current_digests[:],
+            raw_findings=["Neutral basics work well."],
+            gaps=["来源域名仍偏少"],
+            suggested_followups=["capsule wardrobe expert advice"],
+        )
+    ]
+    state.current_notes = [
+        CompressedResearchNote(
+            task_id="iter_1_task_1",
+            summary="本轮拿到了基础 wardrobe 建议。",
+            key_findings=["Neutral basics work well."],
+            unresolved_gaps=["来源域名仍偏少"],
+            recommended_next_queries=["capsule wardrobe expert advice"],
+            source_refs=["source_1"],
+        )
+    ]
+    state.aggregated_notes = state.current_notes[:]
     state.evidence_files = [str(tmp_path / "research_sources" / "source_1.json")]
     state.digests_path = str(tmp_path / "digests.json")
     state.source_index_path = str(tmp_path / "source_index.json")
@@ -148,6 +202,13 @@ def test_article_research_iteration_result_is_saved(tmp_path) -> None:
     assert Path(saved_file).exists()
     assert payload["iteration"] == 1
     assert payload["validation_feedback"] == "need more domains"
+    assert payload["brief"]["objective"] == "形成可发布的小红书长文研究底稿"
+    assert payload["supervisor_iteration"] == 1
+    assert payload["pending_tasks"][0]["task_id"] == "iter_1_task_1"
+    assert payload["completed_task_results"][0]["task_id"] == "iter_1_task_1"
+    assert payload["current_notes"][0]["task_id"] == "iter_1_task_1"
+    assert payload["aggregated_notes"][0]["task_id"] == "iter_1_task_1"
+    assert payload["current_task_candidates"]["iter_1_task_1"][0]["query"] == 'site:allure.com "capsule wardrobe"'
     assert payload["candidate_count"] == 1
     assert payload["new_collected_count"] == 1
     assert payload["total_collected_count"] == 1
@@ -229,3 +290,90 @@ def test_local_evidence_store_returns_relevant_excerpt(tmp_path) -> None:
     assert len(excerpt_payload) == 2
     assert any("linen blazer" in item["text"].lower() for item in excerpt_payload)
     assert digest_payload["source_ref"] == "source_1"
+
+
+def test_article_search_candidates_runs_concurrently_and_dedupes() -> None:
+    class FakeSearchClient:
+        def __init__(self) -> None:
+            self.active = 0
+            self.max_active = 0
+            self.calls: list[tuple[str, int]] = []
+
+        async def search(self, query: str, max_results: int = 4) -> list[SearchResult]:
+            self.calls.append((query, max_results))
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            await asyncio.sleep(0.01)
+            self.active -= 1
+            mapping = {
+                "q1": [
+                    SearchResult(
+                        title="One",
+                        url="https://www.allure.com/story/one",
+                        snippet="one",
+                        domain="www.allure.com",
+                        rank=1,
+                    ),
+                    SearchResult(
+                        title="Two",
+                        url="https://www.elle.com/story/two",
+                        snippet="two",
+                        domain="www.elle.com",
+                        rank=2,
+                    ),
+                ],
+                "q2": [
+                    SearchResult(
+                        title="One Duplicate",
+                        url="https://www.allure.com/story/one",
+                        snippet="dup",
+                        domain="www.allure.com",
+                        rank=1,
+                    ),
+                    SearchResult(
+                        title="Three",
+                        url="https://www.vogue.com/story/three",
+                        snippet="three",
+                        domain="www.vogue.com",
+                        rank=2,
+                    ),
+                ],
+            }
+            return mapping.get(query, [])
+
+    agent = ResearchAgent.__new__(ResearchAgent)
+    agent.SEARCH_CONCURRENCY = 3
+    agent.search_client = FakeSearchClient()
+    agent._compile_task_queries = lambda task: task.article_queries + task.video_queries
+
+    state = ResearchState(
+        topic="capsule wardrobe",
+        target_audience="25-35岁女性",
+        strategy=ArticleStrategy.AUTO,
+        output_dir=None,
+    )
+    tasks = [
+        ResearchTask(task_id="task_a", goal="A", article_queries=["q1"]),
+        ResearchTask(task_id="task_b", goal="B", article_queries=["q1", "q2"]),
+    ]
+
+    task_candidates = asyncio.run(agent._search_candidates(tasks, state))
+
+    assert len(agent.search_client.calls) == 2
+    assert agent.search_client.max_active >= 2
+    assert agent.search_client.max_active <= agent.SEARCH_CONCURRENCY
+    assert len(state.current_candidates) == 3
+    assert [result.url for _, result in task_candidates["task_a"]] == [
+        "https://www.allure.com/story/one",
+        "https://www.elle.com/story/two",
+    ]
+    assert [result.url for _, result in task_candidates["task_b"]] == [
+        "https://www.allure.com/story/one",
+        "https://www.elle.com/story/two",
+        "https://www.vogue.com/story/three",
+    ]
+    assert state.seen_candidate_urls == {
+        "https://www.allure.com/story/one",
+        "https://www.elle.com/story/two",
+        "https://www.vogue.com/story/three",
+    }
