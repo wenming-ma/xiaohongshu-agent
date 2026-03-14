@@ -1,5 +1,5 @@
 """
-迭代执行 workshop/topics.json 中的话题，仅调用 XHSImagePostTool。
+迭代执行 workshop/image_topics.json 中的话题，仅调用 XHSImagePostTool。
 
 用法:
     uv run python workshop/run_image_posts.py
@@ -217,7 +217,7 @@ async def run_batch(args: argparse.Namespace) -> int:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="批量执行 XHS Image Post（仅 image_post agent）")
-    p.add_argument("--topics-file", type=Path, default=SCRIPT_DIR / "topics.json", help="话题 JSON 文件")
+    p.add_argument("--topics-file", type=Path, default=SCRIPT_DIR / "image_topics.json", help="话题 JSON 文件")
     p.add_argument("--start-index", type=int, default=1, help="从第几个话题开始 (1-based)")
     p.add_argument("--limit", type=int, default=None, help="最多处理几个话题")
     p.add_argument("--max-retries", type=int, default=10, help="单个话题最大重试次数")

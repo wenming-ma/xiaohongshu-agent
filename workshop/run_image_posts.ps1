@@ -35,8 +35,8 @@ if ($Limit -gt 0) {
     $pyArgs += @("--limit", $Limit)
 }
 
-# 读取 topics.json 计算总数用于显示
-$topicsFile = Join-Path $scriptDir "topics.json"
+# 读取 image_topics.json 计算总数用于显示
+$topicsFile = Join-Path $scriptDir "image_topics.json"
 $topics = Get-Content -Raw -Path $topicsFile -Encoding UTF8 | ConvertFrom-Json
 $totalCount = $topics.Count
 
