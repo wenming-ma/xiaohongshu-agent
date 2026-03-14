@@ -37,7 +37,7 @@ from .state import (
     build_progress_snapshot,
     combine_feedback,
 )
-from .utils import save_iteration_result, merge_results
+from .utils import save_iteration_result, merge_results as _merge_results
 
 logger = get_logger(__name__)
 
@@ -238,10 +238,20 @@ class ResearchAgent(BaseAgent):
             logger.warning("研究结果没有内容项")
             return ValidationResult.failure("研究结果没有内容项")
 
-        if output.sources_count < ResearchConfig.MIN_POSTS_RESEARCHED:
+        # 合并历史轮次数据后再验证，避免对增量数据按全量标准误判
+        if state.iteration_results:
+            merged_output = _merge_results(state.iteration_results + [output], tracked_stats)
+            logger.info(
+                f"合并历史数据进行验证：历史 {sum(len(r.items) for r in state.iteration_results)} 条"
+                f" + 本轮 {len(output.items)} 条 = 合并后 {len(merged_output.items)} 条"
+            )
+        else:
+            merged_output = output
+
+        if merged_output.sources_count < ResearchConfig.MIN_POSTS_RESEARCHED:
             logger.warning(
                 "来源数量不足: %d < %d",
-                output.sources_count,
+                merged_output.sources_count,
                 ResearchConfig.MIN_POSTS_RESEARCHED
             )
 
@@ -255,12 +265,12 @@ class ResearchAgent(BaseAgent):
         # 深度验证
         logger.info("验证研究深度...")
         with logfire.span('research:validate_depth'):
-            depth_result = await self.depth_validator.validate(output, validation_context)
+            depth_result = await self.depth_validator.validate(merged_output, validation_context)
 
         # 质量验证
         logger.info("验证数据质量...")
         with logfire.span('research:validate_quality'):
-            review_result = await self.review_validator.validate(output, validation_context)
+            review_result = await self.review_validator.validate(merged_output, validation_context)
 
         passed = depth_result.passed and review_result.passed
         feedback = combine_feedback(depth_result, review_result) if not passed else ""
@@ -286,7 +296,7 @@ class ResearchAgent(BaseAgent):
             return result
 
         # 合并所有历史 + 当前
-        return merge_results(state.iteration_results + [result], state.tracked_stats)
+        return _merge_results(state.iteration_results + [result], state.tracked_stats)
 
     def on_validation_failed(
         self,
