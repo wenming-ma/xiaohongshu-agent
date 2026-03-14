@@ -28,14 +28,12 @@ class ArticleBlockType(str, Enum):
     BULLET_LIST = "bullet_list"
     NUMBERED_LIST = "numbered_list"
     QUOTE = "quote"
-    IMAGE_SLOT = "image_slot"
 
 
 class XHSArticlePostInput(BaseModel):
     topic: str
     audience: str
     publish: bool = True
-    generate_images: bool = True
     strategy: ArticleStrategy = ArticleStrategy.AUTO
 
 
@@ -44,8 +42,6 @@ class XHSArticlePostOutput(BaseModel):
     title: str = ""
     body_preview: str = ""
     hashtags: list[str] = []
-    image_count: int = 0
-    image_paths: list[str] = []
     published: bool = False
     post_url: str | None = None
     output_dir: str = ""
@@ -232,24 +228,6 @@ class ArticleReviewResult(BaseModel):
     summary: str = ""
 
 
-class ArticleImageSpec(BaseModel):
-    image_key: str
-    label: str
-    prompt_hint: str
-    source_refs: list[str] = []
-
-
-class GeneratedArticleImage(BaseModel):
-    image_key: str
-    image_path: str
-    prompt_used: str
-
-
-class ArticleImageResult(BaseModel):
-    images: list[GeneratedArticleImage] = []
-    total_count: int = 0
-    generated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
-
 
 class ArticlePublishResult(BaseModel):
     published: bool
@@ -259,4 +237,3 @@ class ArticlePublishResult(BaseModel):
     error_message: str = ""
     retry_count: int = 0
     content_snapshot: dict[str, Any] | None = None
-    image_paths: list[str] | None = None

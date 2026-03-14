@@ -68,7 +68,6 @@ class ContentAgent(BaseAgent):
         topic: str,
         target_audience: str,
         requested_strategy: ArticleStrategy,
-        generate_images: bool,
         output_dir: Path | None = None,
     ) -> XHSArticleContent:
         # Rebuild generator with evidence tools when output_dir is available
@@ -81,7 +80,6 @@ class ContentAgent(BaseAgent):
             topic=topic,
             target_audience=target_audience,
             strategy=strategy,
-            generate_images=generate_images,
             output_dir=output_dir,
         )
 
@@ -104,7 +102,6 @@ class ContentAgent(BaseAgent):
                 topic=state.topic,
                 target_audience=state.target_audience,
                 strategy=state.strategy.value,
-                generate_images=state.generate_images,
                 research_json=state.research.model_dump_json(indent=2),
             )
         else:
@@ -116,9 +113,10 @@ class ContentAgent(BaseAgent):
         )
         content = run_result.output
         content.strategy = state.strategy
+        if state.strategy == ArticleStrategy.SYNTHESIZE:
+            content.attribution_line = ""
+            content.primary_source_ref = ""
         content.rendered_body = self._render_body(content)
-        self._inject_missing_image_slots(content, state.generate_images)
-
         state.current_content = content
         state.message_history.extend(run_result.new_messages())
         self._current_state = state
@@ -190,18 +188,3 @@ class ContentAgent(BaseAgent):
             lines.append(" ".join(f"#{tag}" for tag in content.hashtags))
         return "\n".join(line for line in lines if line).strip()
 
-    @staticmethod
-    def _inject_missing_image_slots(content: XHSArticleContent, generate_images: bool) -> None:
-        if not generate_images:
-            return
-        for idx, section in enumerate(content.sections, start=1):
-            has_slot = any(block.block_type == ArticleBlockType.IMAGE_SLOT for block in section.blocks)
-            if has_slot:
-                continue
-            section.blocks.append(
-                ArticleBlock(
-                    block_type=ArticleBlockType.IMAGE_SLOT,
-                    image_key="cover" if idx == 1 else f"section_{idx}",
-                    source_refs=section.source_refs,
-                )
-            )

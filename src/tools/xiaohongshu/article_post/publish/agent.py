@@ -54,7 +54,6 @@ class PublisherAgent(BaseAgent):
     async def forward(
         self,
         content: XHSArticleContent,
-        images: list[Path],
         output_dir: Path,
     ) -> ArticlePublishResult:
         logger.info("准备发布长文: %s", content.title)
@@ -62,7 +61,6 @@ class PublisherAgent(BaseAgent):
             publish_user_prompt(
                 title=content.title,
                 body=content.rendered_body,
-                images=self._format_images(images),
             )
         )
         validation = await self.validate(result)
@@ -85,8 +83,3 @@ class PublisherAgent(BaseAgent):
             return ValidationResult.success(output.post_url or "长文已发布")
         return ValidationResult.failure(output.error_message or "长文发布失败")
 
-    @staticmethod
-    def _format_images(images: list[Path]) -> str:
-        if not images:
-            return "无图片，发布纯文字长文"
-        return "\n".join(f"{idx + 1}. {path}" for idx, path in enumerate(images))
