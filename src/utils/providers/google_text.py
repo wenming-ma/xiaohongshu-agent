@@ -152,8 +152,10 @@ class ResilientGoogleModel(Model):
     def _set_model(self, model_name: str) -> None:
         self._model_name_str = model_name
         self._inner = self._build()
-        self.settings = self._inner.settings
-        self.profile = self._inner.profile
+        self._settings = self._inner.settings
+        # profile is a @cached_property — update underlying storage and invalidate cache
+        self._profile = self._inner._profile
+        self.__dict__.pop('profile', None)
 
     def _reset_to_primary_model(self) -> None:
         self._model_index = 0
