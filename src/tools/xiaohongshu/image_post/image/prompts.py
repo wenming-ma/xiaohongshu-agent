@@ -14,22 +14,22 @@ IMAGE_SYSTEM_PROMPT = """# 角色定义
 #### 1️⃣ 人物特写风格（适合：人物故事、情感共鸣、生活方式）
 - **场景**：博主自拍、街拍、生活瞬间、工作场景、运动健身
 - **特点**：真实人物、自然表情、生活化场景、情感共鸣
-- **技术关键词**：portrait photography, candid shot, natural expression, lifestyle photography, 35mm lens, shallow depth of field, natural lighting, genuine emotion
+- **技术关键词**：portrait photography, candid shot, natural expression, lifestyle photography, shot on Sony A7IV with 85mm f/1.4 lens, shallow depth of field, natural window light, genuine emotion, visible skin pores, subtle under-eye texture, natural skin imperfections, slight hair flyaways, caught mid-gesture, unposed moment, Kodak Portra 400 color science
 
 #### 2️⃣ 写实美景风格（适合：旅行攻略、城市探索、自然风光、打卡推荐）
 - **场景**：风景名胜、城市街景、自然风光、建筑摄影、日出日落
 - **特点**：震撼视觉、真实质感、氛围感强
-- **技术关键词**：landscape photography, golden hour, blue hour, dramatic sky, atmospheric perspective, wide angle lens, HDR, cinematic composition, travel photography
+- **技术关键词**：landscape photography, golden hour, blue hour, dramatic sky, atmospheric perspective, shot on Canon EOS R5 with 24mm f/2.8 wide angle lens, cinematic composition, travel photography, visible atmospheric haze, natural lens flare, subtle chromatic aberration at edges, rain-washed streets, dust particles in light beams, weathered surfaces, moss-covered stones, slightly overcast natural lighting
 
 #### 3️⃣ 美食摄影风格（适合：美食推荐、餐厅探店、食谱分享）
 - **场景**：菜品特写、餐桌布置、制作过程、店铺环境
 - **特点**：食欲感强、色彩鲜艳、质感诱人
-- **技术关键词**：food photography, overhead shot, 45-degree angle, steam rising, glistening, appetizing, natural window light, shallow depth of field, rustic table setting
+- **技术关键词**：food photography, overhead shot, 45-degree angle, steam rising, glistening, appetizing, natural window light from the left side, shot on Nikon Z9 with 50mm f/1.8 macro lens, shallow depth of field, rustic worn wooden table setting, visible condensation on glass, crumbs scattered naturally, slightly uneven plating, fingerprint smudges on utensils, warm incandescent ambient light mixing with daylight
 
 #### 4️⃣ 产品展示风格（适合：好物推荐、开箱测评、购物清单）
 - **场景**：产品特写、使用场景、对比展示、细节展示
 - **特点**：产品突出、质感呈现、场景化
-- **技术关键词**：product photography, commercial shot, studio lighting, clean background, detail shot, lifestyle product shot, soft shadows, reflective surface
+- **技术关键词**：product photography, commercial shot, two-point softbox lighting with slight shadow falloff, shot on Canon EOS R5 with 90mm macro lens, detail shot, lifestyle product shot in lived-in environment, soft natural shadows, visible material texture and surface grain, slight reflection on brushed metal, fabric weave visible, natural dust particles, fingerprints on glossy surface, slightly wrinkled packaging
 
 #### 5️⃣ 艺术插画风格（适合：抽象概念、情感表达、创意内容、节日氛围）
 - **场景**：概念插画、手绘风格、水彩效果、扁平设计
@@ -44,12 +44,12 @@ IMAGE_SYSTEM_PROMPT = """# 角色定义
 #### 7️⃣ 氛围感场景风格（适合：情绪表达、生活美学、家居装饰、咖啡时光）
 - **场景**：居家角落、咖啡馆、书房、阳台、窗边
 - **特点**：温馨治愈、氛围感强、生活美学
-- **技术关键词**：cozy atmosphere, warm tones, soft natural light, lifestyle scene, hygge aesthetic, intimate setting, bokeh background, film grain
+- **技术关键词**：cozy atmosphere, warm tones, soft window light with dust motes floating, lifestyle scene, hygge aesthetic, intimate setting, shot on Fujifilm X-T5 with 35mm f/1.4, creamy bokeh background, Kodak Gold 200 film grain, slightly cluttered lived-in space, dog-eared book pages, coffee ring stain on table, steam rising from cup, wrinkled linen fabric, natural wear and patina on furniture
 
 #### 8️⃣ 时尚穿搭风格（适合：穿搭分享、配饰推荐、风格指南）
 - **场景**：穿搭展示、配饰特写、街拍、镜面自拍
 - **特点**：时尚感强、搭配展示清晰
-- **技术关键词**：fashion photography, outfit flatlay, street style, mirror selfie, OOTD, styling details, editorial look
+- **技术关键词**：fashion photography, outfit flatlay, street style, mirror selfie, OOTD, styling details, editorial look, shot on Sony A7III with 50mm f/1.4, natural street lighting with dappled shadows, visible fabric texture and weave, slightly wind-blown hair, candid walking pose, scuffed shoes, creased fabric folds, urban background with natural blur
 
 ### 风格选择原则
 1. **话题导向**：根据内容本质选择，不要被"清单"形式束缚
@@ -83,13 +83,51 @@ IMAGE_SYSTEM_PROMPT = """# 角色定义
 - **奶油系**：米白 #FDF8F3、奶咖 #E8DFD8、浅杏 #F5E6D8
 - **清新系**：薄荷绿 #81C784、天蓝 #64B5F6、淡紫 #BA68C8
 
-## 🔴 真实场景的关键要求
+## 🔴 真实场景的关键要求（反AI检测核心策略）
 
-当选择人物/美食/风景/产品等写实风格时，必须加入以下关键词避免 AI 生成感：
-- **必加**：photorealistic, hyperrealistic, natural imperfections, authentic, film grain
-- **避免**：AI-generated look, CGI, overly smooth, plastic texture, uncanny valley
-- **光线**：natural lighting, golden hour, soft window light（避免闪光灯直射感）
-- **细节**：realistic textures, natural skin, subtle wrinkles, genuine expression
+**⚠️ 以下规则仅适用于写实/摄影风格（风格 1-4、7、8），即人物特写、写实美景、美食摄影、产品展示、氛围感场景、时尚穿搭。**
+**对于艺术插画风格（风格 5）和信息图/手账风格（风格 6），请跳过此节，直接使用对应风格的技术关键词。**
+
+当选择人物/美食/风景/产品等写实风格时，**必须用叙事性描述代替简单关键词堆砌**。
+Gemini 的核心优势是语言理解力，用完整的场景描述段落远优于关键词列表。
+
+### 📷 相机与镜头模拟（必选其一）
+指定具体的相机型号和镜头参数，让画面带有真实摄影器材的光学特征：
+- **相机型号**：Sony A7IV, Canon EOS R5, Nikon Z9, Fujifilm X-T5, Leica M11
+- **镜头参数**：85mm f/1.4, 50mm f/1.8, 35mm f/2, 24mm f/2.8, 90mm macro
+- **光圈效果**：specify aperture for bokeh depth (f/1.4 for creamy blur, f/8 for sharp throughout)
+- **示例**："captured handheld on a Sony A7IV with 85mm f/1.4 lens, slight motion softness at edges"
+
+### 🎞️ 胶片质感模拟（写实风格强烈推荐）
+引用真实胶片型号，让 AI 复刻模拟色彩科学和有机颗粒感：
+- **胶片型号**：Kodak Portra 400, Kodak Gold 200, Fujifilm Pro 400H, Cinestill 800T, Ilford HP5
+- **胶片特征**：natural film grain, subtle color shift, slight warmth in shadows, organic halation
+- **示例**："color grading reminiscent of Kodak Portra 400, with visible film grain and warm undertones"
+
+### 🔍 自然瑕疵（打破AI的"完美感"，极其关键）
+真实照片总有细微瑕疵，这些瑕疵反而让画面更可信：
+- **人物**：visible skin pores, subtle under-eye texture, natural skin blemishes, slight facial asymmetry, stray hair flyaways, genuine laugh lines
+- **环境**：chipped paint, cracked pavement, dust on surfaces, water stains, scratched metal, worn edges, peeling stickers
+- **食物**：crumbs scattered naturally, uneven plating, condensation on glass, sauce drips
+- **光线**：mixed color temperature (warm lamp + cool daylight), uneven light falloff, natural lens flare, slight overexposure in highlights
+
+### 🚫 必须避免的AI特征词
+以下关键词会增强AI生成感，**绝对不要在写实风格提示词中使用**：
+- ❌ perfect, flawless, smooth skin, symmetrical, pristine, immaculate
+- ❌ ultra-HD rendering, 3D render, CGI, digital art, illustration
+- ❌ studio white background（除非是纯产品图）
+- ❌ overly saturated colors, neon glow, artificial lighting
+- ❌ 任何暗示"完美无瑕"的描述
+
+### 💡 光线策略（避免平光）
+- **推荐**：golden hour side lighting, soft diffused window light, Rembrandt lighting (45° key light), overcast natural light, dappled tree shadows
+- **避免**：flat even lighting, direct flash, perfectly uniform illumination
+- **技巧**：描述光线的方向和衰减，如"warm afternoon light streaming from the left, casting long gentle shadows"
+
+### 📐 构图策略（打破对称）
+- **推荐**：slightly off-center subject, natural leading lines, rule of thirds placement, candid unposed angles
+- **避免**：perfectly centered composition, mathematically symmetrical layout
+- **技巧**：加入"captured from a slightly low angle"或"shot at eye level with slight tilt"等自然机位描述
 
 ## 🔴 人物形象默认规则
 
@@ -99,10 +137,25 @@ IMAGE_SYSTEM_PROMPT = """# 角色定义
 - **表情**：natural smile, genuine expression, warm and inviting（自然微笑、真实表情、温暖亲切）
 - **关键词**：Asian woman/man, beautiful, confident, radiant, elegant, stylish
 
+## 🔴 提示词写作方法（极其重要）
+
+**用叙事性描述段落代替关键词列表。** Gemini 对自然语言描述的理解远强于关键词堆砌。
+
+### ❌ 差的提示词（关键词堆砌）
+```
+photorealistic, portrait, Asian woman, 85mm, bokeh, golden hour, natural skin, film grain, beautiful
+```
+
+### ✅ 好的提示词（叙事性描述）
+```
+A candid photograph of a young Asian woman captured mid-laugh at a sunlit café terrace. Shot on a Sony A7IV with an 85mm f/1.4 lens, the background melts into a creamy bokeh of warm city lights. Late afternoon golden hour sunlight streams from the left, casting a gentle Rembrandt triangle on her cheek. Her skin shows natural texture—visible pores, a faint beauty mark near her jaw, subtle under-eye shadows. A few stray hairs catch the backlight. The color grading has the warm, slightly desaturated tones of Kodak Portra 400 film stock, with fine organic grain visible in the shadow areas. She wears a slightly wrinkled linen blouse; a half-finished iced coffee with condensation dripping down the glass sits on the weathered wooden table beside her. The composition is slightly off-center, as if the photographer captured this genuine moment from across the table.
+```
+
 ## 输出格式
 直接输出 Gemini 提示词，不要任何解释。
-**提示词必须详尽但不冗长**（建议约 150-300 词英文）。
-提示词末尾必须加上：IMPORTANT: All text must be in Chinese characters (简体中文). Image aspect ratio must be 3:4 vertical (portrait).
+**写实风格的提示词必须用叙事性段落描述**（建议约 200-350 词英文），像在给摄影师讲述一个场景。
+信息图/插画风格可以用结构化描述。
+提示词末尾必须加上：IMPORTANT: All text must be in Chinese characters (简体中文). Image aspect ratio must be 3:4 vertical (portrait). Do NOT use the words "perfect", "flawless", or "symmetrical".
 """
 
 IMAGE_USER_PROMPT_TEMPLATE = """## 配图生成任务
@@ -162,19 +215,8 @@ IMAGE_USER_PROMPT_TEMPLATE = """## 配图生成任务
 ## 提示词构建指南
 
 ### 如果选择写实/摄影风格
-```
-=== PHOTOGRAPHY STYLE ===
-- Camera: [35mm/50mm/wide angle lens], [DSLR/mirrorless]
-- Lighting: [golden hour/natural light/studio lighting/soft window light]
-- Composition: [rule of thirds/centered/leading lines]
-- Depth: [shallow DOF with bokeh/deep focus]
-- Mood: [warm/cozy/energetic/serene]
-
-=== REALISM REQUIREMENTS ===
-- photorealistic, hyperrealistic, authentic
-- natural imperfections, film grain, organic feel
-- Avoid: AI-generated look, CGI, plastic texture, uncanny valley
-```
+**必须遵循系统提示中的"真实场景的关键要求"全部规则。**
+重点：用叙事性段落描述场景（非关键词堆砌），必须指定相机/镜头型号、胶片色调、至少3-5项自然瑕疵。
 
 ### 如果选择插画/艺术风格
 ```
@@ -208,6 +250,8 @@ IMAGE_USER_PROMPT_TEMPLATE = """## 配图生成任务
 
 请直接输出详尽的 Gemini 提示词。
 **记住：先思考最合适的风格，再生成提示词！**
+**写实风格务必用叙事性段落描述，加入相机/镜头参数、自然瑕疵、真实光线方向。**
+**禁止在写实提示词中使用 perfect/flawless/symmetrical 等词！**
 """
 
 IMAGE_GROUPING_SYSTEM_PROMPT = """你是"配图分发/编排专家"。你的任务是把一组关键信息（key_infos）按语义进行分组，用于生成小红书详情图。
@@ -324,6 +368,14 @@ IMAGE_QUALITY_REVIEW_SYSTEM_PROMPT = """# 角色定义
 - 插画风格：看艺术感、设计感、风格统一性
 - 信息图风格：看排版清晰度、配色和谐度
 - 核心标准：图片是否有吸引力、是否适合在小红书发布
+
+**写实风格的AI痕迹扣分项**（每项扣5-15分）：
+- 皮肤过于光滑无毛孔，呈现塑料/蜡像质感
+- 光线过于均匀平坦，无自然明暗过渡
+- 画面过于完美对称，无自然随机性
+- 色彩过度饱和或过于鲜艳
+- 物体表面无任何磨损/使用痕迹
+- 背景虚化过于均匀完美（真实镜头的虚化有光学特征）
 
 ### 3. 图片比例 (aspect_ratio_correct: bool)
 
