@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from pydantic_ai import Agent
@@ -14,17 +15,13 @@ from ..schemas import (
     ArticleBlock,
     ArticleBlockType,
     ArticleResearchResult,
-    ArticleReviewResult,
     ArticleStrategy,
     XHSArticleContent,
 )
-from .prompts import (
-    content_system_prompt,
-    content_user_prompt,
-    review_system_prompt,
-    review_user_prompt,
-)
+from .prompts import content_system_prompt, content_user_prompt
 from .state import ContentState
+from .tools import EvidenceReader
+from .validator import ContentReviewValidator
 
 logger = get_logger(__name__)
 
@@ -36,25 +33,33 @@ class ContentAgent(BaseAgent):
     def __init__(self, max_iterations: int | None = None):
         self.max_iterations = max_iterations or min(ReviewConfig.MAX_ITERATIONS, 4)
         super().__init__()
+        self.init_validators()
 
     def init_tools(self) -> None:
         pass
 
     def init_agent(self) -> None:
+        # Generator is lazily created in forward() when output_dir is known,
+        # so we only build a default here as fallback.
+        self.generator = self._build_generator()
+
+    def init_validators(self) -> None:
+        self.review_validator = ContentReviewValidator()
+
+    def _build_generator(self, output_dir: Path | None = None) -> Agent:
         model = get_text_model()
-        self.generator = Agent(
+        tools = []
+        if output_dir and (output_dir / "source_index.json").exists():
+            reader = EvidenceReader(output_dir)
+            tools = reader.get_tools()
+            logger.info("已注册 EvidenceReader 工具 (%d 个)", len(tools))
+        return Agent(
             model=model,
             output_type=XHSArticleContent,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(content_system_prompt(),),
-        )
-        self.reviewer = Agent(
-            model=get_text_model(),
-            output_type=ArticleReviewResult,
-            instrument=True,
-            retries=RetryConfig.AGENT_RETRIES,
-            system_prompt=(review_system_prompt(),),
+            tools=tools,
         )
 
     async def forward(
@@ -64,7 +69,12 @@ class ContentAgent(BaseAgent):
         target_audience: str,
         requested_strategy: ArticleStrategy,
         generate_images: bool,
+        output_dir: Path | None = None,
     ) -> XHSArticleContent:
+        # Rebuild generator with evidence tools when output_dir is available
+        if output_dir:
+            self.generator = self._build_generator(output_dir)
+
         strategy = self._resolve_strategy(research, requested_strategy)
         state = ContentState(
             research=research,
@@ -72,6 +82,7 @@ class ContentAgent(BaseAgent):
             target_audience=target_audience,
             strategy=strategy,
             generate_images=generate_images,
+            output_dir=output_dir,
         )
 
         logger.info("开始长文创作: %s (%s)", topic, strategy.value)
@@ -124,23 +135,25 @@ class ContentAgent(BaseAgent):
         if not output.rendered_body:
             return ValidationResult.failure("缺少渲染后的正文")
 
-        review_result = await self.reviewer.run(
-            review_user_prompt(
-                content_json=output.model_dump_json(indent=2),
-                research_json=self._current_state.research.model_dump_json(indent=2),
-            ),
-            message_history=self._current_state.get_recent_review_history(6),
+        review_result = await self.review_validator.validate(
+            output,
+            context={
+                "research_json": self._current_state.research.model_dump_json(indent=2),
+                "output_dir": self._current_state.output_dir,
+            },
         )
-        self._current_state.current_review = review_result.output
-        self._current_state.review_history.extend(review_result.new_messages())
 
-        if review_result.output.passed:
-            return ValidationResult.success(f"审核通过，评分 {review_result.output.score:.1f}")
-        return ValidationResult.failure(review_result.output.summary or "长文审核未通过")
+        if review_result.passed:
+            return ValidationResult.success(f"审核通过，评分 {review_result.score:.1f}")
+        return ValidationResult.failure(review_result.feedback)
 
     def on_validation_failed(self, state: ContentState, feedback: str) -> None:
-        logger.warning("长文审核未通过: %s", feedback)
+        logger.warning("长文审核未通过: %s", feedback[:200])
         state.inject_feedback(feedback)
+
+    # ------------------------------------------------------------------
+    # Static helpers
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _resolve_strategy(

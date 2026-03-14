@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart, UserPromptPart
 
 from ..schemas import (
     ArticleResearchResult,
-    ArticleReviewResult,
     ArticleStrategy,
     XHSArticleContent,
 )
@@ -21,21 +21,17 @@ class ContentState:
     target_audience: str
     strategy: ArticleStrategy
     generate_images: bool
+    output_dir: Path | None = None
 
     message_history: list[ModelMessage] = field(default_factory=list)
-    review_history: list[ModelMessage] = field(default_factory=list)
 
     current_content: XHSArticleContent | None = None
-    current_review: ArticleReviewResult | None = None
 
     def inject_feedback(self, feedback: str) -> None:
         self.message_history.append(ModelRequest(parts=[UserPromptPart(content=feedback)]))
 
     def get_recent_history(self, max_messages: int) -> list[ModelMessage]:
         return _safe_truncate(self.message_history, max_messages)
-
-    def get_recent_review_history(self, max_messages: int) -> list[ModelMessage]:
-        return _safe_truncate(self.review_history, max_messages)
 
 
 def _safe_truncate(history: list[ModelMessage], max_messages: int) -> list[ModelMessage]:

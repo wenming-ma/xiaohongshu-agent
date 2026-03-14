@@ -78,6 +78,7 @@ class XHSArticlePostTool(BasePlatformTool[XHSArticlePostInput, XHSArticlePostOut
                 target_audience=input_data.audience,
                 requested_strategy=input_data.strategy,
                 generate_images=input_data.generate_images,
+                output_dir=output_dir,
             )
             save_json(output_dir / "content.json", content.model_dump())
 
