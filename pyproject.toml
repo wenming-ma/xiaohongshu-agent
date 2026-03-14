@@ -41,6 +41,7 @@ dependencies = [
     "requests-toolbelt>=1.0.0",
     "jieba>=0.42.1",
     "griffe>=2.0.0",
+    "trafilatura>=2.0.0",
 ]
 
 [project.scripts]

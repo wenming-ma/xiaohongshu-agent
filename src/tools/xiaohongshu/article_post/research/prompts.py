@@ -7,7 +7,7 @@ RESEARCH_BRIEF_SYSTEM_PROMPT = """你是一位跨站研究总编，需要把中�
 要求：
 1. 严格输出 `ResearchBrief`
 2. brief 要说明本轮研究目标、受众聚焦、优先覆盖角度和避免重复的方向
-3. article_focuses / video_focuses 必须是适合英文搜索的短语
+3. article_focuses / video_focuses 必须是适合英文搜索的短语，使用时尚媒体编辑常用语言，例如 "optical illusions fashion height petite"、"science behind capsule wardrobe minimalism" 而非学术论文式的 "neuroscience visual illusion perception experiment"
 4. must_cover 优先写需要补齐的证据类型、案例类型或数据类型
 5. 如果 continuation_context 提供了失败反馈，brief 必须显式规避重复方向
 """
@@ -19,7 +19,8 @@ SUPERVISOR_SYSTEM_PROMPT = """你是一位研究调度者，需要把研究 brie
 2. 每轮只生成 2-4 个任务
 3. 任务之间必须尽量覆盖不同研究假设，例如趋势、案例、数据、视频补证
 4. 任务中的 query 必须是英文短 query，不要包含 site: 域名限制
-5. avoid_patterns 要显式规避 brief 和历史 notes 中已经失败或重复的方向
+5. article_queries 必须使用时尚媒体网站常见的英文写法，例如 "optical illusions fashion height" 而非 "neuroscience visual illusion experiments"；用时尚编辑语言而非学术论文语言
+6. avoid_patterns 要显式规避 brief 和历史 notes 中已经失败或重复的方向
 """
 
 TASK_NOTE_SYSTEM_PROMPT = """你是一位研究压缩助手，需要把单个研究任务的结果压缩成可继续调度的 notes。

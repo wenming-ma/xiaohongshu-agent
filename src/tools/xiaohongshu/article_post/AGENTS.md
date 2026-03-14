@@ -13,6 +13,26 @@ tool.py (XHSArticlePostTool.execute)
     └── publish/   → PublisherAgent.forward()  # 发布到小红书长文编辑器
 ```
 
+## 各 Agent 文件结构
+
+每个 Agent 目录遵循统一结构（与 `image_post` 保持一致）：
+
+| 文件 | 职责 |
+|------|------|
+| `agent.py` | Agent 主类：`init_agent()` 创建生成器，`init_validators()` 创建验证器，`forward()` / `step()` / `validate()` 驱动工作流 |
+| `prompts.py` | 纯提示词常量 + `render_template` 薄包装函数，不含业务逻辑 |
+| `state.py` | 运行时状态 dataclass |
+| `validator.py` | 验证器类，继承 `InternalValidator`，内部懒加载创建 reviewer Agent |
+| `utils.py` | 工具函数（如有） |
+| `tools.py` | 子工具（如有） |
+
+### 关键规则
+
+1. **提示词只在 `prompts.py`**：所有 system prompt 常量、user prompt 模板、`render_template` 包装函数都放在 `prompts.py`。不在 `agent.py` 或 `validator.py` 中硬编码提示词。
+2. **验证器在 `validator.py`**：审核用的 Agent 实例由 validator 类自己创建和管理（懒加载 `@property`），不在 `agent.py` 的 `init_agent()` 中创建。`agent.py` 通过 `init_validators()` 实例化验证器，`validate()` 委托给验证器。
+3. **不跨目录借用函数**：每个 Agent 目录自包含。`content/` 不从 `research/` 导入函数，反之亦然。共享能力放 `shared/`。
+4. **模型获取用 `get_text_model()`**：统一从 `src/utils/providers` 获取模型，不硬编码模型名。
+
 ## 设计约束
 
 - 研究源以海外女性向数字媒体为主，不以小红书站内研究为主。

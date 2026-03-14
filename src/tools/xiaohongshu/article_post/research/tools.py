@@ -17,9 +17,8 @@ from urllib.parse import parse_qsl, quote_plus, urlencode, urlsplit, urlunsplit
 import httpx
 from pydantic import BaseModel, Field
 from pydantic_ai import Tool
-from pydantic_ai.mcp import MCPServerStdio
 
-from .....config.settings import PathConfig, TimeoutConfig
+from .....config.settings import PathConfig
 from .....utils.logger import get_logger
 from .....utils.subtitle_generator import WhisperTranscriber
 from ..schemas import SavedSourceIndex, SourceChunk, SourceDigest, SourceExcerpt
@@ -227,23 +226,70 @@ class DomainSearchClient:
 
 
 class ArticlePageReader:
-    def __init__(self, mcp_server: MCPServerStdio):
-        self._mcp_server = mcp_server
+    """Article content extractor using trafilatura (no browser needed)."""
+
+    def __init__(self):
+        self._timeout = httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)
 
     async def read_page(self, url: str) -> ReadPageResult:
+        import trafilatura
+
         try:
-            await self._mcp_server.direct_call_tool(name="browser_navigate", args={"url": url})
-            await self._mcp_server.direct_call_tool(name="browser_wait_for", args={"time": 2})
-            payload = await self._mcp_server.direct_call_tool(
-                name="browser_evaluate",
-                args={"function": _page_extract_script()},
+            html = await self._fetch_html(url)
+            if not html:
+                logger.warning("页面获取失败(空响应): %s", url)
+                return ReadPageResult(url=url, notes="HTTP 请求返回空内容")
+
+            metadata = trafilatura.extract_metadata(html)
+            text = trafilatura.extract(
+                html,
+                include_comments=False,
+                include_tables=True,
+                favor_recall=True,
+                deduplicate=True,
+            ) or ""
+
+            title = (metadata.title if metadata else "") or ""
+            author = (metadata.author if metadata else "") or ""
+            published_at = (metadata.date if metadata else "") or ""
+
+            # Extract headings and paragraphs from HTML
+            headings, paragraphs = _extract_structure(html)
+
+            # Simple paywall detection on raw HTML
+            paywall = _detect_paywall(html)
+
+            result = ReadPageResult(
+                ok=True,
+                url=url,
+                final_url=url,
+                title=title,
+                author=author,
+                published_at=published_at,
+                text=text[:25000],
+                headings=headings[:30],
+                paragraphs=paragraphs[:120],
+                paywall_status="login_required" if paywall else "public",
+                notes="Possible paywall detected" if paywall else "",
             )
-            data = _extract_first_json(payload)
-            if not isinstance(data, dict):
-                return ReadPageResult(url=url, notes="无法解析页面提取结果")
-            return ReadPageResult(**data, ok=True)
+            logger.info(
+                "页面提取成功: %s text=%d paywall=%s headings=%d",
+                url, len(result.text), result.paywall_status, len(result.headings),
+            )
+            return result
         except Exception as exc:
+            logger.warning("页面提取异常: %s %s: %s", url, type(exc).__name__, exc)
             return ReadPageResult(url=url, notes=f"{type(exc).__name__}: {exc}")
+
+    async def _fetch_html(self, url: str) -> str:
+        async with httpx.AsyncClient(
+            timeout=self._timeout,
+            follow_redirects=True,
+            headers={"User-Agent": _user_agent()},
+        ) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            return response.text
 
 
 class GenericVideoTranscriber:
@@ -485,7 +531,7 @@ def build_site_queries(
         for _ in range(domains_per_query):
             domain = normalized_domains[domain_cursor % len(normalized_domains)]
             domain_cursor += 1
-            scoped.append(f'site:{domain} "{query}"')
+            scoped.append(f"site:{domain} {query}")
             if max_total_queries is not None and len(scoped) >= max_total_queries:
                 return scoped
     return scoped
@@ -553,6 +599,36 @@ def is_article_media_domain(netloc: str) -> bool:
     return any(hostname == domain or hostname.endswith(f".{domain}") for domain in ARTICLE_MEDIA_DOMAINS)
 
 
+def _extract_structure(html: str) -> tuple[list[str], list[str]]:
+    """Extract headings and paragraphs from raw HTML."""
+    headings = [
+        _strip_tags(m.group(1)).strip()
+        for m in re.finditer(r"<h[1-3][^>]*>(.*?)</h[1-3]>", html, re.S | re.I)
+        if _strip_tags(m.group(1)).strip()
+    ]
+    paragraphs = [
+        _strip_tags(m.group(1)).strip()
+        for m in re.finditer(r"<p[^>]*>(.*?)</p>", html, re.S | re.I)
+        if _strip_tags(m.group(1)).strip()
+    ]
+    return headings, paragraphs
+
+
+def _detect_paywall(html: str) -> bool:
+    lowered = html.lower()
+    # Only flag strong paywall signals, not generic "subscribe" CTAs
+    strong_signals = [
+        "sign in to continue",
+        "join to continue",
+        "member-only",
+        "member only",
+        "unlock this story",
+        "create a free account to continue",
+        "subscribe to read",
+    ]
+    return any(phrase in lowered for phrase in strong_signals)
+
+
 def _strip_tags(text: str) -> str:
     return re.sub(r"<[^>]+>", "", text or "").strip()
 
@@ -564,81 +640,3 @@ def _user_agent() -> str:
     )
 
 
-def _page_extract_script() -> str:
-    return """() => {
-  const metaContent = (selectors) => {
-    for (const selector of selectors) {
-      const el = document.querySelector(selector);
-      const value = el?.getAttribute('content') || el?.textContent || '';
-      if (value && value.trim()) return value.trim();
-    }
-    return '';
-  };
-  const root = document.querySelector('article') || document.querySelector('main') || document.body;
-  const headings = Array.from(root.querySelectorAll('h1,h2,h3')).map(el => el.innerText.trim()).filter(Boolean).slice(0, 30);
-  const paragraphs = Array.from(root.querySelectorAll('p,li')).map(el => el.innerText.trim()).filter(Boolean).slice(0, 120);
-  const videos = Array.from(document.querySelectorAll('video, video source')).map(el => el.currentSrc || el.src || '').filter(Boolean);
-  const iframes = Array.from(document.querySelectorAll('iframe')).map(el => el.src || '').filter(Boolean);
-  const title = document.title || metaContent(['meta[property="og:title"]', 'meta[name="twitter:title"]']);
-  const author = metaContent(['meta[name="author"]', 'meta[property="article:author"]', '[rel="author"]']);
-  const publishedAt = metaContent(['meta[property="article:published_time"]', 'meta[name="publish-date"]', 'time[datetime]']);
-  const engagementHint = Array.from(document.querySelectorAll('[data-testid*="share"], [class*="share"], [class*="comment"], [class*="like"]'))
-    .map(el => (el.innerText || '').trim()).filter(Boolean).slice(0, 6).join(' | ');
-  const text = (root.innerText || document.body.innerText || '').trim();
-  const lowered = text.toLowerCase();
-  const paywallPhrases = ['subscribe', 'sign in to continue', 'join to continue', 'member-only', 'member only', 'unlock this story', 'continue reading', 'create a free account', 'sign in'];
-  const paywall = paywallPhrases.some(item => lowered.includes(item));
-  return JSON.stringify({
-    url: location.href,
-    final_url: location.href,
-    title,
-    author,
-    published_at: publishedAt,
-    text: text.slice(0, 25000),
-    headings,
-    paragraphs,
-    video_urls: videos,
-    iframe_urls: iframes,
-    engagement_hint: engagementHint,
-    paywall_status: paywall ? 'login_required' : 'public',
-    notes: paywall ? 'Possible paywall/login wall detected' : '',
-  });
-}"""
-
-
-def _extract_text_fragments(payload: Any) -> list[str]:
-    texts: list[str] = []
-    if payload is None:
-        return texts
-    if isinstance(payload, str):
-        texts.append(payload)
-    elif isinstance(payload, dict):
-        for value in payload.values():
-            texts.extend(_extract_text_fragments(value))
-    elif isinstance(payload, (list, tuple)):
-        for item in payload:
-            texts.extend(_extract_text_fragments(item))
-    else:
-        for attr in ("text", "content", "markdown", "message"):
-            if hasattr(payload, attr):
-                texts.extend(_extract_text_fragments(getattr(payload, attr)))
-    return texts
-
-
-def _extract_first_json(payload: Any) -> Any:
-    for text in _extract_text_fragments(payload):
-        candidate = text.strip()
-        if not candidate:
-            continue
-        for raw in (candidate, candidate.replace("\\/", "/")):
-            try:
-                return json.loads(raw)
-            except Exception:
-                pass
-        match = re.search(r"(\{.*\}|\[.*\])", candidate, flags=re.S)
-        if match:
-            try:
-                return json.loads(match.group(1))
-            except Exception:
-                continue
-    return None

@@ -17,7 +17,6 @@ from .....config.settings import PathConfig, RetryConfig
 from .....core.base_agent import BaseAgent, ValidationResult
 from .....utils.logger import get_logger
 from .....utils.providers import get_text_model
-from ...shared import create_shared_playwright_mcp_server
 from ..schemas import (
     ArticleResearchResult,
     ArticleSource,
@@ -159,19 +158,11 @@ class ResearchAgent(BaseAgent):
     MAX_TASKS_PER_ITERATION = 4
 
     def __init__(self):
-        self.init_mcp_server()
         super().__init__()
-
-    def init_mcp_server(self) -> None:
-        self.mcp_server = create_shared_playwright_mcp_server(
-            output_dir=PathConfig.DOWNLOADS_DIR,
-            tool_prefix="playwright",
-            headless=False,
-        )
 
     def init_tools(self) -> None:
         self.search_client = DomainSearchClient()
-        self.page_reader = ArticlePageReader(self.mcp_server)
+        self.page_reader = ArticlePageReader()
         self.video_transcriber = GenericVideoTranscriber()
         self.chunker = SourceChunker()
 
@@ -209,19 +200,18 @@ class ResearchAgent(BaseAgent):
     ) -> ArticleResearchResult:
         state = self.create_state(topic, target_audience, strategy, output_dir)
         with logfire.span("article_research:workflow", topic=topic, strategy=strategy.value):
-            async with self.mcp_server:
-                last_feedback = "研究未完成"
-                for iteration in range(self.MAX_ITERATIONS):
-                    with logfire.span("article_research:iteration", iteration=iteration + 1):
-                        await self.step(state, iteration)
-                        validation = await self.validate(state.current_result)
-                        if validation.passed:
-                            self.finalize(state, iteration + 1)
-                            return state.current_result
-                        last_feedback = validation.feedback
-                        self.on_validation_failed(state, iteration, validation.feedback)
+            last_feedback = "研究未完成"
+            for iteration in range(self.MAX_ITERATIONS):
+                with logfire.span("article_research:iteration", iteration=iteration + 1):
+                    await self.step(state, iteration)
+                    validation = await self.validate(state.current_result)
+                    if validation.passed:
+                        self.finalize(state, iteration + 1)
+                        return state.current_result
+                    last_feedback = validation.feedback
+                    self.on_validation_failed(state, iteration, validation.feedback)
 
-                raise RuntimeError(last_feedback)
+            raise RuntimeError(last_feedback)
 
     def create_state(
         self,
@@ -508,19 +498,24 @@ class ResearchAgent(BaseAgent):
         wants_video = "video" in (task.source_focus or "").lower() or state.strategy == ArticleStrategy.REPURPOSE_VIDEO
 
         for query, result in candidates:
-            if len(state.collected_sources) + len(collected) >= self.MAX_SOURCE_PAGES:
+            # Per-iteration cap: allow each iteration to collect up to MAX_SOURCE_PAGES
+            # new sources so subsequent iterations can improve domain diversity.
+            if len(state.current_collected) + len(collected) >= self.MAX_SOURCE_PAGES:
                 break
 
             read_result = await self.page_reader.read_page(result.url)
             if not read_result.ok:
+                logger.warning("跳过(提取失败): %s notes=%s", result.url, read_result.notes[:120])
                 continue
             final_url = read_result.final_url or result.url
             if final_url in state.seen_source_urls:
+                logger.info("跳过(已访问): %s", final_url)
                 continue
             if read_result.paywall_status == "login_required" and len(read_result.text) < 1200:
-                logger.info("页面受限，保留记录但不作为主来源: %s", result.url)
+                logger.info("跳过(付费墙+短文): %s text=%d", result.url, len(read_result.text))
                 continue
             if len(read_result.text) < 1200 and not is_video_candidate(result.url, read_result):
+                logger.info("跳过(文本太短): %s text=%d", result.url, len(read_result.text))
                 continue
 
             source_type = ArticleSourceType.ARTICLE
@@ -773,9 +768,13 @@ class ResearchAgent(BaseAgent):
             max_domains_per_query=2,
             max_total_queries=2,
         )
+        # Open-web fallback queries (no site: constraint) ensure that topics
+        # with academic/scientific angles still find relevant content even when
+        # domain-scoped exact-phrase searches return 0 results.
+        open_queries = [q for q in article_seed[:2] if q]
         if "video" in task.source_focus.lower():
-            return video_queries + article_queries
-        return article_queries + video_queries
+            return video_queries + article_queries + open_queries
+        return article_queries + video_queries + open_queries
 
     def _normalize_brief(self, state: ResearchState, brief: ResearchBrief) -> ResearchBrief:
         article_focuses = self._clean_list(

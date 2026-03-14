@@ -202,10 +202,33 @@ class XHSArticleContent(BaseModel):
         return keys
 
 
+class ReviewDimension(str, Enum):
+    STRUCTURE = "structure"
+    ACCURACY = "accuracy"
+    READABILITY = "readability"
+    NATURALNESS = "naturalness"
+
+
+class ArticleReviewIssue(BaseModel):
+    dimension: ReviewDimension
+    severity: str = Field(description="critical / warning / info")
+    description: str
+    suggestion: str = ""
+
+
+class DimensionReviewResult(BaseModel):
+    dimension: ReviewDimension
+    passed: bool
+    score: float = Field(default=0.0, ge=0.0, le=100.0)
+    issues: list[ArticleReviewIssue] = []
+    summary: str = ""
+
+
 class ArticleReviewResult(BaseModel):
     passed: bool
     score: float = Field(default=0.0, ge=0.0, le=100.0)
-    issues: list[str] = []
+    issues: list[ArticleReviewIssue] = []
+    dimension_results: list[DimensionReviewResult] = []
     summary: str = ""
 
 
