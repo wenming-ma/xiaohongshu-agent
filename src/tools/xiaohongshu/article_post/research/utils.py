@@ -10,12 +10,20 @@ from typing import Any
 
 from .....utils.logger import get_logger
 from ..schemas import SourceChunk
-from .state import ResearchState
-from .tools import collect_source_payload
-from .tools import CollectedSource
+from .state import IterationExecution, QueryCandidate, ResearchState
+from .tools import CollectedSource, collect_source_payload
 
 logger = get_logger(__name__)
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？.!?])\s+")
+
+
+def save_latest_snapshot(state: ResearchState) -> str:
+    output_dir = state.working_dir or state.output_dir or Path("output")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    filepath = output_dir / "research_latest.json"
+    payload = build_iteration_snapshot_payload(state)
+    filepath.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return str(filepath)
 
 
 def save_iteration_result(
@@ -31,41 +39,39 @@ def save_iteration_result(
     output_dir.mkdir(parents=True, exist_ok=True)
     filepath = output_dir / filename
 
+    payload = build_iteration_snapshot_payload(
+        state,
+        iteration=iteration,
+        timestamp=timestamp,
+        validation_feedback=validation_feedback,
+        error_message=error_message,
+    )
+    filepath.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    state.saved_files.append(str(filepath))
+    logger.info("研究轮次 %d 已保存到 %s", iteration, filepath)
+    return str(filepath)
+
+
+def build_iteration_snapshot_payload(
+    state: ResearchState,
+    *,
+    iteration: int | None = None,
+    timestamp: str | None = None,
+    validation_feedback: str = "",
+    error_message: str = "",
+) -> dict[str, Any]:
+    execution = state.current_execution
     payload = {
         "topic": state.topic,
         "target_audience": state.target_audience,
         "strategy": state.strategy.value,
-        "iteration": iteration,
-        "timestamp": timestamp,
+        "iteration": iteration or state.current_iteration,
+        "timestamp": timestamp or datetime.now().strftime("%Y%m%d-%H%M%S"),
         "validation_feedback": validation_feedback,
         "error_message": error_message,
-        "brief": _dump_model(state.brief),
-        "supervisor_iteration": state.supervisor_iteration,
-        "query_plan": state.current_plan.model_dump() if state.current_plan else None,
-        "pending_tasks": [_dump_model(task) for task in state.pending_tasks],
-        "completed_task_results": [
-            _dump_model(task_result) for task_result in state.completed_task_results
-        ],
-        "current_notes": [_dump_model(note) for note in state.current_notes],
+        "iteration_plan": _dump_model(state.current_iteration_plan),
+        "iteration_execution": _dump_execution(execution),
         "aggregated_notes": [_dump_model(note) for note in state.aggregated_notes],
-        "candidate_count": len(state.current_candidates),
-        "candidates": [
-            {"query": query, "result": result.model_dump()}
-            for query, result in state.current_candidates
-        ],
-        "current_task_candidates": {
-            task_id: [
-                {"query": query, "result": result.model_dump()}
-                for query, result in candidates
-            ]
-            for task_id, candidates in state.current_task_candidates.items()
-        },
-        "new_collected_count": len(state.current_collected),
-        "current_collected_sources": [
-            collect_source_payload(source) for source in state.current_collected
-        ],
-        "current_digest_count": len(state.current_digests),
-        "current_digests": [_dump_model(digest) for digest in state.current_digests],
         "total_collected_count": len(state.collected_sources),
         "all_collected_sources": [
             collect_source_payload(source) for source in state.collected_sources
@@ -79,11 +85,79 @@ def save_iteration_result(
         "dimension_reviews": [_dump_model(item) for item in state.current_dimension_reviews],
         "result": _dump_model(state.current_result),
     }
+    return payload
 
-    filepath.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    state.saved_files.append(str(filepath))
-    logger.info("研究轮次 %d 已保存到 %s", iteration, filepath)
-    return str(filepath)
+
+def json_dumps(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, indent=2)
+
+
+def clean_list(
+    values: list[str],
+    *,
+    fallback: list[str],
+    limit: int,
+) -> list[str]:
+    cleaned = [str(item).strip() for item in values if str(item).strip()]
+    if not cleaned:
+        cleaned = [str(item).strip() for item in fallback if str(item).strip()]
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in cleaned:
+        lowered = item.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        result.append(item)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def unique_keep_order(values: Any) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for raw in values:
+        value = str(raw).strip()
+        if not value:
+            continue
+        lowered = value.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        result.append(value)
+    return result
+
+
+def _dump_execution(execution: IterationExecution | None) -> dict[str, Any] | None:
+    if execution is None:
+        return None
+    return {
+        "candidate_count": len(execution.candidate_pool),
+        "candidates": [_dump_query_candidate(item) for item in execution.candidate_pool],
+        "task_candidates": {
+            task_id: [_dump_query_candidate(item) for item in candidates]
+            for task_id, candidates in execution.task_candidates.items()
+        },
+        "task_assessments": [_dump_model(item) for item in execution.task_assessments],
+        "note_count": len(execution.notes),
+        "notes": [_dump_model(note) for note in execution.notes],
+        "new_collected_count": len(execution.collected),
+        "current_collected_sources": [
+            collect_source_payload(source) for source in execution.collected
+        ],
+        "current_digest_count": len(execution.digests),
+        "current_digests": [_dump_model(digest) for digest in execution.digests],
+        "synthesized": execution.synthesized,
+        "skip_reason": execution.skip_reason,
+    }
+
+
+def _dump_query_candidate(candidate: QueryCandidate) -> dict[str, Any]:
+    return {
+        "query": candidate.query,
+        "result": candidate.result.model_dump(),
+    }
 
 
 def _dump_model(value: Any) -> Any:

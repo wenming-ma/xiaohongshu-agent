@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 
 from pydantic_ai import Agent
@@ -187,6 +188,7 @@ class ResearchReviewValidator(InternalValidator):
             if isinstance(requested_strategy, ArticleStrategy)
             else str(requested_strategy or ArticleStrategy.AUTO.value)
         )
+        current_date = datetime.now().date().isoformat()
         research_json = result.model_dump_json(indent=2)
         stats_json = json.dumps(
             self._build_research_stats(result),
@@ -204,6 +206,7 @@ class ResearchReviewValidator(InternalValidator):
                     topic=topic,
                     target_audience=target_audience,
                     requested_strategy=requested_strategy_value,
+                    current_date=current_date,
                     stats_json=stats_json,
                     research_json=research_json,
                 )

@@ -40,6 +40,12 @@ ARTICLE_MEDIA_DOMAINS = [
     "bustle.com",
 ]
 
+VIDEO_MEDIA_DOMAINS = [
+    "youtube.com",
+    "youtu.be",
+    "vimeo.com",
+]
+
 VIDEO_HOST_PATTERNS = (
     "youtube.com",
     "youtu.be",
@@ -106,6 +112,27 @@ class CollectedSource:
     quality_score: float = 0.0
     transcript: str = ""
     duration_seconds: float = 0.0
+
+
+@dataclass
+class CollectedSourceCandidate:
+    url: str
+    domain: str
+    title: str
+    author: str
+    published_at: str
+    snippet: str
+    text: str
+    headings: list[str]
+    source_type: str
+    engagement_hint: str
+    paywall_status: str
+    paragraphs: list[str] = field(default_factory=list)
+    quality_score: float = 0.0
+    transcript: str = ""
+    duration_seconds: float = 0.0
+    search_rank: int = 0
+    query: str = ""
 
 
 class DomainSearchClient:
@@ -638,4 +665,3 @@ def _user_agent() -> str:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     )
-

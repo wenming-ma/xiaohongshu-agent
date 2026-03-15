@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,6 +14,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
+from src.core.base_agent import ValidationResult
 from src.core.base_validator import InternalValidationResult
 from src.tools.xiaohongshu.article_post.content.agent import ContentAgent
 from src.tools.xiaohongshu.article_post.content.state import _safe_truncate
@@ -29,7 +31,9 @@ from src.tools.xiaohongshu.article_post.publish.utils import (
 from src.tools.xiaohongshu.article_post.research.agent import ResearchAgent
 from src.tools.xiaohongshu.article_post.research.state import (
     CompressedResearchNote,
-    ResearchBrief,
+    IterationExecution,
+    IterationPlan,
+    QueryCandidate,
     ResearchState,
     ResearchTask,
     ResearchTaskResult,
@@ -60,11 +64,16 @@ from src.tools.xiaohongshu.article_post.schemas import (
 from src.tools.xiaohongshu.article_post.research.tools import build_site_queries
 from src.tools.xiaohongshu.article_post.research.tools import (
     CollectedSource,
+    CollectedSourceCandidate,
     LocalEvidenceStore,
-    SearchPlan,
+    ReadPageResult,
     SearchResult,
 )
-from src.tools.xiaohongshu.article_post.research.utils import SourceChunker, save_iteration_result
+from src.tools.xiaohongshu.article_post.research.utils import (
+    SourceChunker,
+    save_iteration_result,
+    save_latest_snapshot,
+)
 
 
 def _build_valid_article_research_result(
@@ -160,104 +169,91 @@ def test_article_research_iteration_result_is_saved(tmp_path) -> None:
         strategy=ArticleStrategy.AUTO,
         output_dir=tmp_path,
     )
-    state.brief = ResearchBrief(
+    state.begin_iteration(1)
+    state.current_iteration_plan = IterationPlan(
         objective="形成可发布的小红书长文研究底稿",
         audience_focus="25-35岁女性",
-        article_focuses=["capsule wardrobe", "spring basics"],
-        video_focuses=["capsule wardrobe video"],
-        must_cover=["趋势", "案例"],
+        tasks=[
+            ResearchTask(
+                task_id="iter_1_task_1",
+                goal="验证春季 capsule wardrobe 主论点",
+                source_focus="article",
+                article_queries=["capsule wardrobe"],
+                video_queries=["capsule wardrobe video"],
+                done_when="至少拿到 2 个来源",
+                avoid_patterns=["重复 query"],
+            )
+        ],
         avoid_patterns=["重复 query"],
-        iteration_guidance="优先补齐来源广度",
-    )
-    state.supervisor_iteration = 1
-    state.current_plan = SearchPlan(
-        article_queries=["capsule wardrobe"],
-        video_queries=["capsule wardrobe video"],
         notes="focus on spring style",
     )
-    state.pending_tasks = [
-        ResearchTask(
-            task_id="iter_1_task_1",
-            goal="验证春季 capsule wardrobe 主论点",
-            source_focus="article",
-            article_queries=["capsule wardrobe"],
-            video_queries=["capsule wardrobe video"],
-            done_when="至少拿到 2 个来源",
-            avoid_patterns=["重复 query"],
-        )
-    ]
-    state.current_candidates = [
-        (
-            'site:allure.com "capsule wardrobe"',
-            SearchResult(
-                title="Capsule Wardrobe Tips",
-                url="https://www.allure.com/story/capsule-wardrobe",
-                snippet="A practical guide",
-                domain="www.allure.com",
-                rank=1,
-            ),
-        )
-    ]
-    state.current_task_candidates = {
-        "iter_1_task_1": state.current_candidates[:],
-    }
-    state.current_collected = [
-        CollectedSource(
-            ref="source_1",
-            url="https://www.allure.com/story/capsule-wardrobe",
-            domain="www.allure.com",
+    candidate = QueryCandidate(
+        query='site:allure.com "capsule wardrobe"',
+        result=SearchResult(
             title="Capsule Wardrobe Tips",
-            author="Jane Doe",
-            published_at="2026-03-01",
+            url="https://www.allure.com/story/capsule-wardrobe",
             snippet="A practical guide",
-            text="Useful spring capsule wardrobe advice.",
-            headings=["Start with basics"],
-            source_type=ArticleSourceType.ARTICLE.value,
-            engagement_hint="search_rank=1",
-            paywall_status="public",
-            quality_score=88.0,
-        )
-    ]
-    state.collected_sources = state.current_collected[:]
-    state.current_digests = [
-        SourceDigest(
-            source_ref="source_1",
-            source_type=ArticleSourceType.ARTICLE,
-            url="https://www.allure.com/story/capsule-wardrobe",
             domain="www.allure.com",
-            title="Capsule Wardrobe Tips",
-            author="Jane Doe",
-            published_at="2026-03-01",
-            quality_score=88.0,
-            chunk_count=1,
-            summary="A concise digest.",
-            key_points=["Neutral basics work well."],
-        )
-    ]
-    state.digests_by_source = {"source_1": state.current_digests[0]}
-    state.completed_task_results = [
-        ResearchTaskResult(
-            task_id="iter_1_task_1",
-            goal="验证春季 capsule wardrobe 主论点",
-            candidate_results=[state.current_candidates[0][1]],
-            collected_source_refs=["source_1"],
-            new_digests=state.current_digests[:],
-            raw_findings=["Neutral basics work well."],
-            gaps=["来源域名仍偏少"],
-            suggested_followups=["capsule wardrobe expert advice"],
-        )
-    ]
-    state.current_notes = [
-        CompressedResearchNote(
-            task_id="iter_1_task_1",
-            summary="本轮拿到了基础 wardrobe 建议。",
-            key_findings=["Neutral basics work well."],
-            unresolved_gaps=["来源域名仍偏少"],
-            recommended_next_queries=["capsule wardrobe expert advice"],
-            source_refs=["source_1"],
-        )
-    ]
-    state.aggregated_notes = state.current_notes[:]
+            rank=1,
+        ),
+    )
+    collected = CollectedSource(
+        ref="source_1",
+        url="https://www.allure.com/story/capsule-wardrobe",
+        domain="www.allure.com",
+        title="Capsule Wardrobe Tips",
+        author="Jane Doe",
+        published_at="2026-03-01",
+        snippet="A practical guide",
+        text="Useful spring capsule wardrobe advice.",
+        headings=["Start with basics"],
+        source_type=ArticleSourceType.ARTICLE.value,
+        engagement_hint="search_rank=1",
+        paywall_status="public",
+        quality_score=88.0,
+    )
+    current_digest = SourceDigest(
+        source_ref="source_1",
+        source_type=ArticleSourceType.ARTICLE,
+        url="https://www.allure.com/story/capsule-wardrobe",
+        domain="www.allure.com",
+        title="Capsule Wardrobe Tips",
+        author="Jane Doe",
+        published_at="2026-03-01",
+        quality_score=88.0,
+        chunk_count=1,
+        summary="A concise digest.",
+        key_points=["Neutral basics work well."],
+    )
+    task_result = ResearchTaskResult(
+        task_id="iter_1_task_1",
+        goal="验证春季 capsule wardrobe 主论点",
+        candidate_results=[candidate.result],
+        collected_source_refs=["source_1"],
+        new_digests=[current_digest],
+        raw_findings=["Neutral basics work well."],
+        gaps=["来源域名仍偏少"],
+        suggested_followups=["capsule wardrobe expert advice"],
+    )
+    note = CompressedResearchNote(
+        task_id="iter_1_task_1",
+        summary="本轮拿到了基础 wardrobe 建议。",
+        key_findings=["Neutral basics work well."],
+        unresolved_gaps=["来源域名仍偏少"],
+        recommended_next_queries=["capsule wardrobe expert advice"],
+        source_refs=["source_1"],
+    )
+    state.current_execution = IterationExecution(
+        candidate_pool=[candidate],
+        task_candidates={"iter_1_task_1": [candidate]},
+        task_assessments=[task_result],
+        notes=[note],
+        collected=[collected],
+        digests=[current_digest],
+    )
+    state.collected_sources = [collected]
+    state.digests_by_source = {"source_1": current_digest}
+    state.aggregated_notes = [note]
     state.evidence_files = [str(tmp_path / "research_sources" / "source_1.json")]
     state.digests_path = str(tmp_path / "digests.json")
     state.source_index_path = str(tmp_path / "source_index.json")
@@ -290,15 +286,15 @@ def test_article_research_iteration_result_is_saved(tmp_path) -> None:
     assert Path(saved_file).exists()
     assert payload["iteration"] == 1
     assert payload["validation_feedback"] == "need more domains"
-    assert payload["brief"]["objective"] == "形成可发布的小红书长文研究底稿"
-    assert payload["supervisor_iteration"] == 1
-    assert payload["pending_tasks"][0]["task_id"] == "iter_1_task_1"
-    assert payload["completed_task_results"][0]["task_id"] == "iter_1_task_1"
-    assert payload["current_notes"][0]["task_id"] == "iter_1_task_1"
+    assert payload["iteration_plan"]["objective"] == "形成可发布的小红书长文研究底稿"
+    assert payload["iteration_execution"]["task_assessments"][0]["task_id"] == "iter_1_task_1"
+    assert payload["iteration_execution"]["notes"][0]["task_id"] == "iter_1_task_1"
     assert payload["aggregated_notes"][0]["task_id"] == "iter_1_task_1"
-    assert payload["current_task_candidates"]["iter_1_task_1"][0]["query"] == 'site:allure.com "capsule wardrobe"'
-    assert payload["candidate_count"] == 1
-    assert payload["new_collected_count"] == 1
+    assert payload["iteration_execution"]["task_candidates"]["iter_1_task_1"][0]["query"] == 'site:allure.com "capsule wardrobe"'
+    assert payload["iteration_execution"]["candidate_count"] == 1
+    assert payload["iteration_execution"]["synthesized"] is True
+    assert payload["iteration_execution"]["skip_reason"] == ""
+    assert payload["iteration_execution"]["new_collected_count"] == 1
     assert payload["total_collected_count"] == 1
     assert payload["digest_count"] == 1
     assert payload["digests_path"].endswith("digests.json")
@@ -611,11 +607,11 @@ def test_article_research_agent_validate_short_circuits_rules_before_review() ->
         async def validate(self, result, context):
             raise AssertionError("review validator should not be called")
 
-    agent = ResearchAgent.__new__(ResearchAgent)
-    agent.MIN_SOURCE_PAGES = 2
-    agent.MIN_UNIQUE_DOMAINS = 2
-    agent.rules_validator = FakeRulesValidator()
-    agent.review_validator = FakeReviewValidator()
+    agent = ResearchAgent()
+    agent.synthesizer.min_source_pages = 2
+    agent.synthesizer.min_unique_domains = 2
+    agent.synthesizer.rules_validator = FakeRulesValidator()
+    agent.synthesizer.review_validator = FakeReviewValidator()
     agent._current_state = ResearchState(
         topic="capsule wardrobe",
         target_audience="25-35岁女性",
@@ -670,11 +666,11 @@ def test_article_research_agent_validate_updates_review_state_on_review_failure(
         strategy=ArticleStrategy.SYNTHESIZE,
         output_dir=None,
     )
-    agent = ResearchAgent.__new__(ResearchAgent)
-    agent.MIN_SOURCE_PAGES = 2
-    agent.MIN_UNIQUE_DOMAINS = 2
-    agent.rules_validator = FakeRulesValidator()
-    agent.review_validator = FakeReviewValidator()
+    agent = ResearchAgent()
+    agent.synthesizer.min_source_pages = 2
+    agent.synthesizer.min_unique_domains = 2
+    agent.synthesizer.rules_validator = FakeRulesValidator()
+    agent.synthesizer.review_validator = FakeReviewValidator()
     agent._current_state = state
 
     validation = asyncio.run(agent.validate(_build_valid_article_research_result()))
@@ -706,11 +702,11 @@ def test_article_research_agent_validate_passes_when_rules_and_review_pass() -> 
         async def validate(self, result, context):
             return InternalValidationResult(True, "", 92.0)
 
-    agent = ResearchAgent.__new__(ResearchAgent)
-    agent.MIN_SOURCE_PAGES = 2
-    agent.MIN_UNIQUE_DOMAINS = 2
-    agent.rules_validator = FakeRulesValidator()
-    agent.review_validator = FakeReviewValidator()
+    agent = ResearchAgent()
+    agent.synthesizer.min_source_pages = 2
+    agent.synthesizer.min_unique_domains = 2
+    agent.synthesizer.rules_validator = FakeRulesValidator()
+    agent.synthesizer.review_validator = FakeReviewValidator()
     agent._current_state = ResearchState(
         topic="capsule wardrobe",
         target_audience="25-35岁女性",
@@ -761,7 +757,7 @@ def test_article_research_on_validation_failed_includes_review_feedback(tmp_path
     assert "关键 claim 还缺一条强来源。" in state.continuation_context
 
 
-def test_article_research_internal_snapshot_writes_review_file(tmp_path) -> None:
+def test_article_research_latest_snapshot_writes_review_state(tmp_path) -> None:
     issue = ArticleResearchReviewIssue(
         dimension=ResearchReviewDimension.DOWNSTREAM_USABILITY,
         severity="warning",
@@ -780,7 +776,7 @@ def test_article_research_internal_snapshot_writes_review_file(tmp_path) -> None
         strategy=ArticleStrategy.SYNTHESIZE,
         output_dir=tmp_path,
     )
-    state.supervisor_iteration = 2
+    state.begin_iteration(2)
     state.current_review_result = ArticleResearchReviewResult(
         passed=False,
         score=78.0,
@@ -789,16 +785,12 @@ def test_article_research_internal_snapshot_writes_review_file(tmp_path) -> None
         summary="研究审核未通过",
     )
     state.current_dimension_reviews = [dimension_review]
+    latest_file = save_latest_snapshot(state)
+    payload = json.loads(Path(latest_file).read_text(encoding="utf-8"))
 
-    agent = ResearchAgent.__new__(ResearchAgent)
-    agent._save_internal_snapshots(state)
-    review_payload = json.loads(
-        (tmp_path / "research_review_iter_02.json").read_text(encoding="utf-8")
-    )
-
-    assert review_payload["iteration"] == 2
-    assert review_payload["review_result"]["score"] == 78.0
-    assert review_payload["dimension_results"][0]["dimension"] == "downstream_usability"
+    assert payload["iteration"] == 2
+    assert payload["review_result"]["score"] == 78.0
+    assert payload["dimension_reviews"][0]["dimension"] == "downstream_usability"
 
 
 def test_article_search_candidates_runs_concurrently_and_dedupes() -> None:
@@ -850,10 +842,10 @@ def test_article_search_candidates_runs_concurrently_and_dedupes() -> None:
             }
             return mapping.get(query, [])
 
-    agent = ResearchAgent.__new__(ResearchAgent)
-    agent.SEARCH_CONCURRENCY = 3
-    agent.search_client = FakeSearchClient()
-    agent._compile_task_queries = lambda task: task.article_queries + task.video_queries
+    agent = ResearchAgent()
+    agent.collector.search_concurrency = 3
+    agent.collector.search_client = FakeSearchClient()
+    agent.collector._compile_task_queries = lambda task: task.article_queries + task.video_queries
 
     state = ResearchState(
         topic="capsule wardrobe",
@@ -861,6 +853,7 @@ def test_article_search_candidates_runs_concurrently_and_dedupes() -> None:
         strategy=ArticleStrategy.AUTO,
         output_dir=None,
     )
+    state.begin_iteration(1)
     tasks = [
         ResearchTask(task_id="task_a", goal="A", article_queries=["q1"]),
         ResearchTask(task_id="task_b", goal="B", article_queries=["q1", "q2"]),
@@ -868,10 +861,10 @@ def test_article_search_candidates_runs_concurrently_and_dedupes() -> None:
 
     task_candidates = asyncio.run(agent._search_candidates(tasks, state))
 
-    assert len(agent.search_client.calls) == 2
-    assert agent.search_client.max_active >= 2
-    assert agent.search_client.max_active <= agent.SEARCH_CONCURRENCY
-    assert len(state.current_candidates) == 3
+    assert len(agent.collector.search_client.calls) == 2
+    assert agent.collector.search_client.max_active >= 2
+    assert agent.collector.search_client.max_active <= agent.collector.search_concurrency
+    assert len(state.current_execution.candidate_pool) == 3
     assert [result.url for _, result in task_candidates["task_a"]] == [
         "https://www.allure.com/story/one",
         "https://www.elle.com/story/two",
@@ -888,17 +881,159 @@ def test_article_search_candidates_runs_concurrently_and_dedupes() -> None:
     }
 
 
-def test_article_researcher_prioritizes_topical_candidates_before_collection() -> None:
-    agent = ResearchAgent.__new__(ResearchAgent)
+def test_article_compile_task_queries_uses_video_domains_for_video_focus() -> None:
+    agent = ResearchAgent()
+    task = ResearchTask(
+        task_id="task_video",
+        goal="Find creator interviews about the French girl style myth",
+        source_focus="video",
+        article_queries=["French girl style myth media analysis"],
+        video_queries=["French girl style interview"],
+    )
 
-    async def fake_visit(task, candidates, state):
-        return []
+    queries = agent._compile_task_queries(task)
+
+    assert queries[0] == 'site:youtube.com "French girl style interview"'
+    assert 'site:allure.com "French girl style myth media analysis"' in queries
+    assert "French girl style interview" in queries
+
+
+def test_article_visit_and_collect_sources_reads_pages_concurrently() -> None:
+    class FakePageReader:
+        def __init__(self) -> None:
+            self.active = 0
+            self.max_active = 0
+
+        async def read_page(self, url: str) -> ReadPageResult:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            await asyncio.sleep(0.01)
+            self.active -= 1
+            return ReadPageResult(
+                ok=True,
+                url=url,
+                final_url=url,
+                title="Capsule wardrobe source",
+                author="Jane Doe",
+                published_at="2026-03-15",
+                text="x" * 1600,
+                headings=["Capsule wardrobe guide"],
+                paragraphs=["Paragraph"],
+            )
+
+    class FakeVideoTranscriber:
+        async def transcribe(self, url: str) -> None:
+            raise AssertionError("video transcription should not be called")
+
+    agent = ResearchAgent()
+    agent.collector.page_visit_concurrency = 3
+    agent.collector.page_reader = FakePageReader()
+    agent.collector.video_transcriber = FakeVideoTranscriber()
+    state = ResearchState(
+        topic="capsule wardrobe",
+        target_audience="25-35岁女性",
+        strategy=ArticleStrategy.SYNTHESIZE,
+        output_dir=None,
+    )
+    state.begin_iteration(1)
+    task = ResearchTask(
+        task_id="task_1",
+        goal="Collect capsule wardrobe article sources",
+        source_focus="article",
+    )
+    candidates = [
+        (
+            f"q{i}",
+                SearchResult(
+                    title=f"Capsule wardrobe guide {i}",
+                    url=f"https://www.allure.com/story/{i}",
+                    snippet=f"Capsule wardrobe snippet {i}",
+                    domain="www.allure.com",
+                    rank=i,
+                ),
+            )
+        for i in range(1, 5)
+    ]
+
+    collected = asyncio.run(agent._visit_and_collect_sources(task, candidates, state))
+
+    assert len(collected) == 3
+    assert agent.collector.page_reader.max_active >= 2
+    assert agent.collector.page_reader.max_active <= agent.collector.page_visit_concurrency
+
+
+def test_article_visit_and_collect_sources_skips_empty_video_url_transcription() -> None:
+    class FakePageReader:
+        async def read_page(self, url: str) -> ReadPageResult:
+            return ReadPageResult(
+                ok=True,
+                url=url,
+                final_url=url,
+                title="Video Source",
+                author="Creator",
+                published_at="2026-03-15",
+                text="x" * 1600,
+                headings=["Heading"],
+                paragraphs=["Paragraph"],
+                video_urls=[],
+                iframe_urls=[],
+            )
+
+    class FakeVideoTranscriber:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def transcribe(self, url: str) -> None:
+            self.calls.append(url)
+            raise AssertionError("transcribe should not be called with an empty URL")
+
+    agent = ResearchAgent()
+    agent.collector.page_visit_concurrency = 2
+    agent.collector.page_reader = FakePageReader()
+    agent.collector.video_transcriber = FakeVideoTranscriber()
+    state = ResearchState(
+        topic="French girl style myth",
+        target_audience="fashion readers",
+        strategy=ArticleStrategy.REPURPOSE_VIDEO,
+        output_dir=None,
+    )
+    state.begin_iteration(1)
+    task = ResearchTask(
+        task_id="task_video",
+        goal="Collect video evidence",
+        source_focus="video",
+        video_queries=["French girl style interview"],
+    )
+    candidates = [
+        (
+            "video_query",
+            SearchResult(
+                title="Interview",
+                url="https://www.youtube.com/watch?v=abc123",
+                snippet="Video snippet",
+                domain="www.youtube.com",
+                rank=1,
+            ),
+        )
+    ]
+
+    collected = asyncio.run(agent._visit_and_collect_sources(task, candidates, state))
+
+    assert collected == []
+    assert agent.collector.video_transcriber.calls == []
+
+
+def test_article_researcher_prioritizes_topical_candidates_before_collection() -> None:
+    agent = ResearchAgent()
+
+    async def fake_collect(task, candidates, state, execution):
+        return [], [], []
 
     async def fake_build_digests(state, collected):
         return []
 
-    agent._visit_and_collect_sources = fake_visit
-    agent._build_task_digests = fake_build_digests
+    agent.collector.collect_task_sources = fake_collect
+    agent.collector.build_task_digests = fake_build_digests
 
     state = ResearchState(
         topic="法式穿搭神话的工业起源",
@@ -906,6 +1041,7 @@ def test_article_researcher_prioritizes_topical_candidates_before_collection() -
         strategy=ArticleStrategy.SYNTHESIZE,
         output_dir=None,
     )
+    state.begin_iteration(1)
     task = ResearchTask(
         task_id="task_1",
         goal='探索19世纪高定时装屋如何系统化创造"法国女人"形象的商业起源',
@@ -968,6 +1104,418 @@ def test_article_researcher_prioritizes_topical_candidates_before_collection() -
         "https://www.allure.com/story/dior-appoints-maria-grazia-chiuri",
         "https://www.whowhatwear.com/fashion/live/london-fashion-week-spring-summer-2026",
     ]
+
+
+def test_article_curate_task_sources_prefers_domain_diversity() -> None:
+    agent = ResearchAgent()
+    state = ResearchState(
+        topic="capsule wardrobe",
+        target_audience="25-35岁女性",
+        strategy=ArticleStrategy.SYNTHESIZE,
+        output_dir=None,
+    )
+    state.begin_iteration(1)
+    task = ResearchTask(
+        task_id="task_article",
+        goal="Compare capsule wardrobe guides across publishers",
+        source_focus="article",
+        article_queries=["capsule wardrobe guide editors"],
+    )
+    raw_candidates = [
+        CollectedSourceCandidate(
+            url="https://www.allure.com/story/guide-a",
+            domain="www.allure.com",
+            title="Capsule wardrobe guide from Allure",
+            author="A",
+            published_at="2026-03-10",
+            snippet="Editors explain the capsule wardrobe guide.",
+            text="x" * 1600,
+            headings=["Capsule wardrobe guide"],
+            source_type=ArticleSourceType.ARTICLE.value,
+            engagement_hint="",
+            paywall_status="public",
+            quality_score=92.0,
+        ),
+        CollectedSourceCandidate(
+            url="https://www.allure.com/story/guide-b",
+            domain="www.allure.com",
+            title="Another capsule wardrobe guide",
+            author="B",
+            published_at="2026-03-09",
+            snippet="Another capsule wardrobe guide.",
+            text="x" * 1600,
+            headings=["Wardrobe basics"],
+            source_type=ArticleSourceType.ARTICLE.value,
+            engagement_hint="",
+            paywall_status="public",
+            quality_score=88.0,
+        ),
+        CollectedSourceCandidate(
+            url="https://www.elle.com/fashion/capsule-guide",
+            domain="www.elle.com",
+            title="Editors map a capsule wardrobe",
+            author="C",
+            published_at="2026-03-08",
+            snippet="Capsule wardrobe planning from Elle.",
+            text="x" * 1600,
+            headings=["Capsule wardrobe"],
+            source_type=ArticleSourceType.ARTICLE.value,
+            engagement_hint="",
+            paywall_status="public",
+            quality_score=89.0,
+        ),
+        CollectedSourceCandidate(
+            url="https://www.vogue.com/article/capsule-wardrobe",
+            domain="www.vogue.com",
+            title="Vogue capsule wardrobe edit",
+            author="D",
+            published_at="2026-03-07",
+            snippet="Capsule wardrobe edit.",
+            text="x" * 1600,
+            headings=["Edit"],
+            source_type=ArticleSourceType.ARTICLE.value,
+            engagement_hint="",
+            paywall_status="public",
+            quality_score=86.0,
+        ),
+        CollectedSourceCandidate(
+            url="https://www.byrdie.com/weak-source",
+            domain="www.byrdie.com",
+            title="Weak source",
+            author="",
+            published_at="",
+            snippet="Weak source",
+            text="x" * 1600,
+            headings=["Weak"],
+            source_type=ArticleSourceType.ARTICLE.value,
+            engagement_hint="",
+            paywall_status="public",
+            quality_score=68.0,
+        ),
+    ]
+
+    curated, curation_notes = agent._curate_task_sources(task, raw_candidates, state)
+    finalized = agent._finalize_curated_sources(state, curated)
+
+    assert [source.domain for source in curated] == [
+        "www.allure.com",
+        "www.elle.com",
+        "www.vogue.com",
+    ]
+    assert [source.ref for source in finalized] == ["source_1", "source_2", "source_3"]
+    assert any(note.startswith("duplicate_domain:") for note in curation_notes)
+    assert any(note.startswith("low_quality:") for note in curation_notes)
+
+
+def test_article_curate_task_sources_prefers_transcript_backed_video() -> None:
+    agent = ResearchAgent()
+    state = ResearchState(
+        topic="French girl style myth",
+        target_audience="fashion readers",
+        strategy=ArticleStrategy.REPURPOSE_VIDEO,
+        output_dir=None,
+    )
+    state.begin_iteration(1)
+    task = ResearchTask(
+        task_id="task_video",
+        goal="Collect video evidence about the French girl style myth",
+        source_focus="video",
+        video_queries=["French girl style myth interview"],
+    )
+    raw_candidates = [
+        CollectedSourceCandidate(
+            url="https://www.youtube.com/watch?v=aaa",
+            domain="www.youtube.com",
+            title="French girl style myth interview",
+            author="Creator A",
+            published_at="2026-03-10",
+            snippet="Interview about the French girl style myth.",
+            text="x" * 1600,
+            headings=["Interview"],
+            source_type=ArticleSourceType.VIDEO.value,
+            engagement_hint="",
+            paywall_status="public",
+            quality_score=84.0,
+            transcript="Transcript available",
+        ),
+        CollectedSourceCandidate(
+            url="https://www.youtube.com/watch?v=bbb",
+            domain="www.youtube.com",
+            title="French girl style myth vlog",
+            author="Creator B",
+            published_at="2026-03-09",
+            snippet="Vlog about the French girl style myth.",
+            text="x" * 1600,
+            headings=["Vlog"],
+            source_type=ArticleSourceType.VIDEO.value,
+            engagement_hint="",
+            paywall_status="public",
+            quality_score=87.0,
+            transcript="",
+        ),
+        CollectedSourceCandidate(
+            url="https://vimeo.com/123456",
+            domain="vimeo.com",
+            title="French girl style myth case study",
+            author="Creator C",
+            published_at="2026-03-08",
+            snippet="Case study interview.",
+            text="x" * 1600,
+            headings=["Case study"],
+            source_type=ArticleSourceType.VIDEO.value,
+            engagement_hint="",
+            paywall_status="public",
+            quality_score=83.0,
+            transcript="Transcript available",
+        ),
+    ]
+
+    curated, curation_notes = agent._curate_task_sources(task, raw_candidates, state)
+
+    assert [source.url for source in curated] == [
+        "https://www.youtube.com/watch?v=aaa",
+        "https://vimeo.com/123456",
+    ]
+    assert any(note.startswith("video_without_transcript:") for note in curation_notes)
+
+
+def test_article_researcher_reports_when_all_raw_sources_are_filtered() -> None:
+    agent = ResearchAgent()
+
+    async def fake_collect(task, candidates, state, execution):
+        return [
+            CollectedSourceCandidate(
+                url="https://example.com/weak",
+                domain="example.com",
+                title="Weak",
+                author="",
+                published_at="",
+                snippet="Weak",
+                text="x" * 1600,
+                headings=["Weak"],
+                source_type=ArticleSourceType.ARTICLE.value,
+                engagement_hint="",
+                paywall_status="public",
+                quality_score=68.0,
+            )
+        ], [], ["low_quality: https://example.com/weak"]
+
+    async def fake_build_digests(state, collected):
+        return []
+
+    agent.collector.collect_task_sources = fake_collect
+    agent.collector.build_task_digests = fake_build_digests
+
+    state = ResearchState(
+        topic="capsule wardrobe",
+        target_audience="25-35岁女性",
+        strategy=ArticleStrategy.SYNTHESIZE,
+        output_dir=None,
+    )
+    state.begin_iteration(1)
+    task = ResearchTask(
+        task_id="task_filter",
+        goal="Find strong sources about capsule wardrobe myths",
+        source_focus="article",
+        article_queries=["capsule wardrobe myth"],
+    )
+
+    task_result = asyncio.run(agent.run_researcher_unit(state=state, task=task, candidates=[]))
+    note = asyncio.run(agent.compress_task_result(task, task_result))
+
+    assert task_result.raw_source_count == 1
+    assert task_result.curated_source_count == 0
+    assert task_result.curation_notes == ["low_quality: https://example.com/weak"]
+    assert "找到候选来源但未通过质量筛选" in task_result.gaps
+    assert note.summary == "Find strong sources about capsule wardrobe myths 找到 1 个候选，但经筛选后未保留可用来源"
+
+
+def test_article_compress_task_result_uses_fallback_for_low_signal_single_source() -> None:
+    class FakeNoteCompressor:
+        async def run(self, prompt: str):
+            raise AssertionError("note compressor should not run for low-signal single-source tasks")
+
+    agent = ResearchAgent()
+    agent.collector.note_compressor = FakeNoteCompressor()
+    task = ResearchTask(
+        task_id="task_single",
+        goal="Summarize a single source",
+        source_focus="article",
+        article_queries=["single source"],
+    )
+    task_result = ResearchTaskResult(
+        task_id="task_single",
+        goal="Summarize a single source",
+        raw_source_count=1,
+        curated_source_count=1,
+        collected_source_refs=["source_1"],
+        new_digests=[
+            SourceDigest(
+                source_ref="source_1",
+                source_type=ArticleSourceType.ARTICLE,
+                url="https://www.allure.com/story/source-one",
+                domain="www.allure.com",
+                title="Single Source",
+                author="Jane Doe",
+                published_at="2026-03-15",
+                quality_score=88.0,
+                chunk_count=1,
+                summary="Single-source finding",
+                key_points=["A single source can still offer one usable claim."],
+            )
+        ],
+        raw_findings=["Single-source finding"],
+        gaps=["来源域名仍偏少"],
+        suggested_followups=["single source second opinion"],
+    )
+
+    note = asyncio.run(agent.compress_task_result(task, task_result))
+
+    assert note.summary == "Single-source finding"
+    assert note.key_findings == ["Single-source finding"]
+    assert note.recommended_next_queries == ["single source second opinion"]
+    assert note.source_refs == ["source_1"]
+
+
+def test_article_forward_skips_validate_on_low_signal_iteration() -> None:
+    state = ResearchState(
+        topic="capsule wardrobe",
+        target_audience="25-35岁女性",
+        strategy=ArticleStrategy.SYNTHESIZE,
+        output_dir=None,
+    )
+    state.current_result = _build_valid_article_research_result()
+    calls: list[tuple[str, object]] = []
+
+    async def fake_step(current_state, iteration):
+        calls.append(("step", iteration))
+        current_state.begin_iteration(iteration + 1)
+        current_state.current_execution.synthesized = iteration != 0
+        current_state.current_execution.skip_reason = (
+            "本轮仅新增 1 个来源、1 个 digest，保留到下一轮合并"
+            if iteration == 0
+            else ""
+        )
+        current_state.current_result = _build_valid_article_research_result()
+
+    async def fake_validate(output):
+        calls.append(("validate", output.summary))
+        return ValidationResult.success("ok")
+
+    agent = ResearchAgent()
+    agent.MAX_ITERATIONS = 3
+    agent.create_state = lambda topic, target_audience, strategy, output_dir=None: state
+    agent.step = fake_step
+    agent.validate = fake_validate
+    agent.finalize = lambda current_state, iteration: calls.append(("finalize", iteration))
+
+    result = asyncio.run(
+        agent.forward(
+            topic="capsule wardrobe",
+            target_audience="25-35岁女性",
+            strategy=ArticleStrategy.SYNTHESIZE,
+        )
+    )
+
+    assert result.summary == "Spring wardrobe research is structured and ready for writing."
+    assert calls == [
+        ("step", 0),
+        ("step", 1),
+        ("validate", "Spring wardrobe research is structured and ready for writing."),
+        ("finalize", 2),
+    ]
+
+
+def test_article_synthesize_result_passes_current_date_to_prompt(tmp_path) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeSynthesizer:
+        async def run(self, prompt: str):
+            return type(
+                "RunResult",
+                (),
+                {
+                    "output": ArticleResearchResult(
+                        summary="summary",
+                        suggested_strategy=ArticleStrategy.SYNTHESIZE,
+                    )
+                },
+            )()
+
+    async def fake_build_local_evidence(*, state, evidence_store):
+        return [], str(tmp_path / "digests.json"), str(tmp_path / "source_index.json")
+
+    def fake_prompt(**variables: object) -> str:
+        captured.update(variables)
+        return "prompt"
+
+    agent = ResearchAgent()
+    agent.synthesizer._build_local_evidence = fake_build_local_evidence
+    agent.synthesizer._create_synthesizer = lambda evidence_store: FakeSynthesizer()
+    state = ResearchState(
+        topic="capsule wardrobe",
+        target_audience="25-35岁女性",
+        strategy=ArticleStrategy.SYNTHESIZE,
+        output_dir=tmp_path,
+    )
+    state.begin_iteration(1)
+    state.current_iteration_plan = IterationPlan(objective="objective", audience_focus="audience")
+
+    with patch(
+        "src.tools.xiaohongshu.article_post.research.agent.synthesis_user_prompt",
+        side_effect=fake_prompt,
+    ):
+        asyncio.run(agent.synthesize_result(state, LocalEvidenceStore(tmp_path)))
+
+    assert captured["current_date"] == datetime.now().date().isoformat()
+
+
+def test_article_review_validator_passes_current_date_to_prompt() -> None:
+    captured: dict[str, object] = {}
+
+    class FakeAgent:
+        async def run(self, prompt: str):
+            return type(
+                "RunResult",
+                (),
+                {
+                    "output": ResearchDimensionReviewResult(
+                        dimension=ResearchReviewDimension.TRACEABILITY,
+                        passed=True,
+                        score=100.0,
+                        issues=[],
+                        summary="",
+                    )
+                },
+            )()
+
+    def fake_prompt(**variables: object) -> str:
+        captured.update(variables)
+        return "review"
+
+    validator = ResearchReviewValidator()
+    validator._build_reviewers = lambda output_dir=None: [
+        (ResearchReviewDimension.TRACEABILITY, FakeAgent())
+    ]
+
+    with patch(
+        "src.tools.xiaohongshu.article_post.research.validator.research_review_user_prompt",
+        side_effect=fake_prompt,
+    ):
+        result = asyncio.run(
+            validator.validate(
+                _build_valid_article_research_result(),
+                context={
+                    "topic": "capsule wardrobe",
+                    "target_audience": "25-35岁女性",
+                    "requested_strategy": ArticleStrategy.SYNTHESIZE,
+                    "output_dir": None,
+                },
+            )
+        )
+
+    assert result.passed is True
+    assert captured["current_date"] == datetime.now().date().isoformat()
 
 
 def test_article_content_history_drops_tool_messages_with_tool_call_ids() -> None:
@@ -1414,3 +1962,4 @@ def test_article_publish_tools_wrap_fixed_editor_scripts() -> None:
     assert cleaned["ok"] is True
     assert cleaned["removed"] == ["[IMAGE_SLOT:cover]"]
     assert ".tiptap.ProseMirror p" in fake_server.calls[1][1]["code"]
+

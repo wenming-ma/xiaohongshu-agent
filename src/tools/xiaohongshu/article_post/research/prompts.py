@@ -2,25 +2,15 @@
 
 from .....utils.prompting import render_template
 
-RESEARCH_BRIEF_SYSTEM_PROMPT = """你是一位跨站研究总编，需要把中文选题转成可执行的研究 brief。
+ITERATION_PLANNER_SYSTEM_PROMPT = """你是一位跨站研究主编，需要把中文长文选题直接转成一轮可执行的研究计划。
 
 要求：
-1. 严格输出 `ResearchBrief`
-2. brief 要说明本轮研究目标、受众聚焦、优先覆盖角度和避免重复的方向
-3. article_focuses / video_focuses 必须是适合英文搜索的短语，使用时尚媒体编辑常用语言，例如 "optical illusions fashion height petite"、"science behind capsule wardrobe minimalism" 而非学术论文式的 "neuroscience visual illusion perception experiment"
-4. must_cover 优先写需要补齐的证据类型、案例类型或数据类型
-5. 如果 continuation_context 提供了失败反馈，brief 必须显式规避重复方向
-"""
-
-SUPERVISOR_SYSTEM_PROMPT = """你是一位研究调度者，需要把研究 brief 拆成少量高价值任务。
-
-要求：
-1. 严格输出 `SupervisorPlan`
-2. 每轮只生成 2-4 个任务
-3. 任务之间必须尽量覆盖不同研究假设，例如趋势、案例、数据、视频补证
-4. 任务中的 query 必须是英文短 query，不要包含 site: 域名限制
-5. article_queries 必须使用时尚媒体网站常见的英文写法，例如 "optical illusions fashion height" 而非 "neuroscience visual illusion experiments"；用时尚编辑语言而非学术论文语言
-6. avoid_patterns 要显式规避 brief 和历史 notes 中已经失败或重复的方向
+1. 严格输出 `IterationPlan`
+2. 每轮只生成 2-4 个任务，任务之间尽量覆盖不同研究假设，例如趋势、案例、数据、视频补证
+3. 任务中的 query 必须是英文短 query，不要包含 site: 域名限制
+4. article_queries 必须使用时尚媒体编辑常用语言，而不是学术论文语言
+5. avoid_patterns 必须显式规避 continuation_context 和历史 notes 中已失败或重复的方向
+6. notes 用中文，总结这轮计划在补什么证据、为何这么拆任务
 """
 
 TASK_NOTE_SYSTEM_PROMPT = """你是一位研究压缩助手，需要把单个研究任务的结果压缩成可继续调度的 notes。
@@ -60,22 +50,9 @@ SYNTHESIS_SYSTEM_PROMPT = """你是一位深度研究编辑，需要把 brief、
 9. `claims[].source_refs` 只能引用输入 digest 池里真实存在的 source_ref；如果找不到合法 source_ref，就省略这条 claim
 """
 
-RESEARCH_BRIEF_USER_PROMPT_TEMPLATE = """主题: {topic}
+ITERATION_PLANNER_USER_PROMPT_TEMPLATE = """主题: {topic}
 目标受众: {target_audience}
 请求策略: {requested_strategy}
-{continuation_context}
-
-请生成本轮研究 brief。
-"""
-
-SUPERVISOR_USER_PROMPT_TEMPLATE = """主题: {topic}
-目标受众: {target_audience}
-请求策略: {requested_strategy}
-
-研究 brief:
-```json
-{brief_json}
-```
 
 历史任务 notes:
 ```json
@@ -84,7 +61,7 @@ SUPERVISOR_USER_PROMPT_TEMPLATE = """主题: {topic}
 
 {continuation_context}
 
-请把本轮研究拆成 2-4 个任务。
+请生成本轮完整研究计划。
 """
 
 TASK_NOTE_USER_PROMPT_TEMPLATE = """研究任务:
@@ -124,6 +101,7 @@ SOURCE_DIGEST_USER_PROMPT_TEMPLATE = """主题: {topic}
 SYNTHESIS_USER_PROMPT_TEMPLATE = """主题: {topic}
 目标受众: {target_audience}
 请求策略: {requested_strategy}
+当前日期: {current_date}
 
 研究 brief:
 ```json
@@ -243,6 +221,7 @@ RESEARCH_REVIEW_USER_PROMPT_TEMPLATE = """## 审核任务
 **主题**：{topic}
 **目标受众**：{target_audience}
 **请求策略**：{requested_strategy}
+**当前日期**：{current_date}
 
 ### 研究统计摘要
 ```json
@@ -256,19 +235,16 @@ RESEARCH_REVIEW_USER_PROMPT_TEMPLATE = """## 审核任务
 
 审核要求：
 1. 先看统计摘要，再看 research_json 细节
-2. 只输出当前维度的问题，不要替其他维度重复扣分
-3. 仅在确有必要时调用本地证据工具
-4. 如果没有问题，`issues` 置空，`passed=true`
-5. 如果有问题，给出简洁、可执行的修订建议
+2. 判断时效性时必须以“当前日期”为准，不要把早于当前日期的来源误判为未来日期
+3. 只输出当前维度的问题，不要替其他维度重复扣分
+4. 仅在确有必要时调用本地证据工具
+5. 如果没有问题，`issues` 置空，`passed=true`
+6. 如果有问题，给出简洁、可执行的修订建议
 """
 
 
-def research_brief_prompt(**variables: object) -> str:
-    return render_template(RESEARCH_BRIEF_USER_PROMPT_TEMPLATE, **variables)
-
-
-def supervisor_prompt(**variables: object) -> str:
-    return render_template(SUPERVISOR_USER_PROMPT_TEMPLATE, **variables)
+def iteration_planner_prompt(**variables: object) -> str:
+    return render_template(ITERATION_PLANNER_USER_PROMPT_TEMPLATE, **variables)
 
 
 def task_note_prompt(**variables: object) -> str:
@@ -312,13 +288,11 @@ def research_review_user_prompt(**variables: object) -> str:
 
 
 __all__ = [
-    "RESEARCH_BRIEF_SYSTEM_PROMPT",
+    "ITERATION_PLANNER_SYSTEM_PROMPT",
     "SOURCE_DIGEST_SYSTEM_PROMPT",
-    "SUPERVISOR_SYSTEM_PROMPT",
     "SYNTHESIS_SYSTEM_PROMPT",
     "TASK_NOTE_SYSTEM_PROMPT",
-    "research_brief_prompt",
-    "supervisor_prompt",
+    "iteration_planner_prompt",
     "task_note_prompt",
     "source_digest_prompt",
     "synthesis_system_prompt",
