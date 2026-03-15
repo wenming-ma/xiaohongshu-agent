@@ -1,11 +1,11 @@
 """
-迭代执行 workshop/image_topics.json 中的话题，仅调用 XHSImagePostPipeline。
+迭代执行 workshop/article_topics.json 中的话题，仅调用 XHSArticlePostPipeline。
 
 用法:
-    uv run python workshop/run_image_posts.py
-    uv run python workshop/run_image_posts.py --start-index 3
-    uv run python workshop/run_image_posts.py --start-index 5 --limit 2
-    uv run python workshop/run_image_posts.py --sleep 3600
+    uv run python workshop/run_article_posts.py
+    uv run python workshop/run_article_posts.py --start-index 3
+    uv run python workshop/run_article_posts.py --limit 2 --strategy repurpose_article
+    uv run python workshop/run_article_posts.py --publish
 """
 
 from __future__ import annotations
@@ -30,43 +30,27 @@ if sys.platform == "win32":
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 from dotenv import load_dotenv  # noqa: E402
+
 load_dotenv(PROJECT_ROOT / ".env")
 
 import logfire  # noqa: E402
 
 logfire.configure(
-    send_to_logfire='if-token-present',
-    environment='development',
-    service_name='xiaohongshu-agent-batch',
+    send_to_logfire="if-token-present",
+    environment="development",
+    service_name="xiaohongshu-agent-article-batch",
 )
 logfire.instrument_pydantic_ai()
 
-from src.agents.image_post import XHSImagePostInput, XHSImagePostPipeline  # noqa: E402
-from src.utils.logger import get_logger, setup_logging  # noqa: E402
+from src.agents.article_post import XHSArticlePostInput, XHSArticlePostPipeline  # noqa: E402
+from src.agents.article_post.schemas import ArticleStrategy  # noqa: E402
 from src.utils.feishu_notifier import get_feishu_notifier  # noqa: E402
+from src.utils.logger import get_logger, setup_logging  # noqa: E402
 
-
-def get_sleep_seconds(override: int | None) -> int:
-    """根据当前时段返回休眠秒数。
-
-    - 5:00-9:59 / 17:00-21:59 → 45 分钟 (2700s)
-    - 其他时段 → 90 分钟 (5400s)
-    - 如果 override 不为 None，则使用固定值
-    """
-    if override is not None:
-        return override
-    hour = datetime.now().hour
-    if 5 <= hour < 10 or 17 <= hour < 22:
-        return 2700  # 45 min
-    return 5400  # 90 min
 
 setup_logging()
 logger = get_logger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# Topics loading
-# ---------------------------------------------------------------------------
 
 def load_topics(path: Path) -> list[dict[str, Any]]:
     raw = json.loads(path.read_text(encoding="utf-8"))
@@ -78,22 +62,35 @@ def load_topics(path: Path) -> list[dict[str, Any]]:
     return raw
 
 
-# ---------------------------------------------------------------------------
-# Single topic execution
-# ---------------------------------------------------------------------------
+def resolve_strategy(item: dict[str, Any], override: str | None) -> ArticleStrategy:
+    if override:
+        return ArticleStrategy(override)
+    raw = str(item.get("strategy") or "").strip()
+    if raw in {strategy.value for strategy in ArticleStrategy}:
+        return ArticleStrategy(raw)
+    return ArticleStrategy.AUTO
+
 
 async def run_single(
     item: dict[str, Any],
     idx: int,
     total: int,
+    *,
     max_retries: int,
     retry_delay: int,
+    publish: bool,
+    generate_images: bool,
+    strategy_override: str | None,
 ) -> dict[str, Any]:
     topic = item["topic"].strip()
     audience = item["audience"].strip()
+    strategy = resolve_strategy(item, strategy_override)
 
     logger.info("[%d/%d] 话题: %s", idx, total, topic)
     logger.info("  受众: %s", audience)
+    logger.info("  策略: %s", strategy.value)
+    logger.info("  发布: %s", publish)
+    logger.info("  生成图片: %s", generate_images)
 
     last_error = ""
     for attempt in range(1, max_retries + 1):
@@ -102,31 +99,37 @@ async def run_single(
             await asyncio.sleep(retry_delay)
 
         try:
-            tool = XHSImagePostPipeline()
-            result = await tool.execute(XHSImagePostInput(topic=topic, audience=audience))
+            tool = XHSArticlePostPipeline()
+            result = await tool.execute(
+                XHSArticlePostInput(
+                    topic=topic,
+                    audience=audience,
+                    publish=publish,
+                    generate_images=generate_images,
+                    strategy=strategy,
+                )
+            )
             payload = result.model_dump()
             payload["topic"] = topic
             payload["audience"] = audience
+            payload["strategy"] = strategy.value
 
             if result.success:
                 logger.info("  成功: %s", result.title or topic)
+                logger.info("  输出目录: %s", result.output_dir)
 
-                # 飞书通知
                 if result.published:
                     try:
                         notifier = get_feishu_notifier()
                         lines = [
-                            "✅ 帖子发布成功",
+                            "✅ 长文发布成功",
                             f"主题：{topic}",
                             f"标题：{result.title or '无'}",
+                            f"策略：{strategy.value}",
                             f"话题：{' '.join(result.hashtags) if result.hashtags else '无'}",
-                            f"图片数：{result.image_count} 张",
                             f"帖子链接：{result.post_url or '未获取到'}",
                         ]
                         await notifier.send_message("\n".join(lines))
-                        # 发送封面图预览
-                        if result.image_paths:
-                            await notifier.send_image(Path(result.image_paths[0]), caption="封面图")
                     except Exception:
                         logger.warning("飞书通知发送失败", exc_info=True)
 
@@ -136,20 +139,22 @@ async def run_single(
             logger.error("  失败: %s", last_error)
         except Exception:
             import traceback
+
             last_error = traceback.format_exc()
             logger.exception("  执行异常")
 
-    return {"success": False, "topic": topic, "audience": audience, "error_message": last_error}
+    return {
+        "success": False,
+        "topic": topic,
+        "audience": audience,
+        "strategy": strategy.value,
+        "error_message": last_error,
+    }
 
-
-# ---------------------------------------------------------------------------
-# Batch runner
-# ---------------------------------------------------------------------------
 
 async def run_batch(args: argparse.Namespace) -> int:
     topics = load_topics(args.topics_file)
 
-    # 切片: start_index 是 1-based
     start = args.start_index - 1
     selected = topics[start:]
     if args.limit is not None:
@@ -163,11 +168,17 @@ async def run_batch(args: argparse.Namespace) -> int:
     base_idx = args.start_index
 
     logger.info("=" * 60)
-    logger.info("XHS Image Post 批量执行")
+    logger.info("XHS Article Post 批量执行")
     logger.info("话题文件: %s", args.topics_file)
     logger.info("范围: #%d ~ #%d (共 %d 个)", base_idx, base_idx + total - 1, total)
-    sleep_mode = f"固定 {args.sleep}s" if args.sleep is not None else "动态 (5-10/17-22点=45min, 其余=90min)"
-    logger.info("最大重试: %d  重试间隔: %ds  休眠策略: %s", args.max_retries, args.retry_delay, sleep_mode)
+    logger.info(
+        "最大重试: %d  重试间隔: %ds  发布: %s  策略覆盖: %s",
+        args.max_retries,
+        args.retry_delay,
+        args.publish,
+        args.strategy or "无",
+    )
+    logger.info("生成图片: %s", not args.no_image)
     logger.info("=" * 60)
 
     results: list[dict[str, Any]] = []
@@ -175,22 +186,32 @@ async def run_batch(args: argparse.Namespace) -> int:
 
     for i, item in enumerate(selected):
         idx = base_idx + i
-        result = await run_single(item, idx, base_idx + total - 1, args.max_retries, args.retry_delay)
+        result = await run_single(
+            item,
+            idx,
+            base_idx + total - 1,
+            max_retries=args.max_retries,
+            retry_delay=args.retry_delay,
+            publish=args.publish,
+            generate_images=not args.no_image,
+            strategy_override=args.strategy,
+        )
         results.append(result)
 
         if not result.get("success"):
             failed.append(result)
 
-        # 话题间休眠（仅当通过 --sleep 显式指定时才休眠）
-        if i < total - 1 and args.sleep is not None and args.sleep > 0:
+        if i < total - 1 and args.sleep and args.sleep > 0:
             logger.info("休眠 %d 秒 (%.0f 分钟) 后继续 …", args.sleep, args.sleep / 60)
             await asyncio.sleep(args.sleep)
 
-    # 写出汇总
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    summary_path = SCRIPT_DIR / f"image_post_summary_{ts}.json"
+    summary_path = SCRIPT_DIR / f"article_post_summary_{ts}.json"
     summary = {
         "timestamp": ts,
+        "publish": args.publish,
+        "generate_images": not args.no_image,
+        "strategy_override": args.strategy,
         "total": total,
         "success": total - len(failed),
         "failed": len(failed),
@@ -200,7 +221,7 @@ async def run_batch(args: argparse.Namespace) -> int:
     logger.info("汇总文件: %s", summary_path)
 
     if failed:
-        failed_path = SCRIPT_DIR / f"image_post_failed_{ts}.json"
+        failed_path = SCRIPT_DIR / f"article_post_failed_{ts}.json"
         failed_path.write_text(json.dumps(failed, ensure_ascii=False, indent=2), encoding="utf-8")
         logger.warning("失败列表: %s", failed_path)
 
@@ -211,25 +232,28 @@ async def run_batch(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="批量执行 XHS Image Post（仅 image_post agent）")
-    p.add_argument("--topics-file", type=Path, default=SCRIPT_DIR / "image_topics.json", help="话题 JSON 文件")
-    p.add_argument("--start-index", type=int, default=1, help="从第几个话题开始 (1-based)")
-    p.add_argument("--limit", type=int, default=None, help="最多处理几个话题")
-    p.add_argument("--max-retries", type=int, default=10, help="单个话题最大重试次数")
-    p.add_argument("--retry-delay", type=int, default=5, help="重试间隔秒数")
-    p.add_argument("--sleep", type=int, default=None, help="话题之间固定休眠秒数 (留空则按时段自动: 5-10点/17-22点=45min, 其余=90min)")
-    return p.parse_args()
+    parser = argparse.ArgumentParser(description="批量执行 XHS Article Post")
+    parser.add_argument("--topics-file", type=Path, default=SCRIPT_DIR / "article_topics.json", help="话题 JSON 文件")
+    parser.add_argument("--start-index", type=int, default=1, help="从第几个话题开始 (1-based)")
+    parser.add_argument("--limit", type=int, default=None, help="最多处理几个话题")
+    parser.add_argument("--max-retries", type=int, default=3, help="单个话题最大重试次数")
+    parser.add_argument("--retry-delay", type=int, default=10, help="重试间隔秒数")
+    parser.add_argument("--sleep", type=int, default=0, help="话题之间固定休眠秒数")
+    parser.add_argument(
+        "--strategy",
+        choices=[strategy.value for strategy in ArticleStrategy],
+        default=None,
+        help="覆盖所有话题的长文策略",
+    )
+    parser.add_argument("--publish", action="store_true", help="实际发布到小红书")
+    parser.add_argument("--no-image", action="store_true", help="跳过图片生成")
+    return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    exit_code = asyncio.run(run_batch(args))
-    raise SystemExit(exit_code)
+    raise SystemExit(asyncio.run(run_batch(args)))
 
 
 if __name__ == "__main__":

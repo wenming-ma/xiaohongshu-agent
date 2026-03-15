@@ -1,11 +1,11 @@
-# Orchestrator 目录
+# Master 目录
 
-顶层 AI Agent，负责理解用户意图并调用对应工具。
+顶层 AI Agent，负责理解用户意图并调用对应流水线。
 
 ## MasterAgent
 
 ```python
-from src.orchestrator.master_agent import MasterAgent
+from src.master.agent import MasterAgent
 
 agent = MasterAgent()
 result = await agent.forward("帮我发一篇关于西安美食的小红书帖子")
@@ -14,7 +14,7 @@ result = await agent.forward("帮我发一篇关于西安美食的小红书帖�
 ## 职责
 
 1. 解析用户自然语言输入
-2. 选择合适的平台工具（通过 ToolRegistry）
-3. 构造工具输入参数
-4. 调用工具执行
+2. 选择合适的平台流水线（通过 PipelineRegistry）
+3. 构造流水线输入参数
+4. 调用流水线执行
 5. 返回结果给用户

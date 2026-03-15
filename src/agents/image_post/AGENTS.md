@@ -1,11 +1,11 @@
-# XHS 图文帖子工具
+# XHS 图文帖子流水线
 
-小红书图文帖子创作和发布工具。
+小红书图文帖子创作和发布流水线。
 
 ## 工作流
 
 ```
-tool.py (XHSImagePostTool.execute)
+pipeline.py (XHSImagePostPipeline.execute)
     │
     ├── research/  → ResearchAgent.forward()   # 研究主题
     ├── content/   → ContentAgent.forward()    # 创作内容
@@ -14,8 +14,8 @@ tool.py (XHSImagePostTool.execute)
 ```
 
 共享能力不放在 `image_post/` 内：
-- `src/tools/xiaohongshu/shared/login/` 供 research 和 publish 复用登录能力
-- `src/tools/xiaohongshu/shared/video_extract/` 供 research 复用视频直链提取与转录能力
+- `src/agents/shared/login/` 供 research 和 publish 复用登录能力
+- `src/agents/shared/video_extract/` 供 research 复用视频直链提取与转录能力
 
 ## 各 Agent 文件结构
 
@@ -33,10 +33,10 @@ tool.py (XHSImagePostTool.execute)
 ## 调用方式
 
 ```python
-from src.tools.xiaohongshu.image_post import XHSImagePostTool
+from src.agents.image_post import XHSImagePostPipeline
 
-tool = XHSImagePostTool()
-result = await tool.execute(XHSImagePostInput(
+pipeline = XHSImagePostPipeline()
+result = await pipeline.execute(XHSImagePostInput(
     topic="西安美食推荐",
     audience="本地吃货",
     generate_image=True,

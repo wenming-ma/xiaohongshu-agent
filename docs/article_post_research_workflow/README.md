@@ -2,7 +2,7 @@
 
 ## 目标
 
-这份文档说明 `src/tools/xiaohongshu/article_post/research/` 当前的研究工作流。
+这份文档说明 `src/agents/article_post/research/` 当前的研究工作流。
 
 这次重构的目标不是换掉现有抓取能力，而是把原先偏单体的 research loop 拆成明确的阶段：
 
@@ -16,20 +16,20 @@
 
 外部契约保持不变：
 
-- `XHSArticlePostTool.execute()` 不改调用方式
+- `XHSArticlePostPipeline.execute()` 不改调用方式
 - `ResearchAgent.forward()` 不改签名
 - `ArticleResearchResult` 不改公共 schema
 - `content` 和 `image` phase 继续消费完整的 research JSON
 
 ## 入口和核心文件
 
-- Tool 入口: `src/tools/xiaohongshu/article_post/tool.py`
-- Research Agent: `src/tools/xiaohongshu/article_post/research/agent.py`
-- Research prompts: `src/tools/xiaohongshu/article_post/research/prompts.py`
-- Research state: `src/tools/xiaohongshu/article_post/research/state.py`
-- Search and evidence tools: `src/tools/xiaohongshu/article_post/research/tools.py`
-- Iteration persistence: `src/tools/xiaohongshu/article_post/research/utils.py`
-- Public schema: `src/tools/xiaohongshu/article_post/schemas.py`
+- Pipeline 入口: `src/agents/article_post/pipeline.py`
+- Research Agent: `src/agents/article_post/research/agent.py`
+- Research prompts: `src/agents/article_post/research/prompts.py`
+- Research state: `src/agents/article_post/research/state.py`
+- Search and evidence tools: `src/agents/article_post/research/tools.py`
+- Iteration persistence: `src/agents/article_post/research/utils.py`
+- Public schema: `src/agents/article_post/schemas.py`
 
 ## 设计原则
 

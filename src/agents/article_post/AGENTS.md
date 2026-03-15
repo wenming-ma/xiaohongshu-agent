@@ -5,7 +5,7 @@
 ## 工作流
 
 ```text
-tool.py (XHSArticlePostTool.execute)
+pipeline.py (XHSArticlePostPipeline.execute)
     │
     ├── research/  → ResearchAgent.forward()   # 跨站深度研究（文章 + 视频）
     ├── content/   → ContentAgent.forward()    # 长文创作 / 搬运改写
