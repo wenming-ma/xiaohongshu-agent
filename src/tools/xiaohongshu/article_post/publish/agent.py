@@ -17,6 +17,7 @@ from ...shared import create_shared_playwright_mcp_server
 from ...shared.login import create_login_tool
 from ..schemas import ArticleBlockType, ArticlePublishResult, ArticleSection, XHSArticleContent
 from .prompts import publish_system_prompt, publish_user_prompt
+from .tools import create_article_publish_tools
 
 logger = get_logger(__name__)
 
@@ -38,13 +39,14 @@ class PublisherAgent(BaseAgent):
 
     def init_tools(self) -> None:
         self.login_tool = create_login_tool(self.mcp_server)
+        self.publish_tools = create_article_publish_tools(self.mcp_server)
 
     def init_agent(self) -> None:
         self.publisher = Agent(
             model=get_text_model(),
             output_type=ArticlePublishResult,
             toolsets=[self.mcp_server],
-            tools=[self.login_tool],
+            tools=[self.login_tool, *self.publish_tools.get_tools()],
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(publish_system_prompt(),),
@@ -58,6 +60,7 @@ class PublisherAgent(BaseAgent):
         output_dir: Path,
     ) -> ArticlePublishResult:
         logger.info("准备发布长文: %s", content.title)
+        self.publish_tools.bind_content(content)
         hashtags_str = "\n".join([f"   - {tag}" for tag in content.hashtags]) if content.hashtags else "无"
         result = await self.step(
             publish_user_prompt(

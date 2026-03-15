@@ -16,8 +16,16 @@ from pydantic_ai.messages import (
 from src.core.base_validator import InternalValidationResult
 from src.tools.xiaohongshu.article_post.content.agent import ContentAgent
 from src.tools.xiaohongshu.article_post.content.state import _safe_truncate
+from src.tools.xiaohongshu.article_post.image.agent import ImageAgent
+from src.tools.xiaohongshu.article_post.image.prompts import image_system_prompt, image_user_prompt
 from src.tools.xiaohongshu.article_post.publish.agent import PublisherAgent
 from src.tools.xiaohongshu.article_post.publish.prompts import publish_user_prompt
+from src.tools.xiaohongshu.article_post.publish.tools import create_article_publish_tools
+from src.tools.xiaohongshu.article_post.publish.utils import (
+    IMAGE_SLOT_PREFIX,
+    build_editor_script,
+    build_slot_cleanup_script,
+)
 from src.tools.xiaohongshu.article_post.research.agent import ResearchAgent
 from src.tools.xiaohongshu.article_post.research.state import (
     CompressedResearchNote,
@@ -1072,6 +1080,145 @@ def test_article_content_normalizes_missing_source_refs_for_synthesize() -> None
             assert set(block.source_refs) <= valid_refs
 
 
+def test_article_image_specs_include_richer_prompt_context() -> None:
+    research = ArticleResearchResult(
+        summary="研究显示春季胶囊衣橱最关键的是基础单品、柔和剪裁和低压力配色。",
+        sources=[
+            ArticleSource(
+                source_ref="source_1",
+                source_type=ArticleSourceType.ARTICLE,
+                url="https://www.allure.com/story/capsule-wardrobe",
+                domain="www.allure.com",
+                title="Spring Capsule Wardrobe Reset",
+                quality_score=90.0,
+            ),
+            ArticleSource(
+                source_ref="source_2",
+                source_type=ArticleSourceType.ARTICLE,
+                url="https://www.byrdie.com/story/soft-tailoring",
+                domain="www.byrdie.com",
+                title="Soft Tailoring for Everyday Office Looks",
+                quality_score=88.0,
+            ),
+        ],
+        claims=[
+            ArticleClaim(
+                claim="基础单品先定下来，能显著降低每天搭配的决策疲劳。",
+                source_refs=["source_1"],
+                section_hint="基础单品先定下来",
+            ),
+            ArticleClaim(
+                claim="柔和剪裁会让通勤装更松弛，也更容易从上班切到下班场景。",
+                source_refs=["source_2"],
+                section_hint="通勤变化别太用力",
+            ),
+        ],
+        primary_source_ref="source_1",
+        suggested_strategy=ArticleStrategy.SYNTHESIZE,
+    )
+    content = XHSArticleContent(
+        strategy=ArticleStrategy.SYNTHESIZE,
+        title="春季胶囊衣橱怎么搭更省心",
+        lead="这篇长文会把春季最值得留下的基础单品、通勤变化和配色顺序拆开讲清楚，方便直接照着整理。",
+        sections=[
+            ArticleSection(
+                heading="基础单品先定下来",
+                summary="先把白衬衫、薄针织和轻外套这些高频单品固定下来。",
+                source_refs=["source_1"],
+                blocks=[
+                    ArticleBlock(
+                        block_type=ArticleBlockType.PARAGRAPH,
+                        text="第一步先把白衬衫、针织和轻外套这些高频单品固定下来，再去想怎么变化。",
+                        source_refs=["source_1"],
+                    ),
+                    ArticleBlock(
+                        block_type=ArticleBlockType.IMAGE_SLOT,
+                        image_key="cover",
+                        source_refs=["source_1"],
+                    ),
+                ],
+            ),
+            ArticleSection(
+                heading="通勤变化别太用力",
+                summary="柔和剪裁和低饱和配色，会让办公室穿搭更松弛。",
+                source_refs=["source_2"],
+                blocks=[
+                    ArticleBlock(
+                        block_type=ArticleBlockType.BULLET_LIST,
+                        items=[
+                            "优先选垂坠感西装和轻薄长裤",
+                            "把大面积高饱和色缩到鞋包或小配饰",
+                            "通勤和下班都能穿的单品更值得留",
+                        ],
+                        source_refs=["source_2"],
+                    ),
+                    ArticleBlock(
+                        block_type=ArticleBlockType.IMAGE_SLOT,
+                        image_key="section_2",
+                        source_refs=["source_2"],
+                    ),
+                ],
+            ),
+            ArticleSection(
+                heading="最后再补层次和配色",
+                summary="顺序对了，衣橱会稳定很多。",
+                source_refs=["source_1", "source_2"],
+                blocks=[
+                    ArticleBlock(
+                        block_type=ArticleBlockType.PARAGRAPH,
+                        text="最后再决定配色和层次，能避免买回一堆彼此不搭的单品。",
+                        source_refs=["source_1", "source_2"],
+                    )
+                ],
+            ),
+        ],
+        closing="按这个顺序整理，衣橱会更稳，也更容易重复搭配。",
+        hashtags=["春季穿搭", "胶囊衣橱", "通勤搭配", "基础单品"],
+    )
+
+    specs = ImageAgent._build_specs(content, research)
+    specs_by_key = {spec.image_key: spec for spec in specs}
+
+    assert set(specs_by_key) == {"cover", "section_2"}
+
+    cover_spec = specs_by_key["cover"]
+    assert cover_spec.image_role == "整篇长文封面图"
+    assert cover_spec.text_lines[0] == "春季胶囊衣橱怎么搭更省心"
+    assert "第1章：基础单品先定下来" in cover_spec.article_outline
+    assert any("基础单品先定下来" in item for item in cover_spec.key_points)
+
+    section_spec = specs_by_key["section_2"]
+    assert section_spec.image_role == "章节配图：通勤变化别太用力"
+    assert "女性向结构化章节图" in section_spec.visual_direction
+    assert any("优先选垂坠感西装和轻薄长裤" in item for item in section_spec.key_points)
+    assert any("Soft Tailoring for Everyday Office Looks" in line for line in section_spec.prompt_hint.splitlines())
+    assert section_spec.text_lines[0] == "通勤变化别太用力"
+    assert any("不要重复整篇文章全部章节" in item for item in section_spec.avoid_points)
+
+
+def test_article_image_prompts_default_to_female_friendly_aesthetic() -> None:
+    system_prompt = image_system_prompt()
+    user_prompt = image_user_prompt(
+        topic="春季通勤穿搭",
+        title="春季胶囊衣橱怎么搭更省心",
+        target_audience="25-35岁中文女性用户",
+        image_key="cover",
+        image_role="整篇长文封面图",
+        visual_goal="第一眼说明文章主题和收藏价值，同时保持女性用户更容易喜欢和收藏的专题封面气质",
+        visual_direction="女性向杂志感专题封面：一个强主标题，搭配 2-3 个章节标签或信息钩子，柔和配色、有留白，避免做成教材式流程图",
+        article_outline="- 第1章：基础单品先定下来",
+        key_points="- 基础单品先定下来",
+        text_lines="- 春季胶囊衣橱怎么搭更省心",
+        avoid_points="- 不要做成冷硬科技海报",
+        context_text="导语重点：先把基础单品和通勤变化拆开讲清楚。",
+    )
+
+    assert "受众默认是小红书中文女性用户" in system_prompt
+    assert "不要做成新闻配图、参数表、理工 dashboard、PPT 模板" in system_prompt
+    assert "目标受众: 25-35岁中文女性用户" in user_prompt
+    assert "所有图片都必须是女性用户更容易喜欢和收藏的风格" in user_prompt
+
+
 def test_article_publish_image_plan_follows_image_slots(tmp_path) -> None:
     content = XHSArticleContent(
         title="春季胶囊衣橱怎么搭更省心",
@@ -1100,6 +1247,33 @@ def test_article_publish_image_plan_follows_image_slots(tmp_path) -> None:
                     ArticleBlock(
                         block_type=ArticleBlockType.IMAGE_SLOT,
                         image_key="section_2",
+                    ),
+                ],
+            ),
+            ArticleSection(
+                heading="第二部分",
+                blocks=[
+                    ArticleBlock(
+                        block_type=ArticleBlockType.PARAGRAPH,
+                        text="第二部分用来满足 schema 的最小章节数量要求。",
+                    ),
+                ],
+            ),
+            ArticleSection(
+                heading="第二部分",
+                blocks=[
+                    ArticleBlock(
+                        block_type=ArticleBlockType.PARAGRAPH,
+                        text="第二部分用来满足 schema 的最小章节数量要求。",
+                    ),
+                ],
+            ),
+            ArticleSection(
+                heading="第二部分",
+                blocks=[
+                    ArticleBlock(
+                        block_type=ArticleBlockType.PARAGRAPH,
+                        text="第二部分用来满足 schema 的最小章节数量要求。",
                     ),
                 ],
             ),
@@ -1133,3 +1307,110 @@ def test_article_publish_prompt_mentions_toolbar_image_flow(tmp_path) -> None:
     assert "图片插入计划" in prompt
     assert "cover:" in prompt
     assert "逐张上传" in prompt
+    assert "inject_article_content" in prompt
+    assert "cleanup_image_slots" in prompt
+
+
+def test_article_publish_editor_script_injects_slot_markers() -> None:
+    content = XHSArticleContent(
+        title="春季胶囊衣橱怎么搭更省心",
+        lead="这篇长文会把春季胶囊衣橱的单品、搭配顺序和预算分配拆开讲清楚，方便直接照着执行。",
+        sections=[
+            ArticleSection(
+                heading="先把高频单品定下来",
+                blocks=[
+                    ArticleBlock(
+                        block_type=ArticleBlockType.PARAGRAPH,
+                        text="第一步先把白衬衫、针织和轻外套这些高频单品固定下来。",
+                    ),
+                    ArticleBlock(
+                        block_type=ArticleBlockType.IMAGE_SLOT,
+                        image_key="cover",
+                    ),
+                ],
+            ),
+            ArticleSection(
+                heading="第二部分",
+                blocks=[
+                    ArticleBlock(
+                        block_type=ArticleBlockType.PARAGRAPH,
+                        text="第二部分用来满足 schema 的最小章节数量要求。",
+                    ),
+                ],
+            ),
+        ],
+        closing="按这个顺序整理，衣橱会更稳定，也更容易重复搭配。",
+    )
+
+    script = build_editor_script(content)
+
+    assert "textarea.d-text" in script
+    assert IMAGE_SLOT_PREFIX in script
+    assert "[IMAGE_SLOT:${block.key}]" in script
+    assert "slotKeys" in script
+    assert content.title in script
+    assert "cover" in script
+
+
+def test_article_publish_cleanup_script_removes_slot_markers() -> None:
+    script = build_slot_cleanup_script()
+
+    assert ".tiptap.ProseMirror p" in script
+    assert "IMAGE_SLOT" in script
+    assert "paragraph.remove()" in script
+
+
+def test_article_publish_tools_wrap_fixed_editor_scripts() -> None:
+    class FakeMcpServer:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, str]]] = []
+
+        async def direct_call_tool(self, name: str, args: dict[str, str]):
+            self.calls.append((name, args))
+            if len(self.calls) == 1:
+                return {"content": [{"type": "text", "text": '{"title":"测试标题","slotKeys":["cover"]}'}]}
+            return {"content": [{"type": "text", "text": '["[IMAGE_SLOT:cover]"]'}]}
+
+    fake_server = FakeMcpServer()
+    content = XHSArticleContent(
+        title="测试标题需要满足最小长度",
+        lead="这是一段用于测试发布工具的导语内容，需要满足最小长度限制，并且明确说明这是正文注入流程的测试样例。",
+        sections=[
+            ArticleSection(
+                heading="先把高频单品定下来",
+                blocks=[
+                    ArticleBlock(
+                        block_type=ArticleBlockType.PARAGRAPH,
+                        text="第一步先把白衬衫、针织和轻外套这些高频单品固定下来。",
+                    ),
+                    ArticleBlock(
+                        block_type=ArticleBlockType.IMAGE_SLOT,
+                        image_key="cover",
+                    ),
+                ],
+            ),
+            ArticleSection(
+                heading="第二部分",
+                blocks=[
+                    ArticleBlock(
+                        block_type=ArticleBlockType.PARAGRAPH,
+                        text="第二部分用来满足 schema 的最小章节数量要求。",
+                    ),
+                ],
+            ),
+        ],
+        closing="结尾",
+    )
+    toolset = create_article_publish_tools(fake_server)
+    toolset.bind_content(content)
+
+    injected = json.loads(asyncio.run(toolset.inject_article_content()))
+    cleaned = json.loads(asyncio.run(toolset.cleanup_image_slots()))
+
+    assert injected["ok"] is True
+    assert injected["slotKeys"] == ["cover"]
+    assert fake_server.calls[0][0] == "browser_run_code"
+    assert "textarea.d-text" in fake_server.calls[0][1]["code"]
+    assert cleaned["ok"] is True
+    assert cleaned["removed"] == ["[IMAGE_SLOT:cover]"]
+    assert ".tiptap.ProseMirror p" in fake_server.calls[1][1]["code"]

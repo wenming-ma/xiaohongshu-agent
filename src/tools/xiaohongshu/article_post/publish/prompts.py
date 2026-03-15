@@ -15,17 +15,14 @@ PUBLISH_SYSTEM_PROMPT = """# 角色定义
 
 ### 第二阶段：填写内容
 5. 点击标题输入框，填写标题
-6. 正文必须用 `playwright_browser_run_code` 通过 JavaScript 插入，**不要用 browser_type 逐字输入**（会丢失换行）：
-   ```javascript
-   async (page) => {
-     const editor = document.querySelector('.tiptap.ProseMirror');
-     editor.focus();
-     document.execCommand('insertText', false, '【完整正文内容】');
-   }
-   ```
-   将 `【完整正文内容】` 替换为实际正文，正文中的 `\n` 换行必须原样保留（**必须先填好正文，否则下一步的排版面板不会出现**）
+6. 正文必须优先调用 `inject_article_content` 工具一次性完成注入：
+   - 不要用 `playwright_browser_run_code` 手写整段正文注入逻辑
+   - 不要用 `browser_type` 逐字输入正文（会丢失换行，也更容易打乱光标位置）
+   - 该工具会同时写入标题、正文和 `[IMAGE_SLOT:xxx]` 槽位标记，后续插图直接围绕这些标记完成
+   - 调用成功后，先确认编辑器里出现了对应的 `[IMAGE_SLOT:cover]` / `[IMAGE_SLOT:section_x]` 标记，再进入插图步骤
 7. 如果提供了图片，在长文编辑器中使用现有的图片插入/上传入口按顺序插入：
    - 如果图片列表为“无图片，发布纯文字长文”，跳过此步骤
+   - 优先按 `[IMAGE_SLOT:xxx]` 标记定位：先点击对应槽位段落，再点击图片图标上传对应图片
    - 真实页面中没有常驻的 `input[type="file"]`，要点击编辑器顶部工具栏的「图片」图标触发系统文件选择器
    - 工具栏顺序依次是：撤销、重做、一级标题、二级标题、有序列表、无序列表、引用、高亮、图片、表情；**图片按钮就是倒数第二个图标，紧挨着表情按钮左侧**
    - 点击图片图标后会弹出一次性的单图文件选择器，`accept="image/jpeg,image/jpg,image/png,image/webp"`，**一次只能上传 1 张图，必须逐张上传，不能批量上传**
@@ -33,6 +30,7 @@ PUBLISH_SYSTEM_PROMPT = """# 角色定义
    - 每插入一张图后，都重新点击图片后的空段落或目标段落，再继续输入/插入下一张，严格保持给定顺序，不要重新排序
    - 优先按“图片插入计划”执行；如果计划里的精确锚点找不到，就把图片插在对应章节附近，单独成段
    - 如果文本选择器找不到“图片”字样，可改用 `playwright_browser_run_code` 点击 `document.querySelectorAll('button.menu-item')[8]`
+   - 所有图片插完后，必须调用 `cleanup_image_slots` 工具，删除残留的 `[IMAGE_SLOT:xxx]` 标记段落，再进行排版
    - 如果图片插入控件不存在或上传失败，不要卡死，改为继续发布纯文字长文，并把原因写入 `content_snapshot`
 
 ### 第三阶段：一键排版（必须执行）
@@ -62,9 +60,10 @@ PUBLISH_SYSTEM_PROMPT = """# 角色定义
 ## 重要规则
 - 不要跳过「一键排版」和「下一步」步骤，否则无法到达发布页
 - 不要回退到普通图文发布流程
-- 正文必须通过 `playwright_browser_run_code` + `document.execCommand('insertText')` 插入，不要用 browser_type（会丢失换行）
+- 正文必须优先调用 `inject_article_content`，不要手写长段注入逻辑
 - 若提供图片，优先在点击「一键排版」前完成插图；若插图确实不可用，可降级为纯文字长文继续发布
 - 图片上传是“点击工具栏图片图标 -> 文件选择器 -> 单张上传”的流程，不要等待页面上出现常驻上传框
+- 图片全部插完后，必须调用 `cleanup_image_slots`，确保最终正文里没有 `[IMAGE_SLOT:xxx]` 标记
 - **必须使用 "# 话题" 按钮**从下拉列表中点击选择话题，不要直接输入 #话题名 纯文本
 - 如果页面被要求重新登录，调用 `login(url=当前页面, action="login", hint="小红书长文发布")`
 """
@@ -89,7 +88,9 @@ PUBLISH_USER_PROMPT_TEMPLATE = """请把以下长文发布到小红书。
 要求:
 - 必须进入 `写长文`
 - 必须使用长文编辑器
+- 进入编辑器后先调用 `inject_article_content`，不要自己重写整段正文输入逻辑
 - 若提供图片，先尽量插图，再执行一键排版
+- 优先按 `[IMAGE_SLOT:xxx]` 槽位标记插图，所有图片插完后调用 `cleanup_image_slots`
 - 插图时使用顶部工具栏里的图片图标，逐张上传，不要寻找常驻上传框
 - **话题必须通过"# 话题"按钮添加**：点击按钮 → 输入关键词 → 从下拉列表点击选择
 - 成功后尽量获取帖子链接
