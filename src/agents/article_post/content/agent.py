@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 
 from ....config.settings import ReviewConfig, RetryConfig
 from ....core.base_agent import BaseAgent, ValidationResult
@@ -108,13 +109,13 @@ class ContentAgent(BaseAgent):
                 generate_images=state.generate_images,
                 research_json=state.research.model_dump_json(indent=2),
             )
+            history: list[ModelMessage] = []
         else:
-            prompt = "请根据上轮反馈修订结构、署名和事实支撑，保持适合小红书长文的中文表达。"
+            prompt = state.last_feedback
+            # 最开始两条消息（初始请求 + 首次响应）+ 上一轮完整输出
+            history = self._build_revision_history(state)
 
-        run_result = await self.generator.run(
-            prompt,
-            message_history=state.get_recent_history(6),
-        )
+        run_result = await self.generator.run(prompt, message_history=history)
         content = run_result.output
         content.strategy = state.strategy
         if state.strategy == ArticleStrategy.SYNTHESIZE:
@@ -155,6 +156,33 @@ class ContentAgent(BaseAgent):
     def on_validation_failed(self, state: ContentState, feedback: str) -> None:
         logger.warning("长文审核未通过: %s", feedback[:200])
         state.inject_feedback(feedback)
+
+    @staticmethod
+    def _build_revision_history(state: ContentState) -> list[ModelMessage]:
+        """构建修订轮的 message_history：最开始两条消息 + 上一轮完整输出。
+
+        从 message_history 中取：
+        - head: 前两条消息（初始创作请求 + 模型首次响应）
+        - tail: 上一轮 generator.run 产生的消息（跳过首条 UserPrompt，保留模型输出链）
+        """
+        history = state.message_history
+        head = history[:2]
+
+        # 找到最后一个 UserPromptPart 的位置 → 该轮 run 的起点
+        last_user_idx = 0
+        for i in range(len(history) - 1, -1, -1):
+            if isinstance(history[i], ModelRequest) and any(
+                isinstance(p, UserPromptPart) for p in history[i].parts
+            ):
+                last_user_idx = i
+                break
+
+        # 跳过该 UserPrompt 本身，只保留模型输出链
+        tail = history[last_user_idx + 1:]
+
+        # head 和 tail 可能重叠（只跑了一轮时），去重
+        head_len = min(2, last_user_idx + 1)
+        return history[:head_len] + tail
 
     # ------------------------------------------------------------------
     # Static helpers
