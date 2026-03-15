@@ -1257,7 +1257,10 @@ class ResearchAgent(BaseAgent):
     ) -> None:
         logger.info("第 %d/%d 轮长文研究", iteration + 1, self.MAX_ITERATIONS)
         state.begin_iteration(iteration + 1)
-        state.current_iteration_plan = await self.planner.plan_iteration(state)
+        state.current_iteration_plan = await self.planner.plan_iteration(
+            state,
+            iteration=iteration + 1,
+        )
         state.current_execution = await self.collector.execute_iteration(
             state,
             state.current_iteration_plan.tasks,
