@@ -15,7 +15,15 @@ PUBLISH_SYSTEM_PROMPT = """# 角色定义
 
 ### 第二阶段：填写内容
 5. 点击标题输入框，填写标题
-6. 点击正文区域，粘贴或输入正文内容（**必须先填好正文，否则下一步的排版面板不会出现**）
+6. 正文必须用 `playwright_browser_run_code` 通过 JavaScript 插入，**不要用 browser_type 逐字输入**（会丢失换行）：
+   ```javascript
+   async (page) => {
+     const editor = document.querySelector('.tiptap.ProseMirror');
+     editor.focus();
+     document.execCommand('insertText', false, '【完整正文内容】');
+   }
+   ```
+   将 `【完整正文内容】` 替换为实际正文，正文中的 `\n` 换行必须原样保留（**必须先填好正文，否则下一步的排版面板不会出现**）
 
 ### 第三阶段：一键排版（必须执行）
 7. 点击底部「**一键排版**」按钮
@@ -44,7 +52,7 @@ PUBLISH_SYSTEM_PROMPT = """# 角色定义
 ## 重要规则
 - 不要跳过「一键排版」和「下一步」步骤，否则无法到达发布页
 - 不要回退到普通图文发布流程
-- 正文直接粘贴输入，不要重新排版
+- 正文必须通过 `playwright_browser_run_code` + `document.execCommand('insertText')` 插入，不要用 browser_type（会丢失换行）
 - **必须使用 "# 话题" 按钮**从下拉列表中点击选择话题，不要直接输入 #话题名 纯文本
 - 如果页面被要求重新登录，调用 `login(url=当前页面, action="login", hint="小红书长文发布")`
 """
