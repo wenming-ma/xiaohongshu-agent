@@ -2,6 +2,20 @@ import asyncio
 import json
 from pathlib import Path
 
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+
+from src.tools.xiaohongshu.article_post.content.agent import ContentAgent
+from src.tools.xiaohongshu.article_post.content.state import _safe_truncate
+from src.tools.xiaohongshu.article_post.publish.agent import PublisherAgent
+from src.tools.xiaohongshu.article_post.publish.prompts import publish_user_prompt
 from src.tools.xiaohongshu.article_post.research.agent import ResearchAgent
 from src.tools.xiaohongshu.article_post.research.state import (
     CompressedResearchNote,
@@ -12,11 +26,15 @@ from src.tools.xiaohongshu.article_post.research.state import (
 )
 from src.tools.xiaohongshu.article_post.schemas import (
     ArticleClaim,
+    ArticleBlock,
+    ArticleBlockType,
     ArticleResearchResult,
+    ArticleSection,
     ArticleSource,
     ArticleSourceType,
     ArticleStrategy,
     SourceDigest,
+    XHSArticleContent,
     XHSArticlePostInput,
     XHSArticlePostOutput,
 )
@@ -46,6 +64,14 @@ def test_article_post_output_defaults() -> None:
     assert result.image_paths == []
     assert result.published is False
     assert result.output_dir == ""
+
+
+def test_article_research_default_budget_supports_multi_source_validation() -> None:
+    assert ResearchAgent.MIN_SOURCE_PAGES >= 2
+    assert ResearchAgent.MIN_UNIQUE_DOMAINS >= 2
+    assert ResearchAgent.MAX_SOURCE_PAGES >= ResearchAgent.MIN_SOURCE_PAGES
+    assert ResearchAgent.MAX_ITERATIONS >= 2
+    assert ResearchAgent.MAX_TASKS_PER_ITERATION >= 2
 
 
 def test_article_build_site_queries_caps_total_queries() -> None:
@@ -218,6 +244,71 @@ def test_article_research_iteration_result_is_saved(tmp_path) -> None:
     assert state.saved_files == [saved_file]
 
 
+def test_article_research_normalizes_claims_without_source_refs() -> None:
+    research = ArticleResearchResult(
+        summary="French girl style myth needs deeper evidence on influencer amplification.",
+        claims=[
+            ArticleClaim(
+                claim="战后法国时尚产业通过高定与 licensing 扩张影响全球审美。",
+                source_refs=["source_1", "source_2"],
+            ),
+            ArticleClaim(
+                claim="社交媒体时代 influencers 对法式神话的放大机制仍缺少来源支撑。",
+                detail="This is a gap, not a supported claim.",
+                source_refs=[],
+                confidence="low",
+            ),
+            ArticleClaim(
+                claim="部分现代品牌通过“effortless Parisian”叙事维持溢价。",
+                source_refs=["source_9", "source_2", "source_2"],
+            ),
+        ],
+        primary_source_ref="source_9",
+        notes="已有历史脉络，但现代品牌样本还不够。",
+        suggested_strategy=ArticleStrategy.SYNTHESIZE,
+    )
+    collected = [
+        CollectedSource(
+            ref="source_1",
+            url="https://www.allure.com/story/french-style-history",
+            domain="www.allure.com",
+            title="French Style History",
+            author="Jane Doe",
+            published_at="2026-03-01",
+            snippet="History of French style",
+            text="French style history",
+            headings=["History"],
+            source_type=ArticleSourceType.ARTICLE.value,
+            engagement_hint="search_rank=1",
+            paywall_status="public",
+        ),
+        CollectedSource(
+            ref="source_2",
+            url="https://www.thecut.com/article/french-style-myth.html",
+            domain="www.thecut.com",
+            title="French Style Myth",
+            author="Jane Doe",
+            published_at="2026-03-02",
+            snippet="Myth analysis",
+            text="French style myth",
+            headings=["Myth"],
+            source_type=ArticleSourceType.ARTICLE.value,
+            engagement_hint="search_rank=2",
+            paywall_status="public",
+        ),
+    ]
+
+    ResearchAgent._normalize_research_result(research, collected)
+
+    assert len(research.claims) == 2
+    assert all(claim.source_refs for claim in research.claims)
+    assert research.claims[0].source_refs == ["source_1", "source_2"]
+    assert research.claims[1].source_refs == ["source_2"]
+    assert research.primary_source_ref == ""
+    assert "未纳入 claims 的证据缺口：" in research.notes
+    assert "社交媒体时代 influencers 对法式神话的放大机制仍缺少来源支撑。" in research.notes
+
+
 def test_article_source_chunker_splits_text_and_transcript() -> None:
     chunker = SourceChunker(max_chunk_chars=60, max_chunks=6)
     source = CollectedSource(
@@ -377,3 +468,258 @@ def test_article_search_candidates_runs_concurrently_and_dedupes() -> None:
         "https://www.elle.com/story/two",
         "https://www.vogue.com/story/three",
     }
+
+
+def test_article_researcher_prioritizes_topical_candidates_before_collection() -> None:
+    agent = ResearchAgent.__new__(ResearchAgent)
+
+    async def fake_visit(task, candidates, state):
+        return []
+
+    async def fake_build_digests(state, collected):
+        return []
+
+    agent._visit_and_collect_sources = fake_visit
+    agent._build_task_digests = fake_build_digests
+
+    state = ResearchState(
+        topic="法式穿搭神话的工业起源",
+        target_audience="对时尚产业感兴趣的读者",
+        strategy=ArticleStrategy.SYNTHESIZE,
+        output_dir=None,
+    )
+    task = ResearchTask(
+        task_id="task_1",
+        goal='探索19世纪高定时装屋如何系统化创造"法国女人"形象的商业起源',
+        article_queries=[
+            "haute couture Paris woman myth origin history",
+            "Charles Frederick Worth French woman image creation",
+        ],
+    )
+    candidates = [
+        (
+            'site:allure.com "haute couture Paris woman myth origin history"',
+            SearchResult(
+                title="It's Official! Dior Appoints Maria Grazia Chiuri as Artistic Director",
+                url="https://www.allure.com/story/dior-appoints-maria-grazia-chiuri",
+                snippet="A beauty and fashion news update.",
+                domain="www.allure.com",
+                rank=1,
+            ),
+        ),
+        (
+            'site:whowhatwear.com "haute couture Paris woman myth origin history"',
+            SearchResult(
+                title="All of the Biggest London Fashion Week SS26 Updates, Live From the Front Row",
+                url="https://www.whowhatwear.com/fashion/live/london-fashion-week-spring-summer-2026",
+                snippet="Street style, runway beauty, and celebrity looks.",
+                domain="www.whowhatwear.com",
+                rank=2,
+            ),
+        ),
+        (
+            "haute couture Paris woman myth origin history",
+            SearchResult(
+                title="The history of haute couture",
+                url="https://www.harpersbazaar.com/uk/fashion/a31123/the-history-of-haute-couture/",
+                snippet="A history of couture houses and the Paris system that made them iconic.",
+                domain="www.harpersbazaar.com",
+                rank=3,
+            ),
+        ),
+        (
+            "Charles Frederick Worth French woman image creation",
+            SearchResult(
+                title="Charles Frederick Worth (1825–1895) and the House of Worth",
+                url="https://www.metmuseum.org/essays/charles-frederick-worth-1825-1895-and-the-house-of-worth",
+                snippet="The Met outlines how Worth helped establish haute couture in Paris.",
+                domain="www.metmuseum.org",
+                rank=4,
+            ),
+        ),
+    ]
+
+    task_result = asyncio.run(agent.run_researcher_unit(state=state, task=task, candidates=candidates))
+    prioritized_urls = [result.url for result in task_result.candidate_results]
+
+    assert set(prioritized_urls[:2]) == {
+        "https://www.harpersbazaar.com/uk/fashion/a31123/the-history-of-haute-couture/",
+        "https://www.metmuseum.org/essays/charles-frederick-worth-1825-1895-and-the-house-of-worth",
+    }
+    assert prioritized_urls[-2:] == [
+        "https://www.allure.com/story/dior-appoints-maria-grazia-chiuri",
+        "https://www.whowhatwear.com/fashion/live/london-fashion-week-spring-summer-2026",
+    ]
+
+
+def test_article_content_history_drops_tool_messages_with_tool_call_ids() -> None:
+    history = [
+        ModelRequest(parts=[UserPromptPart(content="初稿")], instructions="sys"),
+        ModelResponse(parts=[ToolCallPart(tool_name="list_sources", args={}, tool_call_id="call_1")]),
+        ModelRequest(parts=[ToolReturnPart(tool_name="list_sources", content="[]", tool_call_id="call_1")]),
+        ModelRequest(parts=[RetryPromptPart(content="retry", tool_name="read_excerpt", tool_call_id="call_2")]),
+        ModelResponse(parts=[TextPart(content="修订稿")]),
+    ]
+
+    filtered = _safe_truncate(history, 10)
+
+    assert filtered == [history[0], history[4]]
+
+
+def test_article_content_normalizes_missing_source_refs_for_synthesize() -> None:
+    research = ArticleResearchResult(
+        sources=[
+            ArticleSource(
+                source_ref="source_1",
+                source_type=ArticleSourceType.ARTICLE,
+                url="https://www.allure.com/story/spring-style",
+                domain="www.allure.com",
+                title="Spring Style Reset",
+                quality_score=90.0,
+            ),
+            ArticleSource(
+                source_ref="source_2",
+                source_type=ArticleSourceType.ARTICLE,
+                url="https://www.byrdie.com/story/linen-basics",
+                domain="www.byrdie.com",
+                title="Linen Basics Guide",
+                quality_score=88.0,
+            ),
+            ArticleSource(
+                source_ref="source_3",
+                source_type=ArticleSourceType.ARTICLE,
+                url="https://www.elle.com/story/soft-tailoring",
+                domain="www.elle.com",
+                title="Soft Tailoring Update",
+                quality_score=86.0,
+            ),
+        ],
+        claims=[
+            ArticleClaim(
+                claim="春季衣橱的核心是轻薄分层和可重复搭配。",
+                detail="Linen basics and soft tailoring help reduce outfit fatigue.",
+                source_refs=["source_1", "source_2"],
+                section_hint="基础单品",
+            ),
+            ArticleClaim(
+                claim="柔和剪裁能让通勤装更松弛。",
+                detail="Soft tailoring is replacing rigid office dressing.",
+                source_refs=["source_2", "source_3"],
+                section_hint="通勤变化",
+            ),
+        ],
+        suggested_strategy=ArticleStrategy.SYNTHESIZE,
+    )
+    content = XHSArticleContent(
+        strategy=ArticleStrategy.SYNTHESIZE,
+        title="春季衣橱重启的实用思路",
+        lead="这篇长文把春季衣橱里最值得投入的单品和搭配逻辑拆开讲清楚，方便直接照着整理。",
+        sections=[
+            ArticleSection(
+                heading="基础单品先定下来",
+                summary="先把最常穿、最容易重复搭配的单品列清楚。",
+                blocks=[
+                    ArticleBlock(
+                        block_type=ArticleBlockType.PARAGRAPH,
+                        text="Linen basics 和轻薄外套是今年最稳的起点。",
+                    )
+                ],
+            ),
+            ArticleSection(
+                heading="通勤变化别太用力",
+                summary="柔和剪裁比硬挺正装更适合现在的办公室氛围。",
+                blocks=[
+                    ArticleBlock(
+                        block_type=ArticleBlockType.PARAGRAPH,
+                        text="Soft tailoring 让通勤装看起来更松弛，也更容易从办公室切到下班场景。",
+                    )
+                ],
+            ),
+            ArticleSection(
+                heading="最后再补配色和层次",
+                summary="配色和层次决定衣橱到底耐不耐看。",
+                blocks=[
+                    ArticleBlock(
+                        block_type=ArticleBlockType.BULLET_LIST,
+                        items=["先定中性色", "再补一件有存在感的轻外套"],
+                    )
+                ],
+            ),
+        ],
+        closing="按这个顺序整理，衣橱会比一口气乱买更稳定。",
+        hashtags=["春季穿搭", "衣橱整理", "通勤搭配", "基础单品"],
+    )
+
+    ContentAgent._normalize_source_refs(content, research)
+
+    valid_refs = {"source_1", "source_2", "source_3"}
+    assert all(len(section.source_refs) >= 2 for section in content.sections)
+    assert all(set(section.source_refs) <= valid_refs for section in content.sections)
+    assert all(section.source_refs for section in content.sections)
+    for section in content.sections:
+        for block in section.blocks:
+            assert len(block.source_refs) >= 2
+            assert set(block.source_refs) <= valid_refs
+
+
+def test_article_publish_image_plan_follows_image_slots(tmp_path) -> None:
+    content = XHSArticleContent(
+        title="春季胶囊衣橱怎么搭更省心",
+        lead="这篇长文会把春季胶囊衣橱的单品、搭配顺序和预算分配拆开讲清楚，方便直接照着执行。",
+        sections=[
+            ArticleSection(
+                heading="先把高频单品定下来",
+                blocks=[
+                    ArticleBlock(
+                        block_type=ArticleBlockType.PARAGRAPH,
+                        text="第一步先把白衬衫、针织和轻外套这些高频单品固定下来。",
+                    ),
+                    ArticleBlock(
+                        block_type=ArticleBlockType.IMAGE_SLOT,
+                        image_key="cover",
+                    ),
+                ],
+            ),
+            ArticleSection(
+                heading="再补通勤场景的变化",
+                blocks=[
+                    ArticleBlock(
+                        block_type=ArticleBlockType.PARAGRAPH,
+                        text="柔和剪裁和低饱和配色会让通勤穿搭看起来更松弛。",
+                    ),
+                    ArticleBlock(
+                        block_type=ArticleBlockType.IMAGE_SLOT,
+                        image_key="section_2",
+                    ),
+                ],
+            ),
+        ],
+        closing="按这个顺序整理，衣橱会更稳定，也更容易重复搭配。",
+    )
+    images = [
+        tmp_path / "cover.png",
+        tmp_path / "section_2.png",
+    ]
+
+    plan = PublisherAgent._build_image_plan(content, images)
+
+    assert "cover:" in plan
+    assert "section_2:" in plan
+    assert "《先把高频单品定下来》" in plan
+    assert "《再补通勤场景的变化》" in plan
+    assert "第一段前" in plan
+    assert "之后插入" in plan
+
+
+def test_article_publish_prompt_mentions_toolbar_image_flow(tmp_path) -> None:
+    prompt = publish_user_prompt(
+        title="测试标题",
+        body="第一段\n第二段",
+        hashtags="无",
+        images=f"1. cover: {tmp_path / 'cover.png'}",
+        image_plan=f"1. cover: {tmp_path / 'cover.png'} -> 在章节《测试》开头附近插入。",
+    )
+
+    assert "图片插入计划" in prompt
+    assert "cover:" in prompt
+    assert "逐张上传" in prompt

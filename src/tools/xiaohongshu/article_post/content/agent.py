@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +69,7 @@ class ContentAgent(BaseAgent):
         topic: str,
         target_audience: str,
         requested_strategy: ArticleStrategy,
+        generate_images: bool,
         output_dir: Path | None = None,
     ) -> XHSArticleContent:
         # Rebuild generator with evidence tools when output_dir is available
@@ -80,6 +82,7 @@ class ContentAgent(BaseAgent):
             topic=topic,
             target_audience=target_audience,
             strategy=strategy,
+            generate_images=generate_images,
             output_dir=output_dir,
         )
 
@@ -102,6 +105,7 @@ class ContentAgent(BaseAgent):
                 topic=state.topic,
                 target_audience=state.target_audience,
                 strategy=state.strategy.value,
+                generate_images=state.generate_images,
                 research_json=state.research.model_dump_json(indent=2),
             )
         else:
@@ -116,7 +120,9 @@ class ContentAgent(BaseAgent):
         if state.strategy == ArticleStrategy.SYNTHESIZE:
             content.attribution_line = ""
             content.primary_source_ref = ""
+        self._normalize_source_refs(content, state.research)
         content.rendered_body = self._render_body(content)
+        self._inject_missing_image_slots(content, state.generate_images)
         state.current_content = content
         state.message_history.extend(run_result.new_messages())
         self._current_state = state
@@ -137,6 +143,7 @@ class ContentAgent(BaseAgent):
             output,
             context={
                 "research_json": self._current_state.research.model_dump_json(indent=2),
+                "generate_images": self._current_state.generate_images,
                 "output_dir": self._current_state.output_dir,
             },
         )
@@ -187,3 +194,159 @@ class ContentAgent(BaseAgent):
         # 话题不拼接到正文中，通过"# 话题"按钮在发布时单独添加
         return "\n".join(line for line in lines if line).strip()
 
+    @staticmethod
+    def _inject_missing_image_slots(content: XHSArticleContent, generate_images: bool) -> None:
+        if not generate_images:
+            return
+        for idx, section in enumerate(content.sections, start=1):
+            has_slot = any(block.block_type == ArticleBlockType.IMAGE_SLOT for block in section.blocks)
+            if has_slot:
+                continue
+            section.blocks.append(
+                ArticleBlock(
+                    block_type=ArticleBlockType.IMAGE_SLOT,
+                    image_key="cover" if idx == 1 else f"section_{idx}",
+                    source_refs=section.source_refs,
+                )
+            )
+
+    @staticmethod
+    def _normalize_source_refs(
+        content: XHSArticleContent,
+        research: ArticleResearchResult,
+    ) -> None:
+        available_refs = ContentAgent._collect_available_source_refs(research)
+        if not available_refs:
+            return
+
+        min_refs = 2 if content.strategy == ArticleStrategy.SYNTHESIZE and len(available_refs) > 1 else 1
+        if content.strategy != ArticleStrategy.SYNTHESIZE and not content.primary_source_ref:
+            content.primary_source_ref = research.primary_source_ref or available_refs[0]
+
+        for idx, section in enumerate(content.sections):
+            seed_refs = list(section.source_refs)
+            for block in section.blocks:
+                seed_refs.extend(block.source_refs)
+
+            ranked_refs = ContentAgent._rank_source_refs_for_section(section, research, available_refs)
+            section_refs = ContentAgent._fill_source_refs(
+                seed_refs + ranked_refs,
+                available_refs,
+                minimum=min_refs,
+                seed=idx,
+            )
+            section.source_refs = section_refs
+
+            for block in section.blocks:
+                block_refs = ContentAgent._fill_source_refs(
+                    block.source_refs or section_refs,
+                    available_refs,
+                    minimum=min_refs if content.strategy == ArticleStrategy.SYNTHESIZE else 1,
+                    seed=idx,
+                )
+                block.source_refs = block_refs
+
+    @staticmethod
+    def _collect_available_source_refs(research: ArticleResearchResult) -> list[str]:
+        refs: list[str] = []
+        for claim in research.claims:
+            refs.extend(claim.source_refs)
+        refs.extend(source.source_ref for source in research.sources)
+        return ContentAgent._clean_source_refs(refs, refs)
+
+    @staticmethod
+    def _rank_source_refs_for_section(
+        section: Any,
+        research: ArticleResearchResult,
+        available_refs: list[str],
+    ) -> list[str]:
+        section_text = "\n".join(
+            [
+                section.heading,
+                section.summary,
+                *(block.text for block in section.blocks if block.text),
+                *(
+                    item
+                    for block in section.blocks
+                    for item in block.items
+                ),
+            ]
+        ).lower()
+        section_terms = ContentAgent._extract_terms(section_text)
+        source_order = {ref: idx for idx, ref in enumerate(available_refs)}
+        scores: dict[str, float] = {}
+
+        for claim in research.claims:
+            claim_refs = ContentAgent._clean_source_refs(claim.source_refs, available_refs)
+            if not claim_refs:
+                continue
+
+            claim_text = " ".join([claim.claim, claim.detail, claim.section_hint]).lower()
+            overlap = len(section_terms & ContentAgent._extract_terms(claim_text))
+            hint_bonus = 3.0 if claim.section_hint and claim.section_hint.lower() in section_text else 0.0
+            if overlap == 0 and hint_bonus == 0.0:
+                continue
+
+            score = overlap * 4.0 + hint_bonus
+            for ref in claim_refs:
+                scores[ref] = scores.get(ref, 0.0) + score
+
+        for source in research.sources:
+            overlap = len(
+                section_terms
+                & ContentAgent._extract_terms(f"{source.title} {source.domain}".lower())
+            )
+            if overlap:
+                scores[source.source_ref] = scores.get(source.source_ref, 0.0) + overlap
+
+        ranked = sorted(
+            scores.items(),
+            key=lambda item: (-item[1], source_order.get(item[0], len(source_order))),
+        )
+        return [ref for ref, _ in ranked]
+
+    @staticmethod
+    def _fill_source_refs(
+        refs: list[str],
+        available_refs: list[str],
+        *,
+        minimum: int,
+        seed: int,
+    ) -> list[str]:
+        cleaned = ContentAgent._clean_source_refs(refs, available_refs)
+        if len(cleaned) >= minimum:
+            return cleaned[:3]
+
+        if not available_refs:
+            return cleaned
+
+        offset = seed % len(available_refs)
+        rotated = available_refs[offset:] + available_refs[:offset]
+        for ref in rotated:
+            if ref in cleaned:
+                continue
+            cleaned.append(ref)
+            if len(cleaned) >= minimum:
+                break
+        return cleaned[:3]
+
+    @staticmethod
+    def _clean_source_refs(values: list[str], available_refs: list[str]) -> list[str]:
+        allowed = {ref for ref in available_refs if ref}
+        seen: set[str] = set()
+        result: list[str] = []
+        for ref in values:
+            cleaned = str(ref).strip()
+            if not cleaned or cleaned not in allowed or cleaned in seen:
+                continue
+            seen.add(cleaned)
+            result.append(cleaned)
+        return result
+
+    @staticmethod
+    def _extract_terms(text: str) -> set[str]:
+        return {
+            item
+            for item in re.findall(r"[A-Za-z0-9\u4e00-\u9fff]+", text)
+            if len(item) > 1
+        }

@@ -17,7 +17,9 @@ CONTENT_SYSTEM_PROMPT = """# 角色定义
 5. 使用章节化结构，章节内部允许段落、列表、引用和图片占位。
 6. 面向小红书长文，语气真诚、清晰、可收藏，但不要悬浮营销。
 7. 禁止出现鼓励互动的话术，如"你呢？"、"你们觉得呢？"、"欢迎评论区分享"、"你最喜欢哪种"等引导读者留言的提问句。
-7. 不需要插入图片占位，专注于文字内容。
+8. 如果 generate_images 为 true，请在每个核心章节插入一个 `image_slot`，image_key 使用 ASCII，例如 `cover`, `section_1`, `section_2`。
+9. `source_refs` 是内部证据元数据，不会展示给读者；每个 section 和每个非空 block 都必须填写 1-3 个有效 source_ref。
+10. 当 strategy 是 `synthesize` 时，优先为每个 section 提供至少 2 个不同的 `source_refs`，体现多源整合。
 
 ## Block 约束
 - `heading`: 小节标题
@@ -25,6 +27,7 @@ CONTENT_SYSTEM_PROMPT = """# 角色定义
 - `bullet_list`: 要点列表
 - `numbered_list`: 顺序清单
 - `quote`: 关键提醒或原始观点提炼
+- `image_slot`: 图片插入位，只填 image_key
 
 ## 研究素材查阅工具
 你可以调用以下工具按需查阅原始研究数据，获取比 research_json 更详细的来源内容：
@@ -47,6 +50,7 @@ CONTENT_USER_PROMPT_TEMPLATE = """## 创作任务
 主题: {topic}
 目标受众: {target_audience}
 指定策略: {strategy}
+是否生成图片: {generate_images}
 
 研究结果:
 ```json
@@ -62,6 +66,7 @@ CONTENT_USER_PROMPT_TEMPLATE = """## 创作任务
 - 标题 16-30 字，适合小红书长文
 - lead 需要快速说明价值和看点
 - 至少 3 个 sections
+- 每个 section / block 的 `source_refs` 不能为空，且必须引用 research_json 里真实存在的 `source_ref`
 - rendered_body 必须是完整可直接发布的正文
 - hashtags 4-8 个，中文为主
 
@@ -94,6 +99,7 @@ STRUCTURE_REVIEW_SYSTEM_PROMPT = """\
   - title 或 lead 为空
 - **warning**: 建议修改
   - closing 为空
+  - 若任务要求生成图片，image_slot 缺失或 image_key 重复
   - sections 中某些 blocks 为空列表
   - hashtags 数量不在 4-8 范围
 - **info**: 可选优化
@@ -130,7 +136,8 @@ STRUCTURE_REVIEW_SYSTEM_PROMPT = """\
 
 ### 4. Block 结构检查
 - 每个 section 是否有至少 1 个 block？
-- block_type 是否都是合法值（heading/paragraph/bullet_list/numbered_list/quote）？
+- 若任务要求生成图片，image_slot 的 image_key 是否唯一且使用 ASCII？
+- block_type 是否都是合法值（heading/paragraph/bullet_list/numbered_list/quote/image_slot）？
 - 如有问题，记录为 warning
 
 ### 5. Hashtags 检查
@@ -419,6 +426,9 @@ REVIEW_FULL_USER_PROMPT_TEMPLATE = """## 审核任务
 ```json
 {research_json}
 ```
+
+### 额外约束
+- 是否要求生成图片: {generate_images}
 
 请按照系统提示中的审核清单逐项检查，输出 DimensionReviewResult。
 """

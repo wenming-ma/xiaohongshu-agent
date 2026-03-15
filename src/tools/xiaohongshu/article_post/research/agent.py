@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -329,6 +330,9 @@ class ResearchAgent(BaseAgent):
             return ValidationResult.failure("研究结果缺少结构化 claims")
         if not all(claim.source_refs for claim in output.claims):
             return ValidationResult.failure("存在没有来源映射的 claim")
+        valid_source_refs = {source.source_ref for source in output.sources}
+        if not all(ref in valid_source_refs for claim in output.claims for ref in claim.source_refs):
+            return ValidationResult.failure("存在引用无效 source_ref 的 claim")
         if output.suggested_strategy == ArticleStrategy.REPURPOSE_VIDEO and not any(
             transcript.success for transcript in output.transcripts
         ):
@@ -394,7 +398,8 @@ class ResearchAgent(BaseAgent):
         task: ResearchTask,
         candidates: list[tuple[str, SearchResult]],
     ) -> ResearchTaskResult:
-        collected = await self._visit_and_collect_sources(task, candidates, state)
+        prioritized_candidates = self._prioritize_task_candidates(task, candidates)
+        collected = await self._visit_and_collect_sources(task, prioritized_candidates, state)
         if collected:
             state.current_collected.extend(collected)
             state.collected_sources.extend(collected)
@@ -409,7 +414,7 @@ class ResearchAgent(BaseAgent):
         return ResearchTaskResult(
             task_id=task.task_id,
             goal=task.goal,
-            candidate_results=[result for _, result in candidates],
+            candidate_results=[result for _, result in prioritized_candidates],
             collected_source_refs=[source.ref for source in collected],
             new_digests=task_digests,
             raw_findings=raw_findings,
@@ -479,6 +484,7 @@ class ResearchAgent(BaseAgent):
         research = result.output
         research.sources = self._build_sources(state.collected_sources)
         research.transcripts = self._build_transcripts(state.collected_sources)
+        self._normalize_research_result(research, state.collected_sources)
         if not research.primary_source_ref and state.collected_sources:
             research.primary_source_ref = state.collected_sources[0].ref
         if state.strategy != ArticleStrategy.AUTO:
@@ -569,6 +575,92 @@ class ResearchAgent(BaseAgent):
 
         return collected
 
+    @classmethod
+    def _prioritize_task_candidates(
+        cls,
+        task: ResearchTask,
+        candidates: list[tuple[str, SearchResult]],
+    ) -> list[tuple[str, SearchResult]]:
+        return [
+            candidate
+            for _, candidate in sorted(
+                enumerate(candidates),
+                key=lambda item: (
+                    cls._score_task_candidate(task, item[1][0], item[1][1]),
+                    -(item[1][1].rank or 0),
+                ),
+                reverse=True,
+            )
+        ]
+
+    @classmethod
+    def _score_task_candidate(
+        cls,
+        task: ResearchTask,
+        query: str,
+        result: SearchResult,
+    ) -> float:
+        terms = cls._extract_relevance_terms(
+            task.goal,
+            *task.article_queries,
+            *task.video_queries,
+        )
+        title = (result.title or "").lower()
+        snippet = (result.snippet or "").lower()
+        url = (result.url or "").lower()
+        score = float(max(0, 8 - (result.rank or 0)))
+
+        title_hits = {term for term in terms if term in title}
+        snippet_hits = {term for term in terms if term in snippet}
+        url_hits = {term for term in terms if term in url}
+
+        score += len(title_hits) * 5.0
+        score += len(snippet_hits - title_hits) * 2.0
+        score += len(url_hits - title_hits - snippet_hits) * 1.0
+        if "site:" not in query.lower():
+            score += 2.0
+        return score
+
+    @staticmethod
+    def _extract_relevance_terms(*texts: str) -> list[str]:
+        stopwords = {
+            "about",
+            "after",
+            "article",
+            "articles",
+            "balanced",
+            "could",
+            "image",
+            "into",
+            "media",
+            "paris",
+            "parisian",
+            "style",
+            "their",
+            "these",
+            "they",
+            "this",
+            "video",
+            "videos",
+            "what",
+            "when",
+            "which",
+            "with",
+            "woman",
+            "women",
+        }
+        seen: set[str] = set()
+        terms: list[str] = []
+        for text in texts:
+            normalized = re.sub(r"site:\S+", " ", str(text).lower())
+            for token in re.findall(r"[a-z0-9][a-z0-9_-]+", normalized):
+                cleaned = token.strip("_-")
+                if len(cleaned) < 4 or cleaned in stopwords or cleaned in seen:
+                    continue
+                seen.add(cleaned)
+                terms.append(cleaned)
+        return terms
+
     async def _build_task_digests(
         self,
         state: ResearchState,
@@ -628,6 +720,50 @@ class ResearchAgent(BaseAgent):
                 )
             )
         return sources
+
+    @staticmethod
+    def _normalize_research_result(
+        research: ArticleResearchResult,
+        collected_sources: list[CollectedSource],
+    ) -> None:
+        available_refs = [source.ref for source in collected_sources if source.ref]
+        available_ref_set = set(available_refs)
+        normalized_claims = []
+        dropped_claim_notes: list[str] = []
+
+        for claim in research.claims:
+            cleaned_refs: list[str] = []
+            seen_refs: set[str] = set()
+            for ref in claim.source_refs:
+                cleaned_ref = str(ref).strip()
+                if not cleaned_ref or cleaned_ref not in available_ref_set or cleaned_ref in seen_refs:
+                    continue
+                seen_refs.add(cleaned_ref)
+                cleaned_refs.append(cleaned_ref)
+
+            if not cleaned_refs:
+                note = claim.claim.strip() or claim.detail.strip() or claim.section_hint.strip()
+                if note:
+                    dropped_claim_notes.append(note)
+                continue
+
+            claim.source_refs = cleaned_refs
+            normalized_claims.append(claim)
+
+        research.claims = normalized_claims
+
+        if research.primary_source_ref and research.primary_source_ref not in available_ref_set:
+            research.primary_source_ref = ""
+
+        if dropped_claim_notes:
+            prefix = "未纳入 claims 的证据缺口："
+            gap_summary = "；".join(ResearchAgent._unique_keep_order(dropped_claim_notes)[:4])
+            gap_note = f"{prefix}{gap_summary}"
+            research.notes = (
+                f"{research.notes.strip()}\n{gap_note}".strip()
+                if research.notes.strip()
+                else gap_note
+            )
 
     @staticmethod
     def _build_transcripts(collected: list[CollectedSource]) -> list[VideoTranscript]:

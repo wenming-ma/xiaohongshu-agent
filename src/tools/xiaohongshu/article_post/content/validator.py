@@ -97,6 +97,7 @@ class ContentReviewValidator(InternalValidator):
     ) -> InternalValidationResult:
         content_json = result.model_dump_json(indent=2)
         research_json = context.get("research_json", "")
+        generate_images = context.get("generate_images", False)
         rendered_body = result.rendered_body
         output_dir: Path | None = context.get("output_dir")
 
@@ -113,6 +114,7 @@ class ContentReviewValidator(InternalValidator):
                 prompt = review_full_user_prompt(
                     content_json=content_json,
                     research_json=research_json,
+                    generate_images="true" if generate_images else "false",
                 )
             else:
                 prompt = review_text_user_prompt(rendered_body=rendered_body)

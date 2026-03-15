@@ -26,7 +26,7 @@ class XHSArticlePostTool(BasePlatformTool[XHSArticlePostInput, XHSArticlePostOut
 该工具会执行完整的长文工作流：
 - 深度搜索海外高质量女性向数字媒体内容
 - 提取高价值文章与视频信息，必要时转录视频
-- 生成适配小红书的中文长文
+- 生成适配小红书的中文长文与 AI 配图
 - 自动发布到小红书长文编辑器
 """
     platform = "xiaohongshu"
@@ -36,6 +36,7 @@ class XHSArticlePostTool(BasePlatformTool[XHSArticlePostInput, XHSArticlePostOut
 
     async def execute(self, input_data: XHSArticlePostInput) -> XHSArticlePostOutput:
         from .content import ContentAgent
+        from .image import ImageAgent
         from .publish import PublisherAgent
         from .research import ResearchAgent
 
@@ -50,6 +51,7 @@ class XHSArticlePostTool(BasePlatformTool[XHSArticlePostInput, XHSArticlePostOut
         logger.info("主题: %s", input_data.topic)
         logger.info("受众: %s", input_data.audience)
         logger.info("策略: %s", input_data.strategy.value)
+        logger.info("生成图片: %s", input_data.generate_images)
         logger.info("发布: %s", input_data.publish)
         logger.info("输出目录: %s", output_dir)
 
@@ -75,9 +77,30 @@ class XHSArticlePostTool(BasePlatformTool[XHSArticlePostInput, XHSArticlePostOut
                 topic=input_data.topic,
                 target_audience=input_data.audience,
                 requested_strategy=input_data.strategy,
+                generate_images=input_data.generate_images,
                 output_dir=output_dir,
             )
             save_json(output_dir / "content.json", content.model_dump())
+
+            image_result = None
+            image_paths: list[str] = []
+            if input_data.generate_images:
+                logger.info("-" * 40)
+                logger.info("Phase 3: 配图生成")
+                logger.info("-" * 40)
+                image_agent = ImageAgent()
+                image_result = await image_agent.forward(
+                    content=content,
+                    research=research,
+                    topic=input_data.topic,
+                    output_dir=output_dir,
+                )
+                save_json(output_dir / "image.json", image_result.model_dump())
+                image_paths = [item.image_path for item in image_result.images]
+            else:
+                logger.info("-" * 40)
+                logger.info("Phase 3: 跳过配图生成")
+                logger.info("-" * 40)
 
             publish_result = None
             if input_data.publish:
@@ -87,6 +110,7 @@ class XHSArticlePostTool(BasePlatformTool[XHSArticlePostInput, XHSArticlePostOut
                 publisher_agent = PublisherAgent()
                 publish_result = await publisher_agent.forward(
                     content=content,
+                    images=[Path(path) for path in image_paths],
                     output_dir=output_dir,
                 )
                 save_json(output_dir / "publish.json", publish_result.model_dump())
@@ -104,6 +128,8 @@ class XHSArticlePostTool(BasePlatformTool[XHSArticlePostInput, XHSArticlePostOut
                 title=content.title,
                 body_preview=content.rendered_body[:240] if content.rendered_body else "",
                 hashtags=content.hashtags,
+                image_count=len(image_paths),
+                image_paths=image_paths,
                 published=publish_result.published if publish_result else False,
                 post_url=publish_result.post_url if publish_result and publish_result.post_url else None,
                 output_dir=str(output_dir),

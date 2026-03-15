@@ -53,9 +53,11 @@ SYNTHESIS_SYSTEM_PROMPT = """你是一位深度研究编辑，需要把 brief、
 2. 默认先基于 digests 和任务 notes 组织结论，不要无谓读取原文
 3. 只有当 claim 证据不足、来源冲突、或主来源细节不够时，才调用本地证据工具
 4. `sources` 只包含已精读或已转录的来源
-5. `claims` 需要写清楚 source_refs
+5. `claims` 只写有明确来源支撑的事实结论，且必须写清楚 source_refs
 6. `primary_source_ref` 要根据策略建议主来源
 7. `suggested_strategy` 只能是 synthesize / repurpose_article / repurpose_video
+8. 如果某条信息只是“证据缺口 / 仍待补证 / 暂未找到来源”，放进 `notes` 或 `summary`，不要放进 `claims`
+9. `claims[].source_refs` 只能引用输入 digest 池里真实存在的 source_ref；如果找不到合法 source_ref，就省略这条 claim
 """
 
 RESEARCH_BRIEF_USER_PROMPT_TEMPLATE = """主题: {topic}
