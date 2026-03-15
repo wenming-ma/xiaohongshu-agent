@@ -259,6 +259,13 @@ class ArticleImageSpec(BaseModel):
     label: str
     prompt_hint: str
     source_refs: list[str] = []
+    image_role: str = ""
+    visual_goal: str = ""
+    visual_direction: str = ""
+    article_outline: list[str] = Field(default_factory=list)
+    key_points: list[str] = Field(default_factory=list)
+    text_lines: list[str] = Field(default_factory=list)
+    avoid_points: list[str] = Field(default_factory=list)
 
 
 class GeneratedArticleImage(BaseModel):
