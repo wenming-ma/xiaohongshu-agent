@@ -219,7 +219,9 @@ class ResearchAgent(BaseAgent):
                     last_feedback = validation.feedback
                     self.on_validation_failed(state, iteration, validation.feedback)
 
-            raise RuntimeError(last_feedback)
+            logger.warning("研究审核 %d 轮全部未通过，降级使用最后一轮结果继续后续阶段", self.MAX_ITERATIONS)
+            self.finalize(state, self.MAX_ITERATIONS)
+            return state.current_result
 
     def create_state(
         self,
