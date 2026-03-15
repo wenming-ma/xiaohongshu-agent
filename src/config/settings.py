@@ -20,7 +20,7 @@ class RetryConfig:
 
 class ReviewConfig:
     MAX_ITERATIONS = 10
-    PASS_SCORE = 60
+    PASS_SCORE = 80
     CRITICAL_PENALTY = 25
     WARNING_PENALTY = 10
     INFO_PENALTY = 5
