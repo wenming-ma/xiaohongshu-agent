@@ -187,15 +187,6 @@ class XHSArticleContent(BaseModel):
         )
         return len(text)
 
-    @computed_field
-    @property
-    def image_keys(self) -> list[str]:
-        keys: list[str] = []
-        for section in self.sections:
-            for block in section.blocks:
-                if block.block_type == ArticleBlockType.IMAGE_SLOT and block.image_key:
-                    keys.append(block.image_key)
-        return keys
 
 
 class ReviewDimension(str, Enum):

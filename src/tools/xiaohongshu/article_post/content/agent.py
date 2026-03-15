@@ -31,7 +31,7 @@ class ContentAgent(BaseAgent):
     goal = "基于深度研究创作可发布的小红书长文"
 
     def __init__(self, max_iterations: int | None = None):
-        self.max_iterations = max_iterations or min(ReviewConfig.MAX_ITERATIONS, 4)
+        self.max_iterations = max_iterations or min(ReviewConfig.MAX_ITERATIONS, 13)
         super().__init__()
         self.init_validators()
 
