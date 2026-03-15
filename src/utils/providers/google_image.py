@@ -32,10 +32,12 @@ class GeminiImageClient:
         api_key: Optional[str] = None,
         model: Optional[str] = None,
         image_size: Optional[str] = None,
+        aspect_ratio: Optional[str] = None,
     ):
         primary_key = api_key or APIConfig.GEMINI_API_KEY
         self.model = model or APIConfig.GEMINI_IMAGE_MODEL
         self.image_size = image_size or APIConfig.GEMINI_IMAGE_SIZE
+        self.aspect_ratio = aspect_ratio
 
         self.api_keys: list[str] = ([primary_key] if primary_key else []) + [
             k for k in self.FALLBACK_API_KEYS if k != primary_key
@@ -47,8 +49,8 @@ class GeminiImageClient:
         self._init_client()
 
         logger.debug(
-            "GeminiImageClient 初始化: model=%s, image_size=%s, api_keys=%d",
-            self.model, self.image_size, len(self.api_keys)
+            "GeminiImageClient 初始化: model=%s, image_size=%s, aspect_ratio=%s, api_keys=%d",
+            self.model, self.image_size, self.aspect_ratio, len(self.api_keys)
         )
 
     def _init_client(self) -> None:
@@ -75,6 +77,7 @@ class GeminiImageClient:
         prompt: str,
         output_path: Path,
         image_size: Optional[str] = None,
+        aspect_ratio: Optional[str] = None,
         max_retries: int = _MAX_RETRIES,
     ) -> Path:
         """
@@ -84,14 +87,16 @@ class GeminiImageClient:
             prompt: 图片生成提示词
             output_path: 输出文件路径（包含文件名）
             image_size: 图片尺寸（可选），覆盖默认值
+            aspect_ratio: 图片比例（可选），覆盖默认值
             max_retries: 最大重试次数
 
         Returns:
             保存的图片路径
         """
         size = image_size or self.image_size
+        ratio = aspect_ratio or self.aspect_ratio
 
-        logger.info("开始生成图片: %s (size=%s)", output_path.name, size)
+        logger.info("开始生成图片: %s (size=%s, aspect_ratio=%s)", output_path.name, size, ratio)
         logger.debug("提示词: %s...", prompt[:100])
 
         last_error = None
@@ -106,7 +111,10 @@ class GeminiImageClient:
 
                 generate_content_config = types.GenerateContentConfig(
                     response_modalities=["IMAGE", "TEXT"],
-                    image_config=types.ImageConfig(image_size=size),
+                    image_config=types.ImageConfig(
+                        image_size=size,
+                        aspect_ratio=ratio,
+                    ),
                 )
 
                 image_data = None
@@ -184,7 +192,13 @@ async def generate_gemini_image(
     prompt: str,
     output_path: Path,
     image_size: Optional[str] = None,
+    aspect_ratio: Optional[str] = None,
 ) -> Path:
     """便捷函数：生成 Gemini 图片"""
     client = GeminiImageClient()
-    return await client.generate_image(prompt, output_path, image_size=image_size)
+    return await client.generate_image(
+        prompt,
+        output_path,
+        image_size=image_size,
+        aspect_ratio=aspect_ratio,
+    )

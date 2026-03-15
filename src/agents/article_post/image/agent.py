@@ -32,7 +32,7 @@ class ImageAgent(BaseAgent):
     goal = "为长文生成头图和章节配图"
 
     def init_tools(self) -> None:
-        self.image_client = GeminiImageClient()
+        self.image_client = GeminiImageClient(aspect_ratio="16:9")
 
     def init_agent(self) -> None:
         self.prompt_agent = Agent(
