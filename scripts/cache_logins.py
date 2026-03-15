@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from pydantic_ai.mcp import MCPServerStdio
-from src.tools.xiaohongshu.image_post.login import create_login_tool
+from src.agents.shared.login import create_login_tool
 from src.config.settings import PathConfig, PublishConfig, APIConfig
 from src.utils.logger import get_logger
 from src.utils.playwright_artifacts import install_playwright_artifact_guard

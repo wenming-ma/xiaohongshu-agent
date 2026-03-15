@@ -27,7 +27,7 @@ from .utils.logger import setup_logging, get_logger
 setup_logging()
 logger = get_logger(__name__)
 
-from .orchestrator.master_agent import MasterAgent
+from .master.agent import MasterAgent
 
 
 async def run_master(user_input: str) -> None:
@@ -64,16 +64,16 @@ async def run_master(user_input: str) -> None:
 
 
 async def run_direct(topic: str, audience: str, generate_image: bool = True) -> None:
-    """直接调用 XHSImagePostTool（兼容旧接口）"""
-    from .tools.xiaohongshu.image_post import XHSImagePostTool
-    from .tools.xiaohongshu.image_post.schemas import XHSImagePostInput
+    """直接调用 XHSImagePostPipeline（兼容旧接口）"""
+    from .agents.image_post import XHSImagePostPipeline
+    from .agents.image_post.schemas import XHSImagePostInput
 
     logger.info("=" * 60)
-    logger.info("直接调用 XHSImagePostTool")
+    logger.info("直接调用 XHSImagePostPipeline")
     logger.info("=" * 60)
 
     try:
-        tool = XHSImagePostTool()
+        tool = XHSImagePostPipeline()
         input_data = XHSImagePostInput(
             topic=topic,
             audience=audience,

@@ -83,7 +83,7 @@ class WhisperTranscriber:
             logger.info("Whisper 模型加载完成")
 
     async def transcribe(self, video_path: Path) -> "TranscriptionResult":
-        from ..tools.xiaohongshu.video_post.schemas import TranscriptionResult
+        from ..agents.video_post.schemas import TranscriptionResult
 
         if not video_path.exists():
             return TranscriptionResult(success=False, error_message=f"文件不存在: {video_path}")

@@ -37,12 +37,12 @@ logging.basicConfig(
     force=True,
 )
 
-from src.tools.xiaohongshu.video_post import XHSVideoPostTool, XHSVideoPostInput
-from src.tools.xiaohongshu.video_post.schemas import Platform
+from src.agents.video_post import XHSVideoPostPipeline, XHSVideoPostInput
+from src.agents.video_post.schemas import Platform
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="测试 XHSVideoPostTool 完整流程")
+    parser = argparse.ArgumentParser(description="测试 XHSVideoPostPipeline 完整流程")
     parser.add_argument("--topic", default="cute cats compilation", help="搜索主题")
     parser.add_argument("--audience", default="年轻女性，喜欢可爱事物", help="目标受众")
     parser.add_argument("--platforms", nargs="+", default=["x", "instagram", "facebook", "tiktok"],
@@ -72,7 +72,7 @@ async def main():
     )
 
     print("=" * 60)
-    print("XHSVideoPostTool 完整流程测试")
+    print("XHSVideoPostPipeline 完整流程测试")
     print("=" * 60)
     print(f"主题: {input_data.topic}")
     print(f"受众: {input_data.audience}")
@@ -82,7 +82,7 @@ async def main():
     print("=" * 60)
     print()
 
-    tool = XHSVideoPostTool()
+    tool = XHSVideoPostPipeline()
     result = await tool.execute(input_data)
 
     print()

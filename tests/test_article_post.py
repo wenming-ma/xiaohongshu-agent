@@ -1,5 +1,5 @@
 """
-测试 XHSArticlePostTool 完整流程
+测试 XHSArticlePostPipeline 完整流程
 
 使用方法:
     uv run python tests/test_article_post.py --topic "spring capsule wardrobe"
@@ -30,12 +30,12 @@ logging.basicConfig(
     force=True,
 )
 
-from src.tools.xiaohongshu.article_post import XHSArticlePostInput, XHSArticlePostTool
-from src.tools.xiaohongshu.article_post.schemas import ArticleStrategy
+from src.agents.article_post import XHSArticlePostInput, XHSArticlePostPipeline
+from src.agents.article_post.schemas import ArticleStrategy
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="测试 XHSArticlePostTool 完整流程")
+    parser = argparse.ArgumentParser(description="测试 XHSArticlePostPipeline 完整流程")
     parser.add_argument("--topic", default="spring capsule wardrobe", help="研究主题")
     parser.add_argument("--audience", default="25-35岁中文女性用户", help="目标受众")
     parser.add_argument(
@@ -51,7 +51,7 @@ def parse_args() -> argparse.Namespace:
 
 async def main() -> None:
     args = parse_args()
-    tool = XHSArticlePostTool()
+    tool = XHSArticlePostPipeline()
     result = await tool.execute(
         XHSArticlePostInput(
             topic=args.topic,
@@ -63,7 +63,7 @@ async def main() -> None:
     )
 
     print("=" * 60)
-    print("XHSArticlePostTool 执行结果")
+    print("XHSArticlePostPipeline 执行结果")
     print("=" * 60)
     print(f"成功: {result.success}")
     print(f"标题: {result.title}")

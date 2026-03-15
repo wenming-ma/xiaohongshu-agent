@@ -1,25 +1,25 @@
 import importlib
 
-from src.core.tool_registry import ToolRegistry
-from src.tools.xiaohongshu.shared import (
+from src.core.pipeline_registry import PipelineRegistry
+from src.agents.shared import (
     build_shared_playwright_mcp_args,
     build_shared_playwright_mcp_env,
 )
-from src.tools.xiaohongshu import register_tools
+from src.agents import register_pipelines
 import src.config.settings as settings_module
 
 
 def teardown_function() -> None:
-    ToolRegistry.clear()
+    PipelineRegistry.clear()
     importlib.reload(settings_module)
 
 
-def test_register_tools_only_exposes_implemented_xiaohongshu_tools() -> None:
-    ToolRegistry.clear()
+def test_register_pipelines_only_exposes_implemented_xiaohongshu_pipelines() -> None:
+    PipelineRegistry.clear()
 
-    register_tools()
+    register_pipelines()
 
-    assert set(ToolRegistry._tools) == {
+    assert set(PipelineRegistry._pipelines) == {
         "xiaohongshu_article_post",
         "xiaohongshu_image_post",
         "xiaohongshu_video_post",

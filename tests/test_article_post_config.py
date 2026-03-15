@@ -16,20 +16,20 @@ from pydantic_ai.messages import (
 
 from src.core.base_agent import ValidationResult
 from src.core.base_validator import InternalValidationResult
-from src.tools.xiaohongshu.article_post.content.agent import ContentAgent
-from src.tools.xiaohongshu.article_post.content.state import _safe_truncate
-from src.tools.xiaohongshu.article_post.image.agent import ImageAgent
-from src.tools.xiaohongshu.article_post.image.prompts import image_system_prompt, image_user_prompt
-from src.tools.xiaohongshu.article_post.publish.agent import PublisherAgent
-from src.tools.xiaohongshu.article_post.publish.prompts import publish_user_prompt
-from src.tools.xiaohongshu.article_post.publish.tools import create_article_publish_tools
-from src.tools.xiaohongshu.article_post.publish.utils import (
+from src.agents.article_post.content.agent import ContentAgent
+from src.agents.article_post.content.state import _safe_truncate
+from src.agents.article_post.image.agent import ImageAgent
+from src.agents.article_post.image.prompts import image_system_prompt, image_user_prompt
+from src.agents.article_post.publish.agent import PublisherAgent
+from src.agents.article_post.publish.prompts import publish_user_prompt
+from src.agents.article_post.publish.tools import create_article_publish_tools
+from src.agents.article_post.publish.utils import (
     IMAGE_SLOT_PREFIX,
     build_editor_script,
     build_slot_cleanup_script,
 )
-from src.tools.xiaohongshu.article_post.research.agent import ResearchAgent
-from src.tools.xiaohongshu.article_post.research.state import (
+from src.agents.article_post.research.agent import ResearchAgent
+from src.agents.article_post.research.state import (
     CompressedResearchNote,
     IterationExecution,
     IterationPlan,
@@ -38,11 +38,11 @@ from src.tools.xiaohongshu.article_post.research.state import (
     ResearchTask,
     ResearchTaskResult,
 )
-from src.tools.xiaohongshu.article_post.research.validator import (
+from src.agents.article_post.research.validator import (
     ResearchReviewValidator,
     ResearchRulesValidator,
 )
-from src.tools.xiaohongshu.article_post.schemas import (
+from src.agents.article_post.schemas import (
     ArticleClaim,
     ArticleBlock,
     ArticleBlockType,
@@ -61,15 +61,15 @@ from src.tools.xiaohongshu.article_post.schemas import (
     XHSArticlePostInput,
     XHSArticlePostOutput,
 )
-from src.tools.xiaohongshu.article_post.research.tools import build_site_queries
-from src.tools.xiaohongshu.article_post.research.tools import (
+from src.agents.article_post.research.tools import build_site_queries
+from src.agents.article_post.research.tools import (
     CollectedSource,
     CollectedSourceCandidate,
     LocalEvidenceStore,
     ReadPageResult,
     SearchResult,
 )
-from src.tools.xiaohongshu.article_post.research.utils import (
+from src.agents.article_post.research.utils import (
     SourceChunker,
     save_iteration_result,
     save_latest_snapshot,
@@ -574,10 +574,10 @@ def test_article_research_review_validator_registers_evidence_tools_when_index_e
             self.tools = kwargs["tools"]
 
     with (
-        patch("src.tools.xiaohongshu.article_post.research.validator.Agent", FakeAgent),
-        patch("src.tools.xiaohongshu.article_post.research.validator.get_text_model", return_value="model"),
+        patch("src.agents.article_post.research.validator.Agent", FakeAgent),
+        patch("src.agents.article_post.research.validator.get_text_model", return_value="model"),
         patch(
-            "src.tools.xiaohongshu.article_post.research.validator.LocalEvidenceStore.get_tools",
+            "src.agents.article_post.research.validator.LocalEvidenceStore.get_tools",
             return_value=["evidence_tool"],
         ),
     ):
@@ -1462,7 +1462,7 @@ def test_article_synthesize_result_passes_current_date_to_prompt(tmp_path) -> No
     state.current_iteration_plan = IterationPlan(objective="objective", audience_focus="audience")
 
     with patch(
-        "src.tools.xiaohongshu.article_post.research.agent.synthesis_user_prompt",
+        "src.agents.article_post.research.agent.synthesis_user_prompt",
         side_effect=fake_prompt,
     ):
         asyncio.run(agent.synthesize_result(state, LocalEvidenceStore(tmp_path)))
@@ -1499,7 +1499,7 @@ def test_article_review_validator_passes_current_date_to_prompt() -> None:
     ]
 
     with patch(
-        "src.tools.xiaohongshu.article_post.research.validator.research_review_user_prompt",
+        "src.agents.article_post.research.validator.research_review_user_prompt",
         side_effect=fake_prompt,
     ):
         result = asyncio.run(
