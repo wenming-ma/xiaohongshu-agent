@@ -223,6 +223,37 @@ class ArticleReviewResult(BaseModel):
     summary: str = ""
 
 
+class ResearchReviewDimension(str, Enum):
+    TRACEABILITY = "traceability"
+    SOURCE_QUALITY = "source_quality"
+    STRATEGY_FIT = "strategy_fit"
+    TIMELINESS_RISK = "timeliness_risk"
+    DOWNSTREAM_USABILITY = "downstream_usability"
+
+
+class ArticleResearchReviewIssue(BaseModel):
+    dimension: ResearchReviewDimension
+    severity: str = Field(description="critical / warning / info")
+    description: str
+    suggestion: str = ""
+
+
+class ResearchDimensionReviewResult(BaseModel):
+    dimension: ResearchReviewDimension
+    passed: bool
+    score: float = Field(default=0.0, ge=0.0, le=100.0)
+    issues: list[ArticleResearchReviewIssue] = []
+    summary: str = ""
+
+
+class ArticleResearchReviewResult(BaseModel):
+    passed: bool
+    score: float = Field(default=0.0, ge=0.0, le=100.0)
+    issues: list[ArticleResearchReviewIssue] = []
+    dimension_results: list[ResearchDimensionReviewResult] = []
+    summary: str = ""
+
+
 class ArticleImageSpec(BaseModel):
     image_key: str
     label: str

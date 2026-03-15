@@ -1,6 +1,7 @@
 import asyncio
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 from pydantic_ai.messages import (
     ModelRequest,
@@ -12,6 +13,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
+from src.core.base_validator import InternalValidationResult
 from src.tools.xiaohongshu.article_post.content.agent import ContentAgent
 from src.tools.xiaohongshu.article_post.content.state import _safe_truncate
 from src.tools.xiaohongshu.article_post.publish.agent import PublisherAgent
@@ -24,16 +26,25 @@ from src.tools.xiaohongshu.article_post.research.state import (
     ResearchTask,
     ResearchTaskResult,
 )
+from src.tools.xiaohongshu.article_post.research.validator import (
+    ResearchReviewValidator,
+    ResearchRulesValidator,
+)
 from src.tools.xiaohongshu.article_post.schemas import (
     ArticleClaim,
     ArticleBlock,
     ArticleBlockType,
     ArticleResearchResult,
+    ArticleResearchReviewIssue,
+    ArticleResearchReviewResult,
     ArticleSection,
     ArticleSource,
     ArticleSourceType,
     ArticleStrategy,
+    ResearchDimensionReviewResult,
+    ResearchReviewDimension,
     SourceDigest,
+    VideoTranscript,
     XHSArticleContent,
     XHSArticlePostInput,
     XHSArticlePostOutput,
@@ -46,6 +57,49 @@ from src.tools.xiaohongshu.article_post.research.tools import (
     SearchResult,
 )
 from src.tools.xiaohongshu.article_post.research.utils import SourceChunker, save_iteration_result
+
+
+def _build_valid_article_research_result(
+    *,
+    suggested_strategy: ArticleStrategy = ArticleStrategy.SYNTHESIZE,
+    transcripts: list[VideoTranscript] | None = None,
+) -> ArticleResearchResult:
+    return ArticleResearchResult(
+        summary="Spring wardrobe research is structured and ready for writing.",
+        sources=[
+            ArticleSource(
+                source_ref="source_1",
+                source_type=ArticleSourceType.ARTICLE,
+                url="https://www.allure.com/story/spring-wardrobe",
+                domain="www.allure.com",
+                title="Spring Wardrobe Reset",
+                author="Jane Doe",
+                published_at="2026-03-01",
+                quality_score=90.0,
+            ),
+            ArticleSource(
+                source_ref="source_2",
+                source_type=ArticleSourceType.ARTICLE,
+                url="https://www.byrdie.com/story/linen-basics",
+                domain="www.byrdie.com",
+                title="Linen Basics Guide",
+                author="Jane Doe",
+                published_at="2026-03-02",
+                quality_score=88.0,
+            ),
+        ],
+        claims=[
+            ArticleClaim(
+                claim="Neutral basics and linen layers make spring outfit repetition easier.",
+                source_refs=["source_1", "source_2"],
+                section_hint="基础单品",
+            )
+        ],
+        keywords=["spring wardrobe", "linen basics", "neutral layers"],
+        primary_source_ref="source_1",
+        suggested_strategy=suggested_strategy,
+        transcripts=transcripts or [],
+    )
 
 
 def test_article_post_input_defaults() -> None:
@@ -381,6 +435,362 @@ def test_local_evidence_store_returns_relevant_excerpt(tmp_path) -> None:
     assert len(excerpt_payload) == 2
     assert any("linen blazer" in item["text"].lower() for item in excerpt_payload)
     assert digest_payload["source_ref"] == "source_1"
+
+
+def test_article_research_rules_validator_rejects_missing_depth_and_claims() -> None:
+    validator = ResearchRulesValidator()
+    result = ArticleResearchResult(
+        summary="Need more evidence.",
+        sources=[
+            ArticleSource(
+                source_ref="source_1",
+                source_type=ArticleSourceType.ARTICLE,
+                url="https://www.allure.com/story/spring-wardrobe",
+                domain="www.allure.com",
+                title="Spring Wardrobe Reset",
+                quality_score=88.0,
+            )
+        ],
+        claims=[],
+        suggested_strategy=ArticleStrategy.SYNTHESIZE,
+    )
+
+    validation = asyncio.run(
+        validator.validate(
+            result,
+            context={"min_source_pages": 2, "min_unique_domains": 2},
+        )
+    )
+
+    assert not validation.passed
+    assert "研究深度不足" in validation.feedback
+    assert "域名覆盖不足" in validation.feedback
+    assert "研究结果缺少结构化 claims" in validation.feedback
+
+
+def test_article_research_rules_validator_rejects_invalid_refs_and_missing_video_transcript() -> None:
+    validator = ResearchRulesValidator()
+    result = _build_valid_article_research_result(
+        suggested_strategy=ArticleStrategy.REPURPOSE_VIDEO,
+    )
+    result.claims = [
+        ArticleClaim(
+            claim="A supported claim is still missing mapped sources.",
+            source_refs=[],
+        ),
+        ArticleClaim(
+            claim="Video-led strategy needs a strong primary source.",
+            source_refs=["missing_source"],
+        ),
+    ]
+
+    validation = asyncio.run(
+        validator.validate(
+            result,
+            context={"min_source_pages": 2, "min_unique_domains": 2},
+        )
+    )
+
+    assert not validation.passed
+    assert "存在没有来源映射的 claim" in validation.feedback
+    assert "存在引用无效 source_ref 的 claim" in validation.feedback
+    assert "视频搬运策略缺少可用转录" in validation.feedback
+
+
+def test_article_research_rules_validator_passes_valid_result() -> None:
+    validator = ResearchRulesValidator()
+    result = _build_valid_article_research_result()
+
+    validation = asyncio.run(
+        validator.validate(
+            result,
+            context={"min_source_pages": 2, "min_unique_domains": 2},
+        )
+    )
+
+    assert validation.passed
+    assert validation.score == 100.0
+
+
+def test_article_research_review_aggregate_respects_score_and_critical() -> None:
+    warning_review = ResearchDimensionReviewResult(
+        dimension=ResearchReviewDimension.TRACEABILITY,
+        passed=False,
+        score=85.0,
+        issues=[
+            ArticleResearchReviewIssue(
+                dimension=ResearchReviewDimension.TRACEABILITY,
+                severity="warning",
+                description="主 claim 只有两个弱来源支撑。",
+            )
+        ],
+        summary="主 claim 支撑偏弱。",
+    )
+    info_review = ResearchDimensionReviewResult(
+        dimension=ResearchReviewDimension.DOWNSTREAM_USABILITY,
+        passed=True,
+        score=95.0,
+        issues=[
+            ArticleResearchReviewIssue(
+                dimension=ResearchReviewDimension.DOWNSTREAM_USABILITY,
+                severity="info",
+                description="可以补充一条更强的章节提示。",
+            )
+        ],
+        summary="可写性基本够用。",
+    )
+    passed_review = ResearchReviewValidator._aggregate([warning_review, info_review])
+
+    critical_review = ResearchDimensionReviewResult(
+        dimension=ResearchReviewDimension.STRATEGY_FIT,
+        passed=False,
+        score=60.0,
+        issues=[
+            ArticleResearchReviewIssue(
+                dimension=ResearchReviewDimension.STRATEGY_FIT,
+                severity="critical",
+                description="当前结果并不支持视频搬运策略。",
+            )
+        ],
+        summary="策略判断错误。",
+    )
+    failed_review = ResearchReviewValidator._aggregate([critical_review, info_review])
+
+    assert passed_review.passed
+    assert passed_review.score == 85.0
+    assert not failed_review.passed
+    assert failed_review.score == 70.0
+
+
+def test_article_research_review_validator_registers_evidence_tools_when_index_exists(tmp_path) -> None:
+    (tmp_path / "source_index.json").write_text("[]", encoding="utf-8")
+
+    class FakeAgent:
+        def __init__(self, **kwargs) -> None:
+            self.tools = kwargs["tools"]
+
+    with (
+        patch("src.tools.xiaohongshu.article_post.research.validator.Agent", FakeAgent),
+        patch("src.tools.xiaohongshu.article_post.research.validator.get_text_model", return_value="model"),
+        patch(
+            "src.tools.xiaohongshu.article_post.research.validator.LocalEvidenceStore.get_tools",
+            return_value=["evidence_tool"],
+        ),
+    ):
+        validator = ResearchReviewValidator()
+        reviewers = validator._build_reviewers(tmp_path)
+
+    reviewers_by_dimension = {
+        dimension: agent.tools
+        for dimension, agent in reviewers
+    }
+    assert reviewers_by_dimension[ResearchReviewDimension.TRACEABILITY] == ["evidence_tool"]
+    assert reviewers_by_dimension[ResearchReviewDimension.SOURCE_QUALITY] == ["evidence_tool"]
+    assert reviewers_by_dimension[ResearchReviewDimension.TIMELINESS_RISK] == ["evidence_tool"]
+    assert reviewers_by_dimension[ResearchReviewDimension.STRATEGY_FIT] == []
+    assert reviewers_by_dimension[ResearchReviewDimension.DOWNSTREAM_USABILITY] == []
+
+
+def test_article_research_agent_validate_short_circuits_rules_before_review() -> None:
+    class FakeRulesValidator:
+        async def validate(self, result, context):
+            return InternalValidationResult(False, "rules failed", 0.0)
+
+    class FakeReviewValidator:
+        last_review_result = None
+        last_dimension_results = []
+
+        async def validate(self, result, context):
+            raise AssertionError("review validator should not be called")
+
+    agent = ResearchAgent.__new__(ResearchAgent)
+    agent.MIN_SOURCE_PAGES = 2
+    agent.MIN_UNIQUE_DOMAINS = 2
+    agent.rules_validator = FakeRulesValidator()
+    agent.review_validator = FakeReviewValidator()
+    agent._current_state = ResearchState(
+        topic="capsule wardrobe",
+        target_audience="25-35岁女性",
+        strategy=ArticleStrategy.SYNTHESIZE,
+        output_dir=None,
+    )
+
+    validation = asyncio.run(agent.validate(_build_valid_article_research_result()))
+
+    assert not validation.passed
+    assert validation.feedback == "rules failed"
+    assert agent._current_state.current_review_result is None
+    assert agent._current_state.current_dimension_reviews == []
+
+
+def test_article_research_agent_validate_updates_review_state_on_review_failure() -> None:
+    issue = ArticleResearchReviewIssue(
+        dimension=ResearchReviewDimension.TRACEABILITY,
+        severity="warning",
+        description="主 claim 还可以补一条更强来源。",
+    )
+    dimension_review = ResearchDimensionReviewResult(
+        dimension=ResearchReviewDimension.TRACEABILITY,
+        passed=False,
+        score=75.0,
+        issues=[issue],
+        summary="主 claim 支撑偏弱。",
+    )
+    review_result = ArticleResearchReviewResult(
+        passed=False,
+        score=75.0,
+        issues=[issue],
+        dimension_results=[dimension_review],
+        summary="研究审核未通过",
+    )
+
+    class FakeRulesValidator:
+        async def validate(self, result, context):
+            return InternalValidationResult(True, "", 100.0)
+
+    class FakeReviewValidator:
+        def __init__(self) -> None:
+            self.last_review_result = review_result
+            self.last_dimension_results = [dimension_review]
+
+        async def validate(self, result, context):
+            return InternalValidationResult(False, "review failed", 75.0)
+
+    state = ResearchState(
+        topic="capsule wardrobe",
+        target_audience="25-35岁女性",
+        strategy=ArticleStrategy.SYNTHESIZE,
+        output_dir=None,
+    )
+    agent = ResearchAgent.__new__(ResearchAgent)
+    agent.MIN_SOURCE_PAGES = 2
+    agent.MIN_UNIQUE_DOMAINS = 2
+    agent.rules_validator = FakeRulesValidator()
+    agent.review_validator = FakeReviewValidator()
+    agent._current_state = state
+
+    validation = asyncio.run(agent.validate(_build_valid_article_research_result()))
+
+    assert not validation.passed
+    assert validation.feedback == "review failed"
+    assert state.current_review_result == review_result
+    assert state.current_dimension_reviews == [dimension_review]
+
+
+def test_article_research_agent_validate_passes_when_rules_and_review_pass() -> None:
+    review_result = ArticleResearchReviewResult(
+        passed=True,
+        score=92.0,
+        issues=[],
+        dimension_results=[],
+        summary="",
+    )
+
+    class FakeRulesValidator:
+        async def validate(self, result, context):
+            return InternalValidationResult(True, "", 100.0)
+
+    class FakeReviewValidator:
+        def __init__(self) -> None:
+            self.last_review_result = review_result
+            self.last_dimension_results = []
+
+        async def validate(self, result, context):
+            return InternalValidationResult(True, "", 92.0)
+
+    agent = ResearchAgent.__new__(ResearchAgent)
+    agent.MIN_SOURCE_PAGES = 2
+    agent.MIN_UNIQUE_DOMAINS = 2
+    agent.rules_validator = FakeRulesValidator()
+    agent.review_validator = FakeReviewValidator()
+    agent._current_state = ResearchState(
+        topic="capsule wardrobe",
+        target_audience="25-35岁女性",
+        strategy=ArticleStrategy.SYNTHESIZE,
+        output_dir=None,
+    )
+
+    validation = asyncio.run(agent.validate(_build_valid_article_research_result()))
+
+    assert validation.passed
+    assert "研究通过" in validation.feedback
+
+
+def test_article_research_on_validation_failed_includes_review_feedback(tmp_path) -> None:
+    issue = ArticleResearchReviewIssue(
+        dimension=ResearchReviewDimension.TRACEABILITY,
+        severity="warning",
+        description="关键 claim 还缺一条强来源。",
+    )
+    dimension_review = ResearchDimensionReviewResult(
+        dimension=ResearchReviewDimension.TRACEABILITY,
+        passed=False,
+        score=74.0,
+        issues=[issue],
+        summary="关键 claim 支撑偏弱。",
+    )
+    state = ResearchState(
+        topic="capsule wardrobe",
+        target_audience="25-35岁女性",
+        strategy=ArticleStrategy.SYNTHESIZE,
+        output_dir=tmp_path,
+    )
+    state.current_result = _build_valid_article_research_result()
+    state.current_review_result = ArticleResearchReviewResult(
+        passed=False,
+        score=74.0,
+        issues=[issue],
+        dimension_results=[dimension_review],
+        summary="研究审核未通过",
+    )
+    state.current_dimension_reviews = [dimension_review]
+
+    agent = ResearchAgent.__new__(ResearchAgent)
+    agent.on_validation_failed(state, 0, "review failed")
+
+    assert "审核摘要" in state.continuation_context
+    assert "关键 claim 支撑偏弱。" in state.continuation_context
+    assert "关键 claim 还缺一条强来源。" in state.continuation_context
+
+
+def test_article_research_internal_snapshot_writes_review_file(tmp_path) -> None:
+    issue = ArticleResearchReviewIssue(
+        dimension=ResearchReviewDimension.DOWNSTREAM_USABILITY,
+        severity="warning",
+        description="章节展开线索略少。",
+    )
+    dimension_review = ResearchDimensionReviewResult(
+        dimension=ResearchReviewDimension.DOWNSTREAM_USABILITY,
+        passed=False,
+        score=78.0,
+        issues=[issue],
+        summary="可写性接近可用，但章节线索偏少。",
+    )
+    state = ResearchState(
+        topic="capsule wardrobe",
+        target_audience="25-35岁女性",
+        strategy=ArticleStrategy.SYNTHESIZE,
+        output_dir=tmp_path,
+    )
+    state.supervisor_iteration = 2
+    state.current_review_result = ArticleResearchReviewResult(
+        passed=False,
+        score=78.0,
+        issues=[issue],
+        dimension_results=[dimension_review],
+        summary="研究审核未通过",
+    )
+    state.current_dimension_reviews = [dimension_review]
+
+    agent = ResearchAgent.__new__(ResearchAgent)
+    agent._save_internal_snapshots(state)
+    review_payload = json.loads(
+        (tmp_path / "research_review_iter_02.json").read_text(encoding="utf-8")
+    )
+
+    assert review_payload["iteration"] == 2
+    assert review_payload["review_result"]["score"] == 78.0
+    assert review_payload["dimension_results"][0]["dimension"] == "downstream_usability"
 
 
 def test_article_search_candidates_runs_concurrently_and_dedupes() -> None:

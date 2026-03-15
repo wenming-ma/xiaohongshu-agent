@@ -75,6 +75,8 @@ def save_iteration_result(
         "digests_path": state.digests_path,
         "source_index_path": state.source_index_path,
         "evidence_files": state.evidence_files,
+        "review_result": _dump_model(state.current_review_result),
+        "dimension_reviews": [_dump_model(item) for item in state.current_dimension_reviews],
         "result": _dump_model(state.current_result),
     }
 

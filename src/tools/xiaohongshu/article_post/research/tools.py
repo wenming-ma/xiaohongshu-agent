@@ -531,7 +531,7 @@ def build_site_queries(
         for _ in range(domains_per_query):
             domain = normalized_domains[domain_cursor % len(normalized_domains)]
             domain_cursor += 1
-            scoped.append(f"site:{domain} {query}")
+            scoped.append(f'site:{domain} "{query}"')
             if max_total_queries is not None and len(scoped) >= max_total_queries:
                 return scoped
     return scoped
@@ -638,5 +638,4 @@ def _user_agent() -> str:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     )
-
 

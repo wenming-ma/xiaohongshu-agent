@@ -7,7 +7,13 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from ..schemas import ArticleResearchResult, ArticleStrategy, SourceDigest
+from ..schemas import (
+    ArticleResearchResult,
+    ArticleResearchReviewResult,
+    ArticleStrategy,
+    ResearchDimensionReviewResult,
+    SourceDigest,
+)
 from .tools import CollectedSource, SearchPlan, SearchResult
 
 
@@ -72,6 +78,8 @@ class ResearchState:
     aggregated_notes: list[CompressedResearchNote] = field(default_factory=list)
 
     current_result: ArticleResearchResult | None = None
+    current_review_result: ArticleResearchReviewResult | None = None
+    current_dimension_reviews: list[ResearchDimensionReviewResult] = field(default_factory=list)
     current_plan: SearchPlan | None = None
     current_candidates: list[tuple[str, SearchResult]] = field(default_factory=list)
     current_task_candidates: dict[str, list[tuple[str, SearchResult]]] = field(default_factory=dict)
@@ -130,10 +138,31 @@ def build_progress_snapshot(
     saved_files_text = "\n".join(f"- {item}" for item in saved_files[-max_sources:]) if saved_files else "- (none)"
     digest_refs = list(state.digests_by_source.keys())[:max_sources]
     digest_text = "\n".join(f"- {item}" for item in digest_refs) if digest_refs else "- (none)"
+    review_lines = []
+    if state.current_review_result is not None:
+        review_lines.append(
+            f"- 聚合评分: {state.current_review_result.score:.1f}/100"
+        )
+        if state.current_review_result.summary:
+            review_lines.append(f"- 总结: {state.current_review_result.summary}")
+        dimension_reviews = state.current_dimension_reviews or state.current_review_result.dimension_results
+        for dimension_result in dimension_reviews:
+            if dimension_result.summary:
+                review_lines.append(f"- [{dimension_result.dimension.value}] {dimension_result.summary}")
+                if len(review_lines) >= max_sources:
+                    break
+            for issue in dimension_result.issues[:1]:
+                review_lines.append(f"- [{dimension_result.dimension.value}] {issue.description}")
+                if len(review_lines) >= max_sources:
+                    break
+            if len(review_lines) >= max_sources:
+                break
+    review_text = "\n".join(review_lines) if review_lines else "- (none)"
 
     return (
         "上一轮研究未通过，请基于已有进展换一个搜索角度继续。\n\n"
         f"验证反馈:\n{validation_feedback}\n\n"
+        f"审核摘要:\n{review_text}\n\n"
         f"已保存文件:\n{saved_files_text}\n\n"
         f"累计有效来源: {len(state.collected_sources)}\n"
         f"累计 digest 数: {len(state.digests_by_source)}\n"

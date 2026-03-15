@@ -33,6 +33,9 @@ tool.py (XHSArticlePostTool.execute)
 3. **不跨目录借用函数**：每个 Agent 目录自包含。`content/` 不从 `research/` 导入函数，反之亦然。共享能力放 `shared/`。
 4. **模型获取用 `get_text_model()`**：统一从 `src/utils/providers` 获取模型，不硬编码模型名。
 
+当前状态：
+- `research/validator.py` 负责长文研究阶段的规则校验和多维审核，失败反馈会回流到下一轮 research。
+
 ## 设计约束
 
 - 研究源以海外女性向数字媒体为主，不以小红书站内研究为主。

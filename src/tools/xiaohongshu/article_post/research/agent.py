@@ -63,6 +63,7 @@ from .tools import (
     select_best_video_url,
 )
 from .utils import SourceChunker, save_iteration_result
+from .validator import ResearchReviewValidator, ResearchRulesValidator
 
 logger = get_logger(__name__)
 
@@ -159,7 +160,9 @@ class ResearchAgent(BaseAgent):
     MAX_TASKS_PER_ITERATION = 4
 
     def __init__(self):
+        self._current_state: ResearchState | None = None
         super().__init__()
+        self.init_validators()
 
     def init_tools(self) -> None:
         self.search_client = DomainSearchClient()
@@ -191,6 +194,10 @@ class ResearchAgent(BaseAgent):
             system_prompt=(TASK_NOTE_SYSTEM_PROMPT,),
         )
         self.digestor = SourceDigestorAgent()
+
+    def init_validators(self) -> None:
+        self.rules_validator = ResearchRulesValidator()
+        self.review_validator = ResearchReviewValidator()
 
     async def forward(
         self,
@@ -244,6 +251,8 @@ class ResearchAgent(BaseAgent):
         state.current_digests = []
         state.current_notes = []
         state.completed_task_results = []
+        state.current_review_result = None
+        state.current_dimension_reviews = []
 
         state.brief = await self.build_research_brief(state)
         plan = await self.run_supervisor_iteration(state, iteration)
@@ -273,6 +282,7 @@ class ResearchAgent(BaseAgent):
                 len(state.collected_sources),
                 state.output_dir,
             )
+        self._current_state = state
 
     async def build_research_brief(self, state: ResearchState) -> ResearchBrief:
         try:
@@ -318,26 +328,40 @@ class ResearchAgent(BaseAgent):
         return self._normalize_supervisor_plan(state, brief, plan, iteration)
 
     async def validate(self, output: Any) -> ValidationResult:
-        if not isinstance(output, ArticleResearchResult):
-            return ValidationResult.failure("研究结果类型错误")
-        if output.sources_count < self.MIN_SOURCE_PAGES:
-            return ValidationResult.failure(f"研究深度不足，仅收集到 {output.sources_count} 个来源")
-        if output.unique_domains_count < self.MIN_UNIQUE_DOMAINS:
-            return ValidationResult.failure(
-                f"域名覆盖不足，仅覆盖 {output.unique_domains_count} 个域名"
-            )
-        if not output.claims:
-            return ValidationResult.failure("研究结果缺少结构化 claims")
-        if not all(claim.source_refs for claim in output.claims):
-            return ValidationResult.failure("存在没有来源映射的 claim")
-        valid_source_refs = {source.source_ref for source in output.sources}
-        if not all(ref in valid_source_refs for claim in output.claims for ref in claim.source_refs):
-            return ValidationResult.failure("存在引用无效 source_ref 的 claim")
-        if output.suggested_strategy == ArticleStrategy.REPURPOSE_VIDEO and not any(
-            transcript.success for transcript in output.transcripts
-        ):
-            return ValidationResult.failure("视频搬运策略缺少可用转录")
-        return ValidationResult.success(f"研究通过，来源数 {output.sources_count}")
+        state = self._current_state
+        rules_result = await self.rules_validator.validate(
+            output,
+            context={
+                "min_source_pages": self.MIN_SOURCE_PAGES,
+                "min_unique_domains": self.MIN_UNIQUE_DOMAINS,
+            },
+        )
+        if not rules_result.passed:
+            if state is not None:
+                state.current_review_result = None
+                state.current_dimension_reviews = []
+            return ValidationResult.failure(rules_result.feedback)
+
+        review_result = await self.review_validator.validate(
+            output,
+            context={
+                "topic": state.topic if state is not None else "",
+                "target_audience": state.target_audience if state is not None else "",
+                "requested_strategy": state.strategy if state is not None else ArticleStrategy.AUTO,
+                "output_dir": (
+                    state.working_dir or state.output_dir
+                    if state is not None
+                    else None
+                ),
+            },
+        )
+        if state is not None:
+            state.current_review_result = self.review_validator.last_review_result
+            state.current_dimension_reviews = self.review_validator.last_dimension_results[:]
+
+        if review_result.passed:
+            return ValidationResult.success(f"研究通过，来源数 {output.sources_count}")
+        return ValidationResult.failure(review_result.feedback)
 
     async def _search_candidates(
         self,
@@ -1117,6 +1141,17 @@ class ResearchAgent(BaseAgent):
                     "tasks": [task.model_dump(mode="json") for task in state.pending_tasks],
                     "task_results": [
                         result.model_dump(mode="json") for result in state.completed_task_results
+                    ],
+                },
+            )
+        if state.current_review_result is not None:
+            self._write_json(
+                output_dir / f"research_review_iter_{state.supervisor_iteration:02d}.json",
+                {
+                    "iteration": state.supervisor_iteration,
+                    "review_result": state.current_review_result.model_dump(mode="json"),
+                    "dimension_results": [
+                        item.model_dump(mode="json") for item in state.current_dimension_reviews
                     ],
                 },
             )
