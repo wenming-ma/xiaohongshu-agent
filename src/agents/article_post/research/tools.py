@@ -135,35 +135,75 @@ class CollectedSourceCandidate:
     query: str = ""
 
 
+def _load_keys(env_var: str) -> list[str]:
+    """Load comma-separated API keys from an env var, filtering blanks."""
+    raw = os.getenv(env_var, "")
+    return [k.strip() for k in raw.split(",") if k.strip()]
+
+
+class _KeyRotator:
+    """Round-robin key selector with automatic exhaustion tracking."""
+
+    def __init__(self, keys: list[str]):
+        self._keys = list(keys)
+        self._index = 0
+        self._exhausted: set[str] = set()
+
+    def next(self) -> str | None:
+        available = [k for k in self._keys if k not in self._exhausted]
+        if not available:
+            return None
+        key = available[self._index % len(available)]
+        self._index += 1
+        return key
+
+    def mark_exhausted(self, key: str) -> None:
+        self._exhausted.add(key)
+        logger.info("API key …%s marked exhausted, %d remaining",
+                     key[-6:], len(self._keys) - len(self._exhausted))
+
+
 class DomainSearchClient:
     def __init__(self):
         self._timeout = httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)
+        self._serper_keys = _KeyRotator(_load_keys("SERPER_API_KEY"))
+        self._tavily_keys = _KeyRotator(_load_keys("TAVILY_API_KEY"))
 
     async def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
         query = query.strip()
         if not query:
             return []
 
-        if os.getenv("SERPER_API_KEY"):
+        serper_key = self._serper_keys.next()
+        if serper_key:
             try:
-                return await self._search_serper(query, max_results)
+                return await self._search_serper(query, max_results, serper_key)
+            except httpx.HTTPStatusError as exc:
+                logger.warning("Serper search failed: %s", exc)
+                if exc.response.status_code in (400, 401, 403, 429):
+                    self._serper_keys.mark_exhausted(serper_key)
             except Exception as exc:
                 logger.warning("Serper search failed: %s", exc)
 
-        if os.getenv("TAVILY_API_KEY"):
+        tavily_key = self._tavily_keys.next()
+        if tavily_key:
             try:
-                return await self._search_tavily(query, max_results)
+                return await self._search_tavily(query, max_results, tavily_key)
+            except httpx.HTTPStatusError as exc:
+                logger.warning("Tavily search failed: %s", exc)
+                if exc.response.status_code in (401, 403, 429, 432):
+                    self._tavily_keys.mark_exhausted(tavily_key)
             except Exception as exc:
                 logger.warning("Tavily search failed: %s", exc)
 
         return await self._search_duckduckgo(query, max_results)
 
-    async def _search_serper(self, query: str, max_results: int) -> list[SearchResult]:
+    async def _search_serper(self, query: str, max_results: int, api_key: str) -> list[SearchResult]:
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             response = await client.post(
                 "https://google.serper.dev/search",
                 headers={
-                    "X-API-KEY": os.getenv("SERPER_API_KEY", ""),
+                    "X-API-KEY": api_key,
                     "Content-Type": "application/json",
                 },
                 json={"q": query, "num": max_results},
@@ -185,12 +225,12 @@ class DomainSearchClient:
             )
         return results
 
-    async def _search_tavily(self, query: str, max_results: int) -> list[SearchResult]:
+    async def _search_tavily(self, query: str, max_results: int, api_key: str) -> list[SearchResult]:
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             response = await client.post(
                 "https://api.tavily.com/search",
                 headers={
-                    "Authorization": f"Bearer {os.getenv('TAVILY_API_KEY', '')}",
+                    "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 },
                 json={
