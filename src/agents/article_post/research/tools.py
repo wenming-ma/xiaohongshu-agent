@@ -189,8 +189,11 @@ class DomainSearchClient:
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             response = await client.post(
                 "https://api.tavily.com/search",
+                headers={
+                    "Authorization": f"Bearer {os.getenv('TAVILY_API_KEY', '')}",
+                    "Content-Type": "application/json",
+                },
                 json={
-                    "api_key": os.getenv("TAVILY_API_KEY", ""),
                     "query": query,
                     "max_results": max_results,
                     "search_depth": "advanced",
