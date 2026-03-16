@@ -7,7 +7,6 @@ from unittest.mock import patch
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -17,7 +16,7 @@ from pydantic_ai.messages import (
 from src.core.base_agent import ValidationResult
 from src.core.base_validator import InternalValidationResult
 from src.agents.article_post.content.agent import ContentAgent
-from src.agents.article_post.content.state import _safe_truncate
+from src.agents.article_post.content.state import ContentState, _safe_truncate
 from src.agents.article_post.image.agent import ImageAgent
 from src.agents.article_post.image.prompts import image_system_prompt, image_user_prompt
 from src.agents.article_post.publish.agent import PublisherAgent
@@ -1518,18 +1517,83 @@ def test_article_review_validator_passes_current_date_to_prompt() -> None:
     assert captured["current_date"] == datetime.now().date().isoformat()
 
 
-def test_article_content_history_drops_tool_messages_with_tool_call_ids() -> None:
+def test_article_content_history_keeps_last_complete_runs() -> None:
     history = [
         ModelRequest(parts=[UserPromptPart(content="初稿")], instructions="sys"),
         ModelResponse(parts=[ToolCallPart(tool_name="list_sources", args={}, tool_call_id="call_1")]),
         ModelRequest(parts=[ToolReturnPart(tool_name="list_sources", content="[]", tool_call_id="call_1")]),
-        ModelRequest(parts=[RetryPromptPart(content="retry", tool_name="read_excerpt", tool_call_id="call_2")]),
+        ModelResponse(parts=[TextPart(content="初稿结果")]),
+        ModelRequest(parts=[UserPromptPart(content="请根据反馈修订")]),
+        ModelResponse(parts=[ToolCallPart(tool_name="read_excerpt", args={}, tool_call_id="call_2")]),
+        ModelRequest(parts=[ToolReturnPart(tool_name="read_excerpt", content="片段", tool_call_id="call_2")]),
         ModelResponse(parts=[TextPart(content="修订稿")]),
     ]
 
-    filtered = _safe_truncate(history, 10)
+    filtered = _safe_truncate(history, 1)
 
-    assert filtered == [history[0], history[4]]
+    assert filtered == history[4:]
+
+
+def test_article_content_feedback_does_not_mutate_message_history() -> None:
+    state = ContentState(
+        research=_build_valid_article_research_result(),
+        topic="capsule wardrobe",
+        target_audience="25-35岁女性",
+        strategy=ArticleStrategy.SYNTHESIZE,
+        generate_images=True,
+    )
+    state.message_history = [
+        ModelRequest(parts=[UserPromptPart(content="初稿")], instructions="sys"),
+        ModelResponse(parts=[TextPart(content="初稿结果")]),
+    ]
+
+    state.inject_feedback("需要补一个单独的 closing。")
+
+    assert state.last_feedback == "需要补一个单独的 closing。"
+    assert len(state.message_history) == 2
+
+
+def test_article_content_backfills_missing_closing() -> None:
+    content = XHSArticleContent(
+        strategy=ArticleStrategy.SYNTHESIZE,
+        title="法式穿搭神话到底是谁在赚钱",
+        lead="这篇长文会把法式穿搭神话的工业起源、平台放大机制和消费后果拆开讲清楚，方便直接理解这套叙事怎么运转。",
+        sections=[
+            ArticleSection(
+                heading="工业叙事先被包装出来",
+                blocks=[
+                    ArticleBlock(
+                        block_type=ArticleBlockType.PARAGRAPH,
+                        text="品牌和媒体先把一种生活方式包装成可识别的想象，再把它卖给读者。",
+                    )
+                ],
+            ),
+            ArticleSection(
+                heading="平台负责把想象放大",
+                blocks=[
+                    ArticleBlock(
+                        block_type=ArticleBlockType.PARAGRAPH,
+                        text="社交平台会不断重复那些最容易传播的气质标签，让它看起来像天然审美。",
+                    )
+                ],
+            ),
+            ArticleSection(
+                heading="最后变成可售卖的消费选择",
+                blocks=[
+                    ArticleBlock(
+                        block_type=ArticleBlockType.PARAGRAPH,
+                        text="当叙事被固定之后，读者更容易把购买当成通往那套形象的捷径。",
+                    )
+                ],
+            ),
+        ],
+        hashtags=["法式穿搭", "时尚产业", "消费叙事", "审美神话"],
+    )
+
+    ContentAgent._ensure_closing(content, "法式穿搭")
+
+    assert content.closing
+    assert "法式穿搭" in content.closing
 
 
 def test_article_content_normalizes_missing_source_refs_for_synthesize() -> None:
@@ -1962,4 +2026,3 @@ def test_article_publish_tools_wrap_fixed_editor_scripts() -> None:
     assert cleaned["ok"] is True
     assert cleaned["removed"] == ["[IMAGE_SLOT:cover]"]
     assert ".tiptap.ProseMirror p" in fake_server.calls[1][1]["code"]
-

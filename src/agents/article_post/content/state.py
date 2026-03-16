@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 
 from ..schemas import (
     ArticleResearchResult,
@@ -29,25 +29,26 @@ class ContentState:
     last_feedback: str | None = None
 
     def inject_feedback(self, feedback: str) -> None:
-        self.last_feedback = feedback
-        self.message_history.append(ModelRequest(parts=[UserPromptPart(content=feedback)]))
+        self.last_feedback = feedback.strip()
 
     def get_recent_history(self, max_rounds: int) -> list[ModelMessage]:
-        return _safe_truncate(self.message_history, max_rounds * 2)
+        return _safe_truncate(self.message_history, max_rounds)
 
 
-def _safe_truncate(history: list[ModelMessage], max_messages: int) -> list[ModelMessage]:
-    """截取最近 N 条消息，保证不以 ToolReturnPart 开头（避免 tool_use_id 孤立）"""
-    if len(history) <= max_messages:
+def _safe_truncate(history: list[ModelMessage], max_rounds: int) -> list[ModelMessage]:
+    """按完整 user prompt 边界截取最近 N 轮对话，保留整轮 tool call 链。"""
+    if not history or max_rounds <= 0:
+        return []
+
+    run_boundaries = [
+        idx
+        for idx, msg in enumerate(history)
+        if isinstance(msg, ModelRequest)
+        and any(isinstance(part, UserPromptPart) for part in msg.parts)
+    ]
+
+    if len(run_boundaries) <= max_rounds:
         return history
 
-    start_idx = len(history) - max_messages
-
-    while start_idx > 0:
-        msg = history[start_idx]
-        if isinstance(msg, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in msg.parts):
-            start_idx -= 1
-        else:
-            break
-
+    start_idx = run_boundaries[-max_rounds]
     return history[start_idx:]

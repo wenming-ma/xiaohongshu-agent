@@ -1,8 +1,8 @@
 """
-交替执行 article post 和 image post：每发布 3 个 image post 后发布 1 个 article post。
+交替执行 article post 和 image post：每发布 1 个 article post 后发布 3 个 image post。
 
 从 image_topics.json 和 article_topics.json 分别读取话题队列，
-按 3:1 的顺序交替消费，直到两个队列都耗尽。
+按 1:3 的顺序交替消费，直到两个队列都耗尽。
 
 用法:
     uv run python workshop/run_mixed_posts.py
@@ -237,7 +237,7 @@ def build_schedule(
     image_topics: list[dict[str, Any]],
     article_topics: list[dict[str, Any]],
 ) -> list[tuple[str, int, dict[str, Any]]]:
-    """Build an interleaved schedule: 3 image posts then 1 article post, repeat.
+    """Build an interleaved schedule: 1 article post then 3 image posts, repeat.
 
     Returns list of (post_type, 1-based-index-within-type, topic_item).
     Continues until both queues are exhausted.
@@ -247,16 +247,16 @@ def build_schedule(
     art_idx = 0
 
     while img_idx < len(image_topics) or art_idx < len(article_topics):
+        # Take 1 article post
+        if art_idx < len(article_topics):
+            schedule.append(("article", art_idx + 1, article_topics[art_idx]))
+            art_idx += 1
+
         # Take up to IMAGE_PER_CYCLE image posts
         for _ in range(IMAGE_PER_CYCLE):
             if img_idx < len(image_topics):
                 schedule.append(("image", img_idx + 1, image_topics[img_idx]))
                 img_idx += 1
-
-        # Take 1 article post
-        if art_idx < len(article_topics):
-            schedule.append(("article", art_idx + 1, article_topics[art_idx]))
-            art_idx += 1
 
     return schedule
 
@@ -286,7 +286,7 @@ async def run_batch(args: argparse.Namespace) -> int:
     total = len(schedule)
 
     logger.info("=" * 60)
-    logger.info("XHS Mixed Post 批量执行 (3 image : 1 article)")
+    logger.info("XHS Mixed Post 批量执行 (1 article -> 3 image)")
     logger.info("图文话题: %s (第 %d 项起, 共 %d 个)", args.image_topics_file.name, args.start_image, len(image_selected))
     logger.info("长文话题: %s (第 %d 项起, 共 %d 个)", args.article_topics_file.name, args.start_article, len(article_selected))
     logger.info("调度总数: %d 个帖子", total)
@@ -365,7 +365,7 @@ async def run_batch(args: argparse.Namespace) -> int:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="交替批量执行 XHS 图文帖和长文帖 (3 图文 : 1 长文)",
+        description="交替批量执行 XHS 图文帖和长文帖 (1 长文 -> 3 图文)",
     )
 
     # Topic files

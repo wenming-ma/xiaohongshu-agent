@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 
 from ....config.settings import ReviewConfig, RetryConfig
 from ....core.base_agent import BaseAgent, ValidationResult
@@ -20,7 +19,11 @@ from ..schemas import (
     ArticleStrategy,
     XHSArticleContent,
 )
-from .prompts import content_system_prompt, content_user_prompt
+from .prompts import (
+    content_revision_user_prompt,
+    content_system_prompt,
+    content_user_prompt,
+)
 from .state import ContentState
 from .tools import EvidenceReader
 from .validator import ContentReviewValidator
@@ -31,6 +34,7 @@ logger = get_logger(__name__)
 class ContentAgent(BaseAgent):
     role = "长文创作者"
     goal = "基于深度研究创作可发布的小红书长文"
+    MAX_HISTORY_ROUNDS = 3
 
     def __init__(self, max_iterations: int | None = None):
         self.max_iterations = max_iterations or min(ReviewConfig.MAX_ITERATIONS, 13)
@@ -109,21 +113,26 @@ class ContentAgent(BaseAgent):
                 generate_images=state.generate_images,
                 research_json=state.research.model_dump_json(indent=2),
             )
-            history: list[ModelMessage] = []
         else:
-            prompt = state.last_feedback
-            # 最开始两条消息（初始请求 + 首次响应）+ 上一轮完整输出
-            history = self._build_revision_history(state)
+            prompt = content_revision_user_prompt(
+                topic=state.topic,
+                target_audience=state.target_audience,
+                strategy=state.strategy.value,
+                generate_images=state.generate_images,
+                feedback=state.last_feedback or "请补齐结构问题并输出完整长文。",
+            )
 
+        history = state.get_recent_history(self.MAX_HISTORY_ROUNDS)
         run_result = await self.generator.run(prompt, message_history=history)
         content = run_result.output
         content.strategy = state.strategy
         if state.strategy == ArticleStrategy.SYNTHESIZE:
             content.attribution_line = ""
             content.primary_source_ref = ""
+        self._ensure_closing(content, state.topic)
         self._normalize_source_refs(content, state.research)
-        content.rendered_body = self._render_body(content)
         self._inject_missing_image_slots(content, state.generate_images)
+        content.rendered_body = self._render_body(content)
         state.current_content = content
         state.message_history.extend(run_result.new_messages())
         self._current_state = state
@@ -137,6 +146,8 @@ class ContentAgent(BaseAgent):
             return ValidationResult.failure("章节数量不足，至少需要 3 个章节")
         if output.strategy in (ArticleStrategy.REPURPOSE_ARTICLE, ArticleStrategy.REPURPOSE_VIDEO) and not output.attribution_line:
             return ValidationResult.failure("搬运路径缺少明确署名")
+        if not output.closing or not output.closing.strip():
+            return ValidationResult.failure("缺少单独的 closing 结尾字段")
         if not output.rendered_body:
             return ValidationResult.failure("缺少渲染后的正文")
 
@@ -156,33 +167,6 @@ class ContentAgent(BaseAgent):
     def on_validation_failed(self, state: ContentState, feedback: str) -> None:
         logger.warning("长文审核未通过: %s", feedback[:200])
         state.inject_feedback(feedback)
-
-    @staticmethod
-    def _build_revision_history(state: ContentState) -> list[ModelMessage]:
-        """构建修订轮的 message_history：最开始两条消息 + 上一轮完整输出。
-
-        从 message_history 中取：
-        - head: 前两条消息（初始创作请求 + 模型首次响应）
-        - tail: 上一轮 generator.run 产生的消息（跳过首条 UserPrompt，保留模型输出链）
-        """
-        history = state.message_history
-        head = history[:2]
-
-        # 找到最后一个 UserPromptPart 的位置 → 该轮 run 的起点
-        last_user_idx = 0
-        for i in range(len(history) - 1, -1, -1):
-            if isinstance(history[i], ModelRequest) and any(
-                isinstance(p, UserPromptPart) for p in history[i].parts
-            ):
-                last_user_idx = i
-                break
-
-        # 跳过该 UserPrompt 本身，只保留模型输出链
-        tail = history[last_user_idx + 1:]
-
-        # head 和 tail 可能重叠（只跑了一轮时），去重
-        head_len = min(2, last_user_idx + 1)
-        return history[:head_len] + tail
 
     # ------------------------------------------------------------------
     # Static helpers
@@ -221,6 +205,21 @@ class ContentAgent(BaseAgent):
             lines.append(f"\n{content.closing.strip()}")
         # 话题不拼接到正文中，通过"# 话题"按钮在发布时单独添加
         return "\n".join(line for line in lines if line).strip()
+
+    @staticmethod
+    def _ensure_closing(content: XHSArticleContent, topic: str) -> None:
+        content.closing = content.closing.strip()
+        if content.closing:
+            return
+
+        normalized_topic = topic.strip() or content.title.strip()
+        if normalized_topic:
+            content.closing = (
+                f"看到关于「{normalized_topic}」的各种说法时，真正值得留下的，"
+                "不是照搬一种标准答案，而是把前面的信息变成你自己的判断。"
+            )
+        else:
+            content.closing = "真正值得留下的，不是照搬一种标准答案，而是把前面的信息变成你自己的判断。"
 
     @staticmethod
     def _inject_missing_image_slots(content: XHSArticleContent, generate_images: bool) -> None:

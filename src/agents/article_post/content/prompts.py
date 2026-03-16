@@ -66,11 +66,32 @@ CONTENT_USER_PROMPT_TEMPLATE = """## 创作任务
 - 标题 16-30 字，适合小红书长文
 - lead 需要快速说明价值和看点
 - 至少 3 个 sections
+- closing 必须单独填写为正式收尾段落，不能为空，也不能只把收尾藏在最后一个 section
 - 每个 section / block 的 `source_refs` 不能为空，且必须引用 research_json 里真实存在的 `source_ref`
 - rendered_body 必须是完整可直接发布的正文
 - hashtags 4-8 个，中文为主
 
 开始创作。
+"""
+
+CONTENT_REVISION_USER_PROMPT_TEMPLATE = """## 修订任务
+
+主题: {topic}
+目标受众: {target_audience}
+既定策略: {strategy}
+是否生成图片: {generate_images}
+
+请基于上一轮完整草稿和下面的审核反馈，输出一版新的完整 `XHSArticleContent`。
+
+## 修订要求
+- 必须完整重写并输出所有字段，不要只返回局部修改建议
+- `closing` 必须单独填写为正式结尾段落，不能为空
+- 不要把收尾只塞进最后一个 section 的最后一段
+- 除非审核明确指出有问题，否则尽量保留已经成立的章节结构和证据映射
+- 如需核对事实，可继续调用研究素材工具回查
+
+## 审核反馈
+{feedback}
 """
 
 # ---------------------------------------------------------------------------
@@ -509,6 +530,10 @@ def content_system_prompt(**variables: object) -> str:
 
 def content_user_prompt(**variables: object) -> str:
     return render_template(CONTENT_USER_PROMPT_TEMPLATE, **variables)
+
+
+def content_revision_user_prompt(**variables: object) -> str:
+    return render_template(CONTENT_REVISION_USER_PROMPT_TEMPLATE, **variables)
 
 
 def structure_review_system_prompt(**variables: object) -> str:
