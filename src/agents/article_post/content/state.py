@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 
 from ..schemas import (
     ArticleResearchResult,
@@ -32,20 +32,19 @@ class ContentState:
         self.last_feedback = feedback.strip()
 
     def get_recent_history(self, max_rounds: int) -> list[ModelMessage]:
-        """按完整 user prompt 边界截取最近 N 轮对话，保留整轮 tool call 链。"""
+        """只保留最近 N 轮最终长文输出，不保留中间 tool call 链。"""
         history = self.message_history
         if not history or max_rounds <= 0:
             return []
 
-        run_boundaries = [
-            idx
-            for idx, msg in enumerate(history)
-            if isinstance(msg, ModelRequest)
-            and any(isinstance(part, UserPromptPart) for part in msg.parts)
-        ]
+        outputs: list[ModelMessage] = []
+        for msg in reversed(history):
+            if not isinstance(msg, ModelResponse):
+                continue
+            if any(isinstance(part, ToolCallPart) for part in msg.parts):
+                continue
+            outputs.append(msg)
+            if len(outputs) >= max_rounds:
+                break
 
-        if len(run_boundaries) <= max_rounds:
-            return history
-
-        start_idx = run_boundaries[-max_rounds]
-        return history[start_idx:]
+        return list(reversed(outputs))

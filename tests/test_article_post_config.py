@@ -16,6 +16,7 @@ from pydantic_ai.messages import (
 from src.core.base_agent import ValidationResult
 from src.core.base_validator import InternalValidationResult
 from src.agents.article_post.content.agent import ContentAgent
+from src.agents.article_post.content.prompts import content_revision_user_prompt
 from src.agents.article_post.content.state import ContentState
 from src.agents.article_post.image.agent import ImageAgent
 from src.agents.article_post.image.prompts import image_system_prompt, image_user_prompt
@@ -67,6 +68,7 @@ from src.agents.article_post.research.tools import (
     DomainSearchClient,
     LocalEvidenceStore,
     ReadPageResult,
+    SearchBackendsUnavailableError,
     SearchResult,
 )
 from src.agents.article_post.research.utils import (
@@ -793,7 +795,7 @@ def test_article_research_latest_snapshot_writes_review_state(tmp_path) -> None:
     assert payload["dimension_reviews"][0]["dimension"] == "downstream_usability"
 
 
-def test_article_search_candidates_runs_concurrently_and_dedupes() -> None:
+def test_article_search_candidates_dedupes_results_after_preflight() -> None:
     class FakeSearchClient:
         def __init__(self) -> None:
             self.active = 0
@@ -862,7 +864,7 @@ def test_article_search_candidates_runs_concurrently_and_dedupes() -> None:
     task_candidates = asyncio.run(agent._search_candidates(tasks, state))
 
     assert len(agent.collector.search_client.calls) == 2
-    assert agent.collector.search_client.max_active >= 2
+    assert agent.collector.search_client.max_active >= 1
     assert agent.collector.search_client.max_active <= agent.collector.search_concurrency
     assert len(state.current_execution.candidate_pool) == 3
     assert [result.url for _, result in task_candidates["task_a"]] == [
@@ -902,6 +904,37 @@ def test_article_domain_search_client_returns_empty_when_all_backends_fail() -> 
     duckduckgo_mock.assert_awaited_once()
 
 
+def test_article_domain_search_client_falls_back_to_duckduckgo_html_when_instant_fails() -> None:
+    client = DomainSearchClient()
+    expected = [
+        SearchResult(
+            title="One",
+            url="https://www.allure.com/story/one",
+            snippet="one",
+            domain="www.allure.com",
+            rank=1,
+        )
+    ]
+
+    with (
+        patch.object(
+            client,
+            "_search_duckduckgo_instant_answer",
+            AsyncMock(side_effect=RuntimeError("timeout")),
+        ) as instant_mock,
+        patch.object(
+            client,
+            "_search_duckduckgo_html",
+            AsyncMock(return_value=expected),
+        ) as html_mock,
+    ):
+        results = asyncio.run(client.search("capsule wardrobe", max_results=4))
+
+    assert results == expected
+    instant_mock.assert_awaited_once()
+    html_mock.assert_awaited_once()
+
+
 def test_article_search_candidates_skips_failed_queries() -> None:
     class PartialFailureSearchClient:
         async def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
@@ -939,6 +972,46 @@ def test_article_search_candidates_skips_failed_queries() -> None:
     assert task_candidates["task_b"] == []
     assert len(state.current_execution.candidate_pool) == 1
     assert state.seen_candidate_urls == {"https://www.allure.com/story/one"}
+
+
+def test_article_search_candidates_fail_fast_when_all_backends_are_unavailable() -> None:
+    class UnavailableSearchClient:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
+            self.calls.append(query)
+            return []
+
+        def all_configured_backends_unavailable(self) -> bool:
+            return True
+
+        def unavailable_summary(self) -> str:
+            return "research search backends unavailable"
+
+    agent = ResearchAgent()
+    agent.collector.search_client = UnavailableSearchClient()
+    agent.collector._compile_task_queries = lambda task: task.article_queries + task.video_queries
+
+    state = ResearchState(
+        topic="capsule wardrobe",
+        target_audience="25-35岁女性",
+        strategy=ArticleStrategy.AUTO,
+        output_dir=None,
+    )
+    state.begin_iteration(1)
+    tasks = [
+        ResearchTask(task_id="task_a", goal="A", article_queries=["q1"]),
+        ResearchTask(task_id="task_b", goal="B", article_queries=["q2"]),
+    ]
+
+    try:
+        asyncio.run(agent._search_candidates(tasks, state))
+        raise AssertionError("expected SearchBackendsUnavailableError")
+    except SearchBackendsUnavailableError as exc:
+        assert str(exc) == "research search backends unavailable"
+
+    assert agent.collector.search_client.calls == ["q1"]
 
 
 def test_article_compile_task_queries_uses_video_domains_for_video_focus() -> None:
@@ -1599,7 +1672,7 @@ def test_article_content_history_keeps_last_complete_runs() -> None:
 
     filtered = state.get_recent_history(1)
 
-    assert filtered == state.message_history[4:]
+    assert filtered == [state.message_history[-1]]
 
 
 def test_article_content_feedback_does_not_mutate_message_history() -> None:
@@ -1619,6 +1692,98 @@ def test_article_content_feedback_does_not_mutate_message_history() -> None:
 
     assert state.last_feedback == "需要补一个单独的 closing。"
     assert len(state.message_history) == 2
+
+
+def test_article_content_revision_prompt_keeps_research_context() -> None:
+    research = _build_valid_article_research_result()
+
+    prompt = content_revision_user_prompt(
+        topic="capsule wardrobe",
+        target_audience="25-35岁女性",
+        strategy=ArticleStrategy.SYNTHESIZE.value,
+        generate_images=True,
+        research_json=research.model_dump_json(indent=2),
+        feedback="请补一个单独的 closing。",
+    )
+
+    assert "研究结果（持续参考）" in prompt
+    assert '"source_ref": "source_1"' in prompt
+    assert "请补一个单独的 closing。" in prompt
+
+
+def test_article_content_step_only_reuses_last_output_message() -> None:
+    state = ContentState(
+        research=_build_valid_article_research_result(),
+        topic="capsule wardrobe",
+        target_audience="25-35岁女性",
+        strategy=ArticleStrategy.SYNTHESIZE,
+        generate_images=True,
+    )
+    state.message_history = [
+        ModelRequest(parts=[UserPromptPart(content="初稿")], instructions="sys"),
+        ModelResponse(parts=[ToolCallPart(tool_name="list_sources", args={}, tool_call_id="call_1")]),
+        ModelRequest(parts=[ToolReturnPart(tool_name="list_sources", content="[]", tool_call_id="call_1")]),
+        ModelResponse(parts=[TextPart(content="上一轮完整长文输出")]),
+    ]
+    state.inject_feedback("请补一个单独的 closing。")
+
+    class FakeRunResult:
+        def __init__(self, output: XHSArticleContent) -> None:
+            self.output = output
+
+        def new_messages(self) -> list[object]:
+            return [
+                ModelRequest(parts=[UserPromptPart(content="修订任务")]),
+                ModelResponse(parts=[TextPart(content="修订稿")]),
+            ]
+
+    class FakeGenerator:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        async def run(self, prompt, message_history=None):
+            self.calls.append(
+                {
+                    "prompt": prompt,
+                    "message_history": list(message_history or []),
+                }
+            )
+            return FakeRunResult(
+                XHSArticleContent(
+                    title="春季胶囊衣橱怎么搭更省心一些",
+                    lead="这篇长文会把春季胶囊衣橱的单品、搭配顺序和预算分配拆开讲清楚，方便直接照着执行。",
+                    sections=[
+                        ArticleSection(
+                            heading="先把高频单品定下来",
+                            blocks=[
+                                ArticleBlock(
+                                    block_type=ArticleBlockType.PARAGRAPH,
+                                    text="第一步先把白衬衫、针织和轻外套这些高频单品固定下来。",
+                                )
+                            ],
+                        ),
+                        ArticleSection(
+                            heading="再补通勤场景的变化",
+                            blocks=[
+                                ArticleBlock(
+                                    block_type=ArticleBlockType.PARAGRAPH,
+                                    text="柔和剪裁和低饱和配色会让通勤穿搭看起来更松弛，也更容易重复利用。",
+                                )
+                            ],
+                        ),
+                    ],
+                    closing="按这个顺序整理，衣橱会更稳定，也更容易重复搭配。",
+                    hashtags=["春季穿搭", "胶囊衣橱", "通勤穿搭", "衣橱整理"],
+                )
+            )
+
+    agent = ContentAgent.__new__(ContentAgent)
+    agent.generator = FakeGenerator()
+
+    asyncio.run(agent.step(state, 1))
+
+    assert agent.generator.calls[0]["message_history"] == [state.message_history[3]]
+    assert "请补一个单独的 closing。" in str(agent.generator.calls[0]["prompt"])
 
 
 def test_article_content_backfills_missing_closing() -> None:

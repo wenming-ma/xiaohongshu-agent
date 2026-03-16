@@ -81,6 +81,11 @@ CONTENT_REVISION_USER_PROMPT_TEMPLATE = """## 修订任务
 既定策略: {strategy}
 是否生成图片: {generate_images}
 
+研究结果（持续参考）:
+```json
+{research_json}
+```
+
 请基于上一轮完整草稿和下面的审核反馈，输出一版新的完整 `XHSArticleContent`。
 
 ## 修订要求

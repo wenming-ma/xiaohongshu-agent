@@ -34,7 +34,7 @@ logger = get_logger(__name__)
 class ContentAgent(BaseAgent):
     role = "长文创作者"
     goal = "基于深度研究创作可发布的小红书长文"
-    MAX_HISTORY_ROUNDS = 3
+    MAX_HISTORY_ROUNDS = 1
 
     def __init__(self, max_iterations: int | None = None):
         self.max_iterations = max_iterations or min(ReviewConfig.MAX_ITERATIONS, 13)
@@ -119,6 +119,7 @@ class ContentAgent(BaseAgent):
                 target_audience=state.target_audience,
                 strategy=state.strategy.value,
                 generate_images=state.generate_images,
+                research_json=state.research.model_dump_json(indent=2),
                 feedback=state.last_feedback or "请补齐结构问题并输出完整长文。",
             )
 
