@@ -86,6 +86,11 @@ CONTENT_REVISION_USER_PROMPT_TEMPLATE = """## 修订任务
 {research_json}
 ```
 
+## 上一轮草稿
+```json
+{previous_draft_json}
+```
+
 请基于上一轮完整草稿和下面的审核反馈，输出一版新的完整 `XHSArticleContent`。
 
 ## 修订要求

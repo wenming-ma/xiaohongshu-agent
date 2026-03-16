@@ -120,6 +120,7 @@ class ContentAgent(BaseAgent):
                 strategy=state.strategy.value,
                 generate_images=state.generate_images,
                 research_json=state.research.model_dump_json(indent=2),
+                previous_draft_json=state.current_content.model_dump_json(indent=2) if state.current_content else "{}",
                 feedback=state.last_feedback or "请补齐结构问题并输出完整长文。",
             )
 
