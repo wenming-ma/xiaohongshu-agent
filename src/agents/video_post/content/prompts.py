@@ -90,6 +90,22 @@ CONTENT_USER_PROMPT_TEMPLATE = """## 原创视频内容创作任务
 开始创作！像原创作者一样自然地分享视频内容。
 """
 
+CONTENT_REVISION_USER_PROMPT_TEMPLATE = """## 修订任务
+
+**主题**: {topic}
+
+请基于上一轮完整草稿和下面的审核反馈，输出一版新的完整 `XHSVideoContent`。
+
+## 修订要求
+- 必须完整输出 title、body、hashtags
+- 不要只返回修改建议，直接输出可发布结果
+- 尽量保留上一轮已经成立的内容方向，只修复审核指出的问题
+- 保持“像原创作者一样自然分享”的语气，不要暴露转载来源
+
+## 审核反馈
+{feedback}
+"""
+
 CONTENT_REVIEW_SYSTEM_PROMPT = """你是小红书内容审核专家。
 验证视频帖子内容的质量。
 
@@ -126,6 +142,10 @@ def content_system_prompt(**variables: object) -> str:
 
 def content_user_prompt(**variables: object) -> str:
     return render_template(CONTENT_USER_PROMPT_TEMPLATE, **variables)
+
+
+def content_revision_user_prompt(**variables: object) -> str:
+    return render_template(CONTENT_REVISION_USER_PROMPT_TEMPLATE, **variables)
 
 
 def content_review_system_prompt(**variables: object) -> str:

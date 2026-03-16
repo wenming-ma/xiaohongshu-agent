@@ -26,6 +26,7 @@ from ....config.settings import RetryConfig, ReviewConfig
 
 from .prompts import (
     build_groups_section,
+    content_revision_user_prompt,
     content_system_prompt,
     content_user_prompt,
     content_review_system_prompt,
@@ -151,7 +152,10 @@ class ContentAgent(BaseAgent):
             )
             logger.info("开始创作内容...")
         else:
-            prompt = "请根据反馈修订内容，确保数量一致、数据准确，并保持与分组结构一致。"
+            prompt = content_revision_user_prompt(
+                topic=state.topic,
+                feedback=state.last_feedback or "请根据审核反馈修订内容。",
+            )
             logger.info(f"根据反馈修订内容 (第{iteration+1}轮)...")
 
         # 执行生成（只传递最近 N 轮历史）

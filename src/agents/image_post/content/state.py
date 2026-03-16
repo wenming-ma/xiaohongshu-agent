@@ -1,7 +1,7 @@
 """内容创作状态管理"""
 from dataclasses import dataclass, field
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 
 from ..schemas import ResearchResult, XHSContent, ReviewResult, GroupSpec
 
@@ -19,37 +19,49 @@ class ContentState:
 
     current_content: XHSContent | None = None
     current_review: ReviewResult | None = None
+    last_feedback: str | None = None
 
     def inject_feedback(self, feedback: str) -> None:
-        """注入审核反馈到消息历史"""
-        self.message_history.append(
-            ModelRequest(parts=[UserPromptPart(content=feedback)])
-        )
+        """保存审核反馈，供下一轮修订 prompt 使用"""
+        self.last_feedback = feedback.strip()
 
     def get_recent_history(self, max_rounds: int) -> list[ModelMessage]:
-        """获取最近 N 轮对话历史，确保 tool_use/tool_result 配对完整"""
-        return _safe_truncate(self.message_history, max_rounds * 2)
+        """按完整 user prompt 边界截取最近 N 轮对话历史。"""
+        history = self.message_history
+        if not history or max_rounds <= 0:
+            return []
+
+        run_boundaries = [
+            idx
+            for idx, msg in enumerate(history)
+            if isinstance(msg, ModelRequest)
+            and any(isinstance(part, UserPromptPart) for part in msg.parts)
+        ]
+
+        if len(run_boundaries) <= max_rounds:
+            return history
+
+        start_idx = run_boundaries[-max_rounds]
+        return history[start_idx:]
 
     def get_recent_review_history(self, max_rounds: int) -> list[ModelMessage]:
-        """获取最近 N 轮审核历史，确保 tool_use/tool_result 配对完整"""
-        return _safe_truncate(self.review_history, max_rounds * 2)
+        """按完整 user prompt 边界截取最近 N 轮审核历史。"""
+        history = self.review_history
+        if not history or max_rounds <= 0:
+            return []
 
+        run_boundaries = [
+            idx
+            for idx, msg in enumerate(history)
+            if isinstance(msg, ModelRequest)
+            and any(isinstance(part, UserPromptPart) for part in msg.parts)
+        ]
 
-def _safe_truncate(history: list[ModelMessage], max_messages: int) -> list[ModelMessage]:
-    """截取最近 N 条消息，保证不以 ToolReturnPart 开头（避免 tool_use_id 孤立）"""
-    if len(history) <= max_messages:
-        return history
+        if len(run_boundaries) <= max_rounds:
+            return history
 
-    start_idx = len(history) - max_messages
-
-    while start_idx > 0:
-        msg = history[start_idx]
-        if isinstance(msg, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in msg.parts):
-            start_idx -= 1
-        else:
-            break
-
-    return history[start_idx:]
+        start_idx = run_boundaries[-max_rounds]
+        return history[start_idx:]
 
 
 def simplify_content_history(messages: list[ModelMessage]) -> list[ModelMessage]:

@@ -1,7 +1,6 @@
 from typing import Any
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelRequest
 
 from ....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import VideoResearchResult, VideoSource, XHSVideoContent, ContentReviewResult, TranscriptionResult
@@ -10,6 +9,7 @@ from ....utils.logger import get_logger
 from ....config.settings import RetryConfig, ReviewConfig
 
 from .prompts import (
+    content_revision_user_prompt,
     content_system_prompt,
     content_user_prompt,
     content_review_system_prompt,
@@ -20,16 +20,6 @@ from .state import ContentState
 logger = get_logger(__name__)
 
 MAX_HISTORY_ROUNDS = 3
-
-
-def _safe_history_slice(history: list[ModelMessage], max_rounds: int) -> list[ModelMessage]:
-    if len(history) <= max_rounds * 2:
-        return history
-    boundaries = [i for i, msg in enumerate(history) if isinstance(msg, ModelRequest)]
-    if len(boundaries) <= max_rounds:
-        return history
-    start = boundaries[-max_rounds]
-    return history[start:]
 
 
 class ContentAgent(BaseAgent):
@@ -108,9 +98,12 @@ class ContentAgent(BaseAgent):
                 research_summary=state.research.summary,
             )
         else:
-            prompt = "请根据反馈修订内容。"
+            prompt = content_revision_user_prompt(
+                topic=state.topic,
+                feedback=state.last_feedback or "请根据审核反馈修订内容。",
+            )
 
-        recent_history = _safe_history_slice(state.message_history, MAX_HISTORY_ROUNDS)
+        recent_history = state.get_recent_history(MAX_HISTORY_ROUNDS)
         run_result = await self.generator.run(prompt, message_history=recent_history)
         state.current_content = run_result.output
         state.message_history.extend(run_result.new_messages())
@@ -129,7 +122,7 @@ class ContentAgent(BaseAgent):
         )
         review_result = await self.reviewer.run(
             review_prompt,
-            message_history=_safe_history_slice(state.review_history, MAX_HISTORY_ROUNDS),
+            message_history=state.get_recent_review_history(MAX_HISTORY_ROUNDS),
         )
         state.current_review = review_result.output
         state.review_history.extend(review_result.new_messages())

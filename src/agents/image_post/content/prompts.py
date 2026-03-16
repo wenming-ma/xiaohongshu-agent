@@ -228,6 +228,22 @@ CONTENT_USER_PROMPT_TEMPLATE = """## 创作任务
 开始创作爆款内容！
 """
 
+CONTENT_REVISION_USER_PROMPT_TEMPLATE = """## 修订任务
+
+**主题**：{topic}
+
+请基于上一轮完整草稿和下面的审核反馈，输出一版新的完整 `XHSContent`。
+
+## 修订要求
+- 必须完整输出 title、body、hashtags、call_to_action 四个字段
+- 不要只给修改建议或解释，直接给最终可发布内容
+- 尽量保留上一轮已经成立的内容方向，只修复审核指出的问题
+- 数量、结构、分组顺序和数据准确性优先
+
+## 审核反馈
+{feedback}
+"""
+
 CONTENT_REVIEW_SYSTEM_PROMPT = """# 角色定义
 你是一位严谨的内容审核专家，专门验证小红书内容的质量和一致性。
 
@@ -355,6 +371,18 @@ def content_user_prompt(
     )
 
 
+def content_revision_user_prompt(
+    *,
+    topic: str,
+    feedback: str,
+) -> str:
+    return render_template(
+        CONTENT_REVISION_USER_PROMPT_TEMPLATE,
+        topic=topic,
+        feedback=feedback,
+    )
+
+
 def content_review_system_prompt(**variables: object) -> str:
     return render_template(CONTENT_REVIEW_SYSTEM_PROMPT, **variables)
 
@@ -378,6 +406,7 @@ __all__ = [
     "build_groups_section",
     "content_system_prompt",
     "content_user_prompt",
+    "content_revision_user_prompt",
     "content_review_system_prompt",
     "content_review_user_prompt",
 ]

@@ -32,23 +32,20 @@ class ContentState:
         self.last_feedback = feedback.strip()
 
     def get_recent_history(self, max_rounds: int) -> list[ModelMessage]:
-        return _safe_truncate(self.message_history, max_rounds)
+        """按完整 user prompt 边界截取最近 N 轮对话，保留整轮 tool call 链。"""
+        history = self.message_history
+        if not history or max_rounds <= 0:
+            return []
 
+        run_boundaries = [
+            idx
+            for idx, msg in enumerate(history)
+            if isinstance(msg, ModelRequest)
+            and any(isinstance(part, UserPromptPart) for part in msg.parts)
+        ]
 
-def _safe_truncate(history: list[ModelMessage], max_rounds: int) -> list[ModelMessage]:
-    """按完整 user prompt 边界截取最近 N 轮对话，保留整轮 tool call 链。"""
-    if not history or max_rounds <= 0:
-        return []
+        if len(run_boundaries) <= max_rounds:
+            return history
 
-    run_boundaries = [
-        idx
-        for idx, msg in enumerate(history)
-        if isinstance(msg, ModelRequest)
-        and any(isinstance(part, UserPromptPart) for part in msg.parts)
-    ]
-
-    if len(run_boundaries) <= max_rounds:
-        return history
-
-    start_idx = run_boundaries[-max_rounds]
-    return history[start_idx:]
+        start_idx = run_boundaries[-max_rounds]
+        return history[start_idx:]

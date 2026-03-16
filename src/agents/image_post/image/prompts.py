@@ -282,6 +282,25 @@ IMAGE_GROUPING_USER_PROMPT_TEMPLATE = """主题：{topic}
 请按语义分组，输出 ImageGroupingPlan JSON。
 """
 
+IMAGE_GROUPING_REVISION_USER_PROMPT_TEMPLATE = """主题：{topic}
+目标分组数：{target_groups}
+每组最大条数（建议）：{max_group_size}
+
+下面是 key_infos（JSON数组，包含 index 与文本信息）：
+```json
+{key_infos_json}
+```
+
+上轮分组审核未通过，请根据以下反馈重新分组：
+{feedback}
+
+要求：
+- 必须完整输出新的 ImageGroupingPlan JSON
+- 不要返回解释性文字
+- 保证每个 index 出现且只出现一次
+- 优先修复审核指出的语义错配、遗漏、重复、组数偏差问题
+"""
+
 IMAGE_GROUPING_REVIEW_SYSTEM_PROMPT = """你是“图片分组审核专家”。你需要审核一份 key_infos 的语义分组是否合格。
 
 你需要重点检查：
@@ -488,6 +507,10 @@ def image_grouping_user_prompt(**variables: object) -> str:
     return render_template(IMAGE_GROUPING_USER_PROMPT_TEMPLATE, **variables)
 
 
+def image_grouping_revision_user_prompt(**variables: object) -> str:
+    return render_template(IMAGE_GROUPING_REVISION_USER_PROMPT_TEMPLATE, **variables)
+
+
 def image_grouping_review_system_prompt(**variables: object) -> str:
     return render_template(IMAGE_GROUPING_REVIEW_SYSTEM_PROMPT, **variables)
 
@@ -509,6 +532,7 @@ __all__ = [
     "image_user_prompt",
     "image_grouping_system_prompt",
     "image_grouping_user_prompt",
+    "image_grouping_revision_user_prompt",
     "image_grouping_review_system_prompt",
     "image_grouping_review_user_prompt",
     "image_quality_review_system_prompt",

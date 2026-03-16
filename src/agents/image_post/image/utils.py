@@ -3,7 +3,7 @@ import json
 import math
 from typing import TYPE_CHECKING
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
+from pydantic_ai.messages import ModelMessage
 
 from ..schemas import (
     GroupSpec,
@@ -15,7 +15,11 @@ from ..schemas import (
 )
 from ....config.settings import ImageConfig
 from ....utils.logger import get_logger
-from .prompts import image_grouping_user_prompt, image_grouping_review_user_prompt
+from .prompts import (
+    image_grouping_revision_user_prompt,
+    image_grouping_review_user_prompt,
+    image_grouping_user_prompt,
+)
 from .state import MessageHistoryManager
 
 if TYPE_CHECKING:
@@ -170,12 +174,18 @@ async def run_grouping_with_review(
         else:
             issues_text = "\n".join(f"- {issue}" for issue in review.issues)
             feedback = f"分组审核未通过（{review.score:.0f}分）：{review.summary}\n\n问题：\n{issues_text}"
-            feedback_message = ModelRequest(parts=[UserPromptPart(feedback)])
-            grouping_result = await grouping_agent.run(
-                "请根据上述反馈重新分组。",
-                message_history=messages + [feedback_message],
+            user_prompt = image_grouping_revision_user_prompt(
+                topic=topic,
+                key_infos_json=json.dumps(compact_items, ensure_ascii=False, indent=2),
+                max_group_size=target_group_size,
+                target_groups=target_groups,
+                feedback=feedback,
             )
-            round_messages = [feedback_message] + list(grouping_result.new_messages())
+            grouping_result = await grouping_agent.run(
+                user_prompt,
+                message_history=messages,
+            )
+            round_messages = list(grouping_result.new_messages())
 
         history_mgr.add_grouping_round(round_messages)
         plan: ImageGroupingPlan = grouping_result.output

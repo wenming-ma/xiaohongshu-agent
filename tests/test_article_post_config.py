@@ -2,7 +2,7 @@ import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from pydantic_ai.messages import (
     ModelRequest,
@@ -16,7 +16,7 @@ from pydantic_ai.messages import (
 from src.core.base_agent import ValidationResult
 from src.core.base_validator import InternalValidationResult
 from src.agents.article_post.content.agent import ContentAgent
-from src.agents.article_post.content.state import ContentState, _safe_truncate
+from src.agents.article_post.content.state import ContentState
 from src.agents.article_post.image.agent import ImageAgent
 from src.agents.article_post.image.prompts import image_system_prompt, image_user_prompt
 from src.agents.article_post.publish.agent import PublisherAgent
@@ -64,6 +64,7 @@ from src.agents.article_post.research.tools import build_site_queries
 from src.agents.article_post.research.tools import (
     CollectedSource,
     CollectedSourceCandidate,
+    DomainSearchClient,
     LocalEvidenceStore,
     ReadPageResult,
     SearchResult,
@@ -880,6 +881,66 @@ def test_article_search_candidates_runs_concurrently_and_dedupes() -> None:
     }
 
 
+def test_article_domain_search_client_returns_empty_when_all_backends_fail() -> None:
+    client = DomainSearchClient()
+
+    with patch.dict("os.environ", {"SERPER_API_KEY": "serper", "TAVILY_API_KEY": "tavily"}):
+        with (
+            patch.object(client, "_search_serper", AsyncMock(side_effect=RuntimeError("serper down"))) as serper_mock,
+            patch.object(client, "_search_tavily", AsyncMock(side_effect=RuntimeError("tavily down"))) as tavily_mock,
+            patch.object(
+                client,
+                "_search_duckduckgo",
+                AsyncMock(side_effect=RuntimeError("duckduckgo blocked")),
+            ) as duckduckgo_mock,
+        ):
+            results = asyncio.run(client.search("capsule wardrobe", max_results=4))
+
+    assert results == []
+    serper_mock.assert_awaited_once()
+    tavily_mock.assert_awaited_once()
+    duckduckgo_mock.assert_awaited_once()
+
+
+def test_article_search_candidates_skips_failed_queries() -> None:
+    class PartialFailureSearchClient:
+        async def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
+            if query == "q2":
+                raise RuntimeError("blocked")
+            return [
+                SearchResult(
+                    title="One",
+                    url="https://www.allure.com/story/one",
+                    snippet="one",
+                    domain="www.allure.com",
+                    rank=1,
+                )
+            ]
+
+    agent = ResearchAgent()
+    agent.collector.search_client = PartialFailureSearchClient()
+    agent.collector._compile_task_queries = lambda task: task.article_queries + task.video_queries
+
+    state = ResearchState(
+        topic="capsule wardrobe",
+        target_audience="25-35岁女性",
+        strategy=ArticleStrategy.AUTO,
+        output_dir=None,
+    )
+    state.begin_iteration(1)
+    tasks = [
+        ResearchTask(task_id="task_a", goal="A", article_queries=["q1"]),
+        ResearchTask(task_id="task_b", goal="B", article_queries=["q2"]),
+    ]
+
+    task_candidates = asyncio.run(agent._search_candidates(tasks, state))
+
+    assert [result.url for _, result in task_candidates["task_a"]] == ["https://www.allure.com/story/one"]
+    assert task_candidates["task_b"] == []
+    assert len(state.current_execution.candidate_pool) == 1
+    assert state.seen_candidate_urls == {"https://www.allure.com/story/one"}
+
+
 def test_article_compile_task_queries_uses_video_domains_for_video_focus() -> None:
     agent = ResearchAgent()
     task = ResearchTask(
@@ -1518,7 +1579,14 @@ def test_article_review_validator_passes_current_date_to_prompt() -> None:
 
 
 def test_article_content_history_keeps_last_complete_runs() -> None:
-    history = [
+    state = ContentState(
+        research=_build_valid_article_research_result(),
+        topic="capsule wardrobe",
+        target_audience="25-35岁女性",
+        strategy=ArticleStrategy.SYNTHESIZE,
+        generate_images=True,
+    )
+    state.message_history = [
         ModelRequest(parts=[UserPromptPart(content="初稿")], instructions="sys"),
         ModelResponse(parts=[ToolCallPart(tool_name="list_sources", args={}, tool_call_id="call_1")]),
         ModelRequest(parts=[ToolReturnPart(tool_name="list_sources", content="[]", tool_call_id="call_1")]),
@@ -1529,9 +1597,9 @@ def test_article_content_history_keeps_last_complete_runs() -> None:
         ModelResponse(parts=[TextPart(content="修订稿")]),
     ]
 
-    filtered = _safe_truncate(history, 1)
+    filtered = state.get_recent_history(1)
 
-    assert filtered == history[4:]
+    assert filtered == state.message_history[4:]
 
 
 def test_article_content_feedback_does_not_mutate_message_history() -> None:
