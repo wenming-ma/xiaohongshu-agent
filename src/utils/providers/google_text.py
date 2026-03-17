@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
@@ -73,7 +72,7 @@ class GoogleKeyPool:
 
     def __init__(self) -> None:
         keys: list[str] = []
-        primary = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        primary = APIConfig.GEMINI_API_KEY
         if primary:
             keys.append(primary)
         for k in APIConfig.GEMINI_FALLBACK_API_KEYS:
