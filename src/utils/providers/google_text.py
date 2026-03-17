@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 _RETRYABLE_KEYWORDS = (
     "429", "quota", "rate", "limit", "resource_exhausted",
     "503", "overloaded", "unavailable", "capacity",
+    "504", "deadline", "timeout",
 )
 
 _MODEL_FALLBACKS: dict[str, tuple[str, ...]] = {
