@@ -193,6 +193,10 @@ class ContentAgent(BaseAgent):
             logger.warning("标题过长: %d 字符", len(output.title))
             return ValidationResult.failure(f"标题过长: {len(output.title)} 字符")
 
+        if len(output.body) > 1000:
+            logger.warning("正文过长: %d 字", len(output.body))
+            return ValidationResult.failure(f"正文过长: {len(output.body)} 字，上限 1000 字")
+
         # AI 审核
         state = self._current_state
         logger.info("审核内容...")

@@ -104,16 +104,11 @@ class PublisherAgent(BaseAgent):
         logger.info(f"视频文件: {video_path.name} ({size_mb:.1f} MB)")
 
     def build_prompt(self, content: XHSVideoContent, video_path: Path) -> str:
-        full_body = content.body
-        if content.call_to_action:
-            full_body = f"{full_body}\n\n{content.call_to_action}"
-
         # 话题通过"# 话题"按钮单独添加，不拼接到正文中
         hashtags_str = "\n".join([f"   - {tag}" for tag in content.hashtags]) if content.hashtags else "无"
 
         return publisher_user_prompt(
             title=content.title,
-            body=full_body,
             hashtags=hashtags_str,
             video_path=str(video_path.absolute()),
         )

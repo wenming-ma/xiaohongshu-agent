@@ -67,9 +67,6 @@ PUBLISHER_USER_PROMPT_TEMPLATE = """## 视频发布任务
 
 **标题**: {title}
 
-**正文**（已包含行动号召，请完整输入）:
-{body}
-
 **话题**（必须通过"# 话题"按钮逐个添加）：
 {hashtags}
 

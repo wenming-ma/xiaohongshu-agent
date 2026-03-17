@@ -180,19 +180,11 @@ class PublisherAgent(BaseAgent):
             for i, img in enumerate(images)
         ])
 
-        # 预先拼接正文和行动号召
-        full_body = content.body
-
-        # 添加行动号召
-        if content.call_to_action:
-            full_body = f"{full_body}\n\n{content.call_to_action}"
-
-        # 话题通过"# 话题"按钮单独添加，不拼接到正文中
+        # 话题通过推荐芯片单独添加，不拼接到正文中
         hashtags_str = "\n".join([f"   - {tag}" for tag in content.hashtags]) if content.hashtags else "无"
 
         return publisher_user_prompt(
             title=content.title,
-            body=full_body,
             hashtags=hashtags_str,
             image_count=len(images),
             image_paths=image_paths_str,
