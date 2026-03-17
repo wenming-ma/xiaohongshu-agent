@@ -58,10 +58,11 @@ class NavigateTracker(WrapperToolset):
         """帖子详情页 URL 列表"""
         return self._post_detail_urls_storage
 
-    _REVISIT_HINT = (
-        "\n\n⚠️ 提醒：此页面已在之前访问过，其内容已被记录。"
+    _REVISIT_HINT_SINGLE = (
+        "⚠️ 提醒：此页面已在之前访问过，其内容已被记录。"
         "请返回搜索结果页面，向下滚动加载更多结果，或更换关键词搜索，选择未访问过的帖子继续研究。"
     )
+    _REVISIT_HINT = "\n".join([_REVISIT_HINT_SINGLE] * 3) + "\n\n"
 
     # 可能触发页面导航的工具名关键词（不含 navigate，navigate 已单独处理）
     _NAVIGATION_KEYWORDS = ('click', 'drag', 'press_key')
@@ -88,12 +89,12 @@ class NavigateTracker(WrapperToolset):
             or ''
         )
 
-    def _append_revisit_hint(self, result: Any, url: str) -> Any:
-        """在工具返回结果中追加重复访问提示"""
+    def _prepend_revisit_hint(self, result: Any, url: str) -> Any:
+        """在工具返回结果前面拼接重复访问提示（重复三遍以确保 agent 注意）"""
         logger.info("[追踪] 重复访问: %s", url[:80])
         if isinstance(result, str):
-            return result + self._REVISIT_HINT
-        return str(result) + self._REVISIT_HINT
+            return self._REVISIT_HINT + result
+        return self._REVISIT_HINT + str(result)
 
     async def call_tool(
         self,
@@ -137,7 +138,7 @@ class NavigateTracker(WrapperToolset):
 
         # 重复访问时追加提示
         if is_revisit:
-            result = self._append_revisit_hint(result, normalized)
+            result = self._prepend_revisit_hint(result, normalized)
 
         return result
 
