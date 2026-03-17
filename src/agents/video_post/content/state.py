@@ -37,8 +37,11 @@ class ContentState:
         if len(run_boundaries) <= max_rounds:
             return history
 
-        start_idx = run_boundaries[-max_rounds]
-        return history[start_idx:]
+        # 始终保留首轮（包含 SystemPromptPart）+ 最近 N-1 轮
+        # run_boundaries[1] 是第二轮的起始位置，即首轮的结束位置
+        first_round_end = run_boundaries[1] if len(run_boundaries) > 1 else len(history)
+        recent_start = run_boundaries[-(max_rounds - 1)]
+        return history[:first_round_end] + history[recent_start:]
 
     def get_recent_review_history(self, max_rounds: int) -> list[ModelMessage]:
         history = self.review_history
@@ -55,5 +58,8 @@ class ContentState:
         if len(run_boundaries) <= max_rounds:
             return history
 
-        start_idx = run_boundaries[-max_rounds]
-        return history[start_idx:]
+        # 始终保留首轮（包含 SystemPromptPart）+ 最近 N-1 轮
+        # run_boundaries[1] 是第二轮的起始位置，即首轮的结束位置
+        first_round_end = run_boundaries[1] if len(run_boundaries) > 1 else len(history)
+        recent_start = run_boundaries[-(max_rounds - 1)]
+        return history[:first_round_end] + history[recent_start:]

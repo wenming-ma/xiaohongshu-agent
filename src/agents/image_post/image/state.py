@@ -26,8 +26,12 @@ class MessageHistoryManager:
         self.grouping_rounds.append(messages)
 
     def get_grouping_history(self) -> list[ModelMessage]:
-        """获取分组消息历史（保留最近 N 轮）"""
-        kept_rounds = self.grouping_rounds[-self.max_rounds:]
+        """获取分组消息历史（始终保留 round 0 + 最近 N-1 轮）"""
+        if len(self.grouping_rounds) <= self.max_rounds:
+            kept_rounds = self.grouping_rounds
+        else:
+            # round 0 包含 SystemPromptPart，必须保留
+            kept_rounds = [self.grouping_rounds[0]] + self.grouping_rounds[-(self.max_rounds - 1):]
         return [msg for round_msgs in kept_rounds for msg in round_msgs]
 
     def add_review_round(self, messages: list[ModelMessage]) -> None:
@@ -35,8 +39,11 @@ class MessageHistoryManager:
         self.review_rounds.append(messages)
 
     def get_review_history(self) -> list[ModelMessage]:
-        """获取审核消息历史（保留最近 N 轮）"""
-        kept_rounds = self.review_rounds[-self.max_rounds:]
+        """获取审核消息历史（始终保留 round 0 + 最近 N-1 轮）"""
+        if len(self.review_rounds) <= self.max_rounds:
+            kept_rounds = self.review_rounds
+        else:
+            kept_rounds = [self.review_rounds[0]] + self.review_rounds[-(self.max_rounds - 1):]
         return [msg for round_msgs in kept_rounds for msg in round_msgs]
 
 
