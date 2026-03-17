@@ -16,7 +16,7 @@ from ....utils.providers import get_text_model
 from ....utils.retry_handler import with_retry
 from ....utils.logger import get_logger
 from ....config.settings import RetryConfig, PathConfig, PublishConfig
-from ...shared import create_shared_playwright_mcp_server
+from ...shared import create_shared_playwright_mcp_server, BodyInjectTool
 from ...shared.login import create_login_tool
 from .prompts import publisher_system_prompt, publisher_user_prompt
 
@@ -45,11 +45,12 @@ class PublisherAgent(BaseAgent):
     def init_tools(self) -> None:
         """初始化工具集"""
         self.login_tool = create_login_tool(self.mcp_server)
+        self.body_inject_tool = BodyInjectTool(self.mcp_server)
 
     def init_agent(self) -> None:
         """初始化发布 Agent"""
         model = get_text_model()
-        function_tools = [self.login_tool]
+        function_tools = [self.login_tool, self.body_inject_tool.get_tool()]
 
         self.publisher = Agent(
             model=model,
@@ -95,6 +96,12 @@ class PublisherAgent(BaseAgent):
 
         # 验证图片输入
         self._check_images(images)
+
+        # 绑定正文到注入工具
+        full_body = content.body
+        if content.call_to_action:
+            full_body = f"{full_body}\n\n{content.call_to_action}"
+        self.body_inject_tool.bind_body(full_body)
 
         # 构建用户提示词
         user_prompt = self.build_prompt(content, images)

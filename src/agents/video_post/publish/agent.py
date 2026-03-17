@@ -10,7 +10,7 @@ from ....utils.providers import get_text_model
 from ....utils.retry_handler import with_retry
 from ....utils.logger import get_logger
 from ....config.settings import RetryConfig, PathConfig, PublishConfig
-from ...shared import create_shared_playwright_mcp_server
+from ...shared import create_shared_playwright_mcp_server, BodyInjectTool
 from .prompts import publisher_system_prompt, publisher_user_prompt
 
 logger = get_logger(__name__)
@@ -33,14 +33,16 @@ class PublisherAgent(BaseAgent):
         )
 
     def init_tools(self) -> None:
-        pass
+        self.body_inject_tool = BodyInjectTool(self.mcp_server)
 
     def init_agent(self) -> None:
         model = get_text_model()
+        function_tools = [self.body_inject_tool.get_tool()]
         self.publisher = Agent(
             model=model,
             output_type=VideoPublishResult,
             toolsets=[self.mcp_server],
+            tools=function_tools,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(publisher_system_prompt(),),
@@ -62,6 +64,12 @@ class PublisherAgent(BaseAgent):
         self.init_agent()
 
         self._check_video(video_path)
+
+        # 绑定正文到注入工具
+        full_body = content.body
+        if content.call_to_action:
+            full_body = f"{full_body}\n\n{content.call_to_action}"
+        self.body_inject_tool.bind_body(full_body)
 
         user_prompt = self.build_prompt(content, video_path)
         publish_result = await self.step(user_prompt)
