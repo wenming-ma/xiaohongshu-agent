@@ -63,6 +63,9 @@ class NavigateTracker(WrapperToolset):
         "请返回搜索结果页面，向下滚动加载更多结果，或更换关键词搜索，选择未访问过的帖子继续研究。"
     )
 
+    # 可能触发页面导航的工具名关键词（不含 navigate，navigate 已单独处理）
+    _NAVIGATION_KEYWORDS = ('click', 'drag', 'press_key')
+
     def _is_navigate_call(self, name: str) -> bool:
         """判断工具调用是否是导航操作"""
         return (
@@ -70,6 +73,11 @@ class NavigateTracker(WrapperToolset):
             or name == 'playwright_browser_navigate'
             or (name.startswith('playwright_') and 'navigate' in name)
         )
+
+    def _may_cause_navigation(self, name: str) -> bool:
+        """判断工具调用是否可能触发页面导航（click/drag/press_key 等）"""
+        lower = name.lower()
+        return any(kw in lower for kw in self._NAVIGATION_KEYWORDS)
 
     def _get_navigate_url(self, tool_args: dict[str, Any]) -> str:
         """从工具参数中提取导航目标 URL"""
@@ -122,8 +130,10 @@ class NavigateTracker(WrapperToolset):
             url = self._get_navigate_url(tool_args)
             self._track_navigation(url)
 
-        # 对于点击等导航操作，解析工具返回内容中的 Page URL
-        self._track_from_result(result)
+        # 仅对可能触发导航的工具（click/drag/press_key）解析返回内容中的 Page URL
+        # 避免 snapshot 等只读工具把页面内链接误计为已访问
+        if self._may_cause_navigation(name):
+            self._track_from_result(result)
 
         # 重复访问时追加提示
         if is_revisit:
@@ -180,57 +190,45 @@ class NavigateTracker(WrapperToolset):
             logger.debug(f"[追踪] 帖子详情页: {url[:80]}...")
 
     def _track_from_result(self, result: Any) -> None:
-        """从工具返回内容里提取 URL（用于 click/snapshot 后的页面状态）"""
-        for url in self._extract_urls(result):
-            self._track_navigation(url)
+        """从工具返回内容里提取当前页面 URL（仅 "Page URL:" 行）"""
+        page_url = self._extract_page_url(result)
+        if page_url:
+            self._track_navigation(page_url)
 
-    def _extract_urls(self, payload: Any) -> list[str]:
-        """递归从工具响应里提取 URL（包含 Page URL 行）"""
-        urls: list[str] = []
-        texts: list[str] = []
+    # Playwright MCP 返回的 "Page URL:" 行，标识浏览器当前页面
+    _PAGE_URL_RE = re.compile(r"Page URL:\s*(https?://\S+)")
 
+    def _extract_page_url(self, payload: Any) -> str | None:
+        """
+        从工具返回内容中提取 "Page URL:" 行的 URL。
+
+        只追踪浏览器当前实际所在的页面，不提取页面内容中的其他链接，
+        避免搜索结果页/首页上列出的帖子链接被误计为已访问。
+        """
+        text = self._payload_to_text(payload)
+        if not text:
+            return None
+        match = self._PAGE_URL_RE.search(text)
+        return match.group(1) if match else None
+
+    def _payload_to_text(self, payload: Any) -> str:
+        """将工具返回的 payload 展平为纯文本"""
         if payload is None:
-            return urls
-
+            return ""
         if isinstance(payload, str):
-            texts.append(payload)
-        elif isinstance(payload, dict):
-            for key, value in payload.items():
-                if key in ("url", "href", "page_url") and isinstance(value, str):
-                    urls.append(value)
-                elif key == "content":
-                    urls.extend(self._extract_urls(value))
-                elif isinstance(value, str):
-                    texts.append(value)
-                else:
-                    urls.extend(self._extract_urls(value))
-        elif isinstance(payload, list):
-            for item in payload:
-                urls.extend(self._extract_urls(item))
-        elif hasattr(payload, "content"):
-            urls.extend(self._extract_urls(getattr(payload, "content")))
-        else:
-            # 尝试读取常见对象属性（TextPart 等）
-            for attr in ("text", "markdown", "url", "href", "page_url", "message"):
-                if hasattr(payload, attr):
-                    value = getattr(payload, attr)
-                    if isinstance(value, str):
-                        texts.append(value)
-                    else:
-                        urls.extend(self._extract_urls(value))
-
-        if texts:
-            text_blob = "\n".join(texts)
-            for line in text_blob.splitlines():
-                if "Page URL:" in line:
-                    candidate = line.split("Page URL:", 1)[-1].strip()
-                    urls.append(candidate)
-                else:
-                    match = re.search(r"https?://[^\s)>\]]+", line)
-                    if match:
-                        urls.append(match.group(0))
-
-        return urls
+            return payload
+        if isinstance(payload, dict):
+            parts = []
+            for value in payload.values():
+                parts.append(self._payload_to_text(value))
+            return "\n".join(parts)
+        if isinstance(payload, list):
+            return "\n".join(self._payload_to_text(item) for item in payload)
+        # 常见对象属性
+        for attr in ("text", "content", "markdown", "message"):
+            if hasattr(payload, attr):
+                return self._payload_to_text(getattr(payload, attr))
+        return str(payload)
 
     def _is_post_detail_url(self, url: str) -> bool:
         """
