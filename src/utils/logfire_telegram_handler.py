@@ -177,7 +177,7 @@ class TelegramSpanProcessor(SpanProcessor):
         # 3. HTTP 请求（可选）
         if self.include_http_requests and name == "HTTP POST":
             url = attributes.get("http.url", "")
-            if "api.minimax.io" in url or "api.sagehub.cc" in url or "dashscope" in url:
+            if "api.minimaxi.com" in url or "api.sagehub.cc" in url or "dashscope" in url:
                 # 只显示关键的 API 请求
                 return f"📡 API 请求"
 
