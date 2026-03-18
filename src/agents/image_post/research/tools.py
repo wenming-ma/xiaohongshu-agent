@@ -27,6 +27,15 @@ from .prompts import image_reader_system_prompt, image_reader_user_prompt
 
 logger = get_logger(__name__)
 
+SUPPORTED_IMAGE_SUFFIXES = frozenset({
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".bmp",
+    ".gif",
+})
+
 
 # ============================================================================
 # ImageReaderAgent
@@ -44,46 +53,82 @@ class ImageReaderAgent:
             system_prompt=(image_reader_system_prompt(),),
         )
 
+    @staticmethod
+    def _error_result(message: str) -> str:
+        result = ImageReadResult(
+            extracted_text="",
+            description="",
+            language="unknown",
+            has_text=False,
+            answer="",
+            issues=[message],
+        )
+        return result.model_dump_json(indent=2)
+
     async def read_image(self, image_path: str, question: str = "") -> str:
         """
-        读取图片内容（OCR + 轻量理解）。
+        读取本地截图图片内容（OCR + 轻量理解）。
+
+        只接受浏览器截图或其他本地图片文件，不接受 `.json`、`.txt`、`.md`
+        等非图片文件，例如 `research_*.json`。优先把 `browser_take_screenshot`
+        生成的图片路径传给此工具。
 
         Args:
-            image_path: 图片本地路径（png/jpg/webp 等）
-            question: 可选问题（为空则仅做提取）
+            image_path: 本地图片路径。支持 `.png`、`.jpg`、`.jpeg`、`.webp`、`.bmp`
+                和 `.gif`。不要传 `research_*.json` 或其他非图片文件。
+            question: 可选问题；为空时仅提取图片中的文字和结构化信息。
 
         Returns:
-            ImageReadResult 的 JSON 字符串（便于其它 Agent/Tool 消费）
+            ImageReadResult 的 JSON 字符串。即使输入不是有效图片，也会返回带
+            `issues` 的结构化结果，而不是抛出异常。
         """
         path = Path(image_path)
         if not path.exists():
-            result = ImageReadResult(
-                extracted_text="",
-                description="",
-                language="unknown",
-                has_text=False,
-                answer="",
-                issues=[f"图片文件不存在: {image_path}"],
+            return self._error_result(f"图片文件不存在: {image_path}")
+        if not path.is_file():
+            return self._error_result(f"路径不是文件: {image_path}")
+        if path.suffix.lower() not in SUPPORTED_IMAGE_SUFFIXES:
+            supported = ", ".join(sorted(SUPPORTED_IMAGE_SUFFIXES))
+            return self._error_result(
+                f"read_image 只接受图片文件，当前文件类型不支持: {image_path}。"
+                f"请传入截图图片路径（{supported}），不要传 .json 或其他文本文件。"
             )
-            return result.model_dump_json(indent=2)
 
-        image_data = await compress_image_for_review(path, max_size_mb=5.0)
+        try:
+            image_data = await compress_image_for_review(path, max_size_mb=5.0)
+        except Exception as exc:
+            logger.warning("ImageReaderAgent: failed to preprocess image %s: %s", path, exc)
+            return self._error_result(
+                f"图片预处理失败: {type(exc).__name__}: {exc}"
+            )
+
         user_prompt = image_reader_user_prompt(question=(question or "").strip())
 
         logger.debug("ImageReaderAgent: reading image %s (question=%s)", path.name, bool(question))
 
-        r = await self._agent.run(
-            [
-                user_prompt,
-                BinaryContent(data=image_data, media_type="image/jpeg"),
-            ]
-        )
+        try:
+            r = await self._agent.run(
+                [
+                    user_prompt,
+                    BinaryContent(data=image_data, media_type="image/jpeg"),
+                ]
+            )
+        except Exception as exc:
+            logger.warning("ImageReaderAgent: model read failed for %s: %s", path, exc)
+            return self._error_result(
+                f"图片识别失败: {type(exc).__name__}: {exc}"
+            )
 
         return r.output.model_dump_json(indent=2)
 
     def get_tool(self) -> Tool:
         """获取可供其它 Agent 使用的 Tool。"""
-        return Tool(self.read_image, takes_ctx=False)
+        return Tool(
+            self.read_image,
+            takes_ctx=False,
+            docstring_format='google',
+            require_parameter_descriptions=True,
+        )
 
 
 # ============================================================================

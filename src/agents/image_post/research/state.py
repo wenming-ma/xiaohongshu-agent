@@ -60,19 +60,13 @@ def build_progress_snapshot(state: ResearchState, saved_file: str, max_items: in
     if saved_file and saved_file not in saved_files:
         saved_files.append(saved_file)
 
-    if len(saved_files) > max_items:
-        saved_files_preview = "\n".join(f"- {p}" for p in saved_files[-max_items:])
-        saved_files_note = f"(total {len(saved_files)} files, showing last {max_items})"
-    else:
-        saved_files_preview = "\n".join(f"- {p}" for p in saved_files) or "- (none)"
-        saved_files_note = ""
+    saved_files_count = len(saved_files)
 
     return (
         f"【进度快照｜仅供参考，请勿在输出中重复】\n"
         f"- topic: {state.topic}\n"
         f"- tracked_post_count: {state.tracked_stats.get('post_detail_count', 0)}\n"
-        f"- saved_json:\n{saved_files_preview}\n"
-        f"{(saved_files_note + chr(10)) if saved_files_note else ''}\n"
+        f"- saved_snapshot_count: {saved_files_count}\n\n"
         f"已保存的内容项（示例，最多{max_items}条）：\n{items_preview}\n\n"
         f"已保存的关键词： {keywords_preview}\n\n"
         f"已进入的帖子详情页（最近{max_items}个）：\n{tracked_urls_preview}\n\n"
