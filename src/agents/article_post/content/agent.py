@@ -205,7 +205,7 @@ class ContentAgent(BaseAgent):
                         lines.append(f"{prefix} {item.strip()}")
         if content.closing:
             lines.append(f"\n{content.closing.strip()}")
-        # 话题不拼接到正文中，通过"# 话题"按钮在发布时单独添加
+        # 话题不拼接到正文中，通过页面话题芯片在发布时单独添加
         return "\n".join(line for line in lines if line).strip()
 
     @staticmethod
