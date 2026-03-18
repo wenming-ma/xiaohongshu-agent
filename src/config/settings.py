@@ -77,6 +77,9 @@ class APIConfig:
     OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://sub2api.wenming-dev.org/v1")
     GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3-pro-image-preview")
     GEMINI_IMAGE_SIZE = os.getenv("GEMINI_IMAGE_SIZE", "2K")
+    VERTEX_AI_PROJECT_ID = os.getenv("VERTEX_AI_PROJECT_ID")
+    VERTEX_AI_LOCATION = os.getenv("VERTEX_AI_LOCATION", "global")
+    VERTEX_AI_IMAGE_MODEL = os.getenv("VERTEX_AI_IMAGE_MODEL", "gemini-3-pro-image-preview")
     RETRYABLE_STATUS_CODES = (429, 500, 502, 503, 504)
 
 

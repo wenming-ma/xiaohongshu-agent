@@ -76,17 +76,42 @@ def load_topics(path: Path) -> list[dict[str, Any]]:
 # Sleep helper
 # ---------------------------------------------------------------------------
 
+WORK_START_HOUR = 5   # 凌晨 5 点开始工作
+WORK_END_HOUR = 21    # 晚上 9 点开始休眠
+
+
+def is_work_hours() -> bool:
+    """判断当前是否在工作时段 (5:00 - 20:59)"""
+    return WORK_START_HOUR <= datetime.now().hour < WORK_END_HOUR
+
+
+def seconds_until_work_start() -> int:
+    """计算距离下一个工作时段开始的秒数"""
+    now = datetime.now()
+    if now.hour < WORK_START_HOUR:
+        # 今天还没到工作时间
+        wake_up = now.replace(hour=WORK_START_HOUR, minute=0, second=0, microsecond=0)
+    else:
+        # 已过今天的工作时间，等明天
+        from datetime import timedelta
+        wake_up = (now + timedelta(days=1)).replace(hour=WORK_START_HOUR, minute=0, second=0, microsecond=0)
+    return int((wake_up - now).total_seconds())
+
+
 def get_sleep_seconds(override: int | None) -> int:
     """根据当前时段返回休眠秒数。
 
-    - 5:00-9:59 / 17:00-21:59 → 45 分钟 (2700s)
-    - 其他时段 → 90 分钟 (5400s)
+    - 5:00-9:59 / 17:00-20:59 → 45 分钟 (2700s)
+    - 10:00-16:59 → 90 分钟 (5400s)
+    - 21:00-4:59 → 休眠到次日 5:00
     - 如果 override 不为 None，则使用固定值
     """
     if override is not None:
         return override
+    if not is_work_hours():
+        return seconds_until_work_start()
     hour = datetime.now().hour
-    if 5 <= hour < 10 or 17 <= hour < 22:
+    if 5 <= hour < 10 or 17 <= hour < 21:
         return 2700  # 45 min
     return 5400  # 90 min
 
@@ -290,7 +315,7 @@ async def run_batch(args: argparse.Namespace) -> int:
     logger.info("图文话题: %s (第 %d 项起, 共 %d 个)", args.image_topics_file.name, args.start_image, len(image_selected))
     logger.info("长文话题: %s (第 %d 项起, 共 %d 个)", args.article_topics_file.name, args.start_article, len(article_selected))
     logger.info("调度总数: %d 个帖子", total)
-    sleep_mode = f"固定 {args.sleep}s" if args.sleep is not None else "动态 (5-10/17-22点=45min, 其余=90min)"
+    sleep_mode = f"固定 {args.sleep}s" if args.sleep is not None else "动态 (5-10/17-21点=45min, 10-17点=90min, 21-5点=休眠)"
     logger.info("休眠策略: %s", sleep_mode)
     logger.info("长文发布: %s  策略覆盖: %s", not args.no_publish, args.strategy or "无")
     logger.info("=" * 60)

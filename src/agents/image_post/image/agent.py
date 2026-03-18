@@ -26,7 +26,7 @@ from ..schemas import (
     ImageTypeSpec,
     ImageGenContext,
 )
-from ....utils.providers import get_text_model, get_google_model, GeminiImageClient
+from ....utils.providers import get_text_model, get_google_model, get_openai_model, GeminiImageClient
 from ....utils.logger import get_logger
 from ....config.settings import RetryConfig
 from .validator import ImageQualityValidator
@@ -93,18 +93,18 @@ class ImageAgent(BaseAgent):
                 )
             return base_prompt
 
-        # 语义分组 Agent（使用 Google 高推理模型）
+        # 语义分组 Agent（使用 OpenAI 兼容模型）
         self.grouping_agent = Agent(
-            model=get_google_model("gemini-3.1-pro-preview"),
+            model=get_openai_model(),
             output_type=ImageGroupingPlan,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(image_grouping_system_prompt(),),
         )
 
-        # 分组审核 Agent（使用 Anthropic 中转审核模型）
+        # 分组审核 Agent（使用 OpenAI 兼容模型）
         self.grouping_reviewer = Agent(
-            model=get_text_model(),
+            model=get_openai_model(),
             output_type=ImageGroupingReviewResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
