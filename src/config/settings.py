@@ -73,6 +73,8 @@ class APIConfig:
     _GEMINI_ALL_KEYS = _split_csv_env("GEMINI_API_KEY")
     GEMINI_API_KEY = _GEMINI_ALL_KEYS[0] if _GEMINI_ALL_KEYS else os.getenv("GEMINI_API_KEY")
     GEMINI_FALLBACK_API_KEYS = _GEMINI_ALL_KEYS[1:] + _split_csv_env("GEMINI_FALLBACK_API_KEYS")
+    OPENAI_MODEL = os.getenv("OPENAI_MODEL", "bigger-model")
+    OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://sub2api.wenming-dev.org/v1")
     GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3-pro-image-preview")
     GEMINI_IMAGE_SIZE = os.getenv("GEMINI_IMAGE_SIZE", "2K")
     RETRYABLE_STATUS_CODES = (429, 500, 502, 503, 504)
