@@ -3,7 +3,7 @@ MiniMax Model 工厂
 提供带 HTTP 重试机制的共享 MiniMax Model
 
 使用 pydantic-ai 的 Anthropic 兼容层（MiniMax 官方 Anthropic 端点）：
-- 支持 MiniMax-M2.5 模型
+- 支持 MiniMax-M2.7 模型
 - 支持 Tool Use & Interleaved Thinking
 - Base URL: https://api.minimax.io/anthropic
 """

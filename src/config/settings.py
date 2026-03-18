@@ -65,7 +65,7 @@ class APIConfig:
     ANTHROPIC_ENDPOINTS = [
         {"api_key_env": "ANTHROPIC_API_KEY"},
     ]
-    MINIMAX_MODEL = os.getenv("MINIMAX_MODEL", "MiniMax-M2.5")
+    MINIMAX_MODEL = os.getenv("MINIMAX_MODEL", "MiniMax-M2.7")
     MINIMAX_BASE_URL = os.getenv("MINIMAX_BASE_URL", "https://api.minimaxi.com/anthropic")
     GOOGLE_MODEL = os.getenv("GOOGLE_MODEL", "gemini-2.5-flash")
     MODEL_PROVIDER = os.getenv("MODEL_PROVIDER", "minimax")
