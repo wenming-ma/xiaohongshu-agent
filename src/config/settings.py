@@ -119,6 +119,16 @@ class UserProfileConfig:
     EMAIL_ALT = os.getenv("USER_EMAIL_ALT")
 
 
+class SanitizerConfig:
+    ENABLED = os.getenv("IMAGE_SANITIZER_ENABLED", "1") == "1"
+    SHOT_NOISE_GAIN = float(os.getenv("IMAGE_SANITIZER_SHOT_GAIN", "20"))
+    READ_NOISE_SIGMA = float(os.getenv("IMAGE_SANITIZER_READ_SIGMA", "2.0"))
+    NOISE_BLEND = float(os.getenv("IMAGE_SANITIZER_NOISE_BLEND", "0.3"))
+    ROTATION_MAX_DEG = float(os.getenv("IMAGE_SANITIZER_ROTATION", "1.0"))
+    SCALE_RANGE = float(os.getenv("IMAGE_SANITIZER_SCALE", "0.02"))
+    JPEG_QUALITY = int(os.getenv("IMAGE_SANITIZER_JPEG_QUALITY", "82"))
+
+
 class SubtitleConfig:
     WHISPER_MODEL = os.getenv("WHISPER_MODEL", "large-v3")
     WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cuda")
