@@ -2,14 +2,24 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from pathlib import Path
 from typing import Any
 
 from pydantic_ai import Tool
 from pydantic_ai.mcp import MCPServerStdio
 
+from ....utils.logger import get_logger
 from ..schemas import XHSArticleContent
-from .utils import build_editor_script, build_slot_cleanup_script
+from .utils import (
+    build_click_image_button_script,
+    build_click_slot_script,
+    build_editor_script,
+    build_slot_cleanup_script,
+)
+
+logger = get_logger(__name__)
 
 
 class ArticlePublishEditorTools:
@@ -24,9 +34,14 @@ class ArticlePublishEditorTools:
         self._content = content
         self._content_injected = False
 
+    def bind_images(self, image_plan: list[tuple[str, Path]]) -> None:
+        """Bind the image upload plan: list of (slot_key, file_path) pairs."""
+        self._image_plan = image_plan
+
     def get_tools(self) -> list[Tool]:
         return [
             Tool(self.inject_article_content, takes_ctx=False),
+            Tool(self.upload_article_images, takes_ctx=False),
             Tool(self.cleanup_image_slots, takes_ctx=False),
         ]
 
@@ -51,6 +66,60 @@ class ArticlePublishEditorTools:
             normalized.setdefault("ok", True)
             return self._dump(normalized)
         return self._dump({"ok": True, "result": normalized})
+
+    async def upload_article_images(self) -> str:
+        """一次性上传所有图片到对应的 `[IMAGE_SLOT:xxx]` 位置，并自动清理残留槽位标记。在 `inject_article_content` 之后调用。"""
+        if not self._content_injected:
+            return self._dump({"ok": False, "error": "请先调用 inject_article_content 注入正文"})
+        plan = getattr(self, "_image_plan", None)
+        if not plan:
+            return self._dump({"ok": False, "error": "未绑定图片上传计划"})
+
+        uploaded: list[dict[str, str]] = []
+        failed: list[dict[str, str]] = []
+
+        for slot_key, file_path in plan:
+            try:
+                await self._upload_single_image(slot_key, file_path)
+                uploaded.append({"key": slot_key, "path": str(file_path)})
+                logger.info("图片上传成功: %s -> %s", slot_key, file_path)
+            except Exception as exc:
+                logger.warning("图片上传失败: %s -> %s: %s", slot_key, file_path, exc)
+                failed.append({"key": slot_key, "path": str(file_path), "error": str(exc)})
+
+        # Always cleanup slots (even if some images failed)
+        try:
+            await self._mcp_server.direct_call_tool(
+                name="browser_run_code",
+                args={"code": build_slot_cleanup_script()},
+            )
+        except Exception as exc:
+            logger.warning("清理槽位失败: %s", exc)
+
+        return self._dump({"ok": True, "uploaded": uploaded, "failed": failed})
+
+    async def _upload_single_image(self, slot_key: str, file_path: Path) -> None:
+        """Upload a single image: click slot → click image button → file_upload."""
+        # Step 1: click the slot paragraph to position cursor
+        await self._mcp_server.direct_call_tool(
+            name="browser_run_code",
+            args={"code": build_click_slot_script(slot_key)},
+        )
+
+        # Step 2: click the image toolbar button (triggers file chooser)
+        await self._mcp_server.direct_call_tool(
+            name="browser_run_code",
+            args={"code": build_click_image_button_script()},
+        )
+
+        # Step 3: upload the file via the file chooser
+        await self._mcp_server.direct_call_tool(
+            name="browser_file_upload",
+            args={"paths": [str(file_path)]},
+        )
+
+        # Step 4: wait for CDN upload to complete
+        await asyncio.sleep(2)
 
     async def cleanup_image_slots(self) -> str:
         """清理正文里残留的 `[IMAGE_SLOT:xxx]` 槽位段落。只在所有图片都插完之后调用。"""

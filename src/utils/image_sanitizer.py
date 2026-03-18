@@ -62,6 +62,9 @@ class ImageSanitizer:
         # Stage 4: JPEG 重编码
         self._save_jpeg(img, output_path)
 
+        # Stage 5: 验证 - 扫描输出文件确认 AI 标记已清除
+        self._verify_clean(output_path)
+
         # 如果输出路径不同于输入路径，且输入文件还在，删除原始文件
         if output_path != image_path and image_path.exists() and output_path.exists():
             image_path.unlink()
@@ -135,6 +138,25 @@ class ImageSanitizer:
         img.save(output_path, format="JPEG", quality=quality, optimize=True)
         size_kb = output_path.stat().st_size // 1024
         logger.debug("Stage 4: JPEG 重编码 (quality=%d, size=%dKB)", quality, size_kb)
+
+    # 已知 AI 来源标记关键字（小写匹配）
+    _AI_MARKER_KEYWORDS = [
+        b"c2pa",
+        b"synthid",
+        b"trainedalgorithmicmedia",
+        b"digitalsourcetype",
+        b"jumbf",
+    ]
+
+    def _verify_clean(self, file_path: Path) -> None:
+        """Stage 5: 扫描输出文件字节，确认 AI 来源标记已被清除"""
+        raw = file_path.read_bytes()
+        raw_lower = raw.lower()
+        found = [kw.decode() for kw in self._AI_MARKER_KEYWORDS if kw in raw_lower]
+        if found:
+            logger.warning("输出文件仍包含 AI 标记: %s -> %s", file_path.name, ", ".join(found))
+        else:
+            logger.debug("Stage 5: 验证通过，未检测到已知 AI 标记")
 
 
 # 全局单例

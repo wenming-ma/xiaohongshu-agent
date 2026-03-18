@@ -51,6 +51,31 @@ def build_editor_script(content: XHSArticleContent) -> str:
 }}"""
 
 
+def build_click_slot_script(slot_key: str) -> str:
+    """Click on the [IMAGE_SLOT:xxx] paragraph using Playwright locator (real mouse click)."""
+    slot_text = f"{IMAGE_SLOT_PREFIX}{slot_key}{IMAGE_SLOT_SUFFIX}"
+    return f"""async (page) => {{
+  const slotText = {json.dumps(slot_text)};
+  const locator = page.locator('.tiptap.ProseMirror p').filter({{ hasText: slotText }});
+  const count = await locator.count();
+  if (count === 0) throw new Error('找不到槽位段落: ' + slotText);
+  await locator.first().click();
+  return {{ clicked: slotText }};
+}}"""
+
+
+def build_click_image_button_script() -> str:
+    """Click the image toolbar button (9th button in menu-item list)."""
+    return """async (page) => {
+  await page.evaluate(() => {
+    const btn = document.querySelectorAll('button.menu-item')[8];
+    if (!btn) throw new Error('找不到图片工具栏按钮');
+    btn.click();
+  });
+  return { fileChooserOpened: true };
+}"""
+
+
 def build_slot_cleanup_script() -> str:
     return """async (page) => {
   return await page.evaluate(() => {
