@@ -17,7 +17,7 @@ import logfire
 from pathlib import Path
 from typing import Any
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.usage import UsageLimits
 
 from ....core.base_agent import BaseAgent, ValidationResult
@@ -95,6 +95,16 @@ class ResearchAgent(BaseAgent):
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(research_system_prompt(),),
         )
+
+        @self.generator.instructions
+        async def soft_limit_instructions(ctx: RunContext) -> str | None:
+            if ctx.usage.requests >= 25:
+                return (
+                    "⚠️ 紧急指令：你已进行了超过25次API交互，上下文窗口即将耗尽。\n"
+                    "请立即停止所有搜索和浏览操作，不要再调用任何工具。\n"
+                    "直接整理并输出你目前已收集到的全部研究数据（ResearchResult）。"
+                )
+            return None
 
     def init_validators(self) -> None:
         """初始化验证器"""
