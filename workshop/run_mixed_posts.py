@@ -10,6 +10,7 @@
     uv run python workshop/run_mixed_posts.py --image-limit 6 --article-limit 2
     uv run python workshop/run_mixed_posts.py --sleep 1800
     uv run python workshop/run_mixed_posts.py --no-publish
+    uv run python workshop/run_mixed_posts.py --feishu-only
 """
 
 from __future__ import annotations
@@ -117,6 +118,54 @@ def get_sleep_seconds(override: int | None) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Feishu content review helper
+# ---------------------------------------------------------------------------
+
+FEISHU_MAX_TEXT_LEN = 3500
+
+
+async def send_content_to_feishu(result: Any, post_type: str, topic: str) -> None:
+    """将生成的完整内容（标题+正文+话题标签+图片）发送到飞书群审核。"""
+    notifier = get_feishu_notifier()
+
+    # 从 output_dir/content.json 读取完整正文
+    output_dir = Path(result.output_dir)
+    content_file = output_dir / "content.json"
+    full_body = ""
+    if content_file.exists():
+        content_data = json.loads(content_file.read_text(encoding="utf-8"))
+        # 图文帖用 body，长文用 rendered_body
+        full_body = content_data.get("rendered_body") or content_data.get("body") or ""
+
+    title = result.title or topic
+    hashtags = " ".join(result.hashtags) if result.hashtags else "无"
+    type_label = "图文帖" if post_type == "image" else "长文"
+
+    # 构建文本消息
+    header = f"📋 {type_label}内容审核\n主题：{topic}\n标题：{title}\n话题：{hashtags}"
+
+    if full_body and len(full_body) > FEISHU_MAX_TEXT_LEN:
+        # 正文过长，分段发送
+        await notifier.send_message(header)
+        # 分段发送正文
+        for i in range(0, len(full_body), FEISHU_MAX_TEXT_LEN):
+            chunk = full_body[i:i + FEISHU_MAX_TEXT_LEN]
+            part_num = i // FEISHU_MAX_TEXT_LEN + 1
+            await notifier.send_message(f"--- 正文 (第{part_num}段) ---\n{chunk}")
+    else:
+        body_section = f"\n---\n{full_body}" if full_body else ""
+        await notifier.send_message(f"{header}{body_section}")
+
+    # 逐张发送图片
+    image_paths = getattr(result, "image_paths", []) or []
+    for idx, img_path in enumerate(image_paths, 1):
+        p = Path(img_path)
+        if p.exists():
+            await notifier.send_image(p, caption=f"图片 {idx}/{len(image_paths)}")
+            await asyncio.sleep(0.5)
+
+
+# ---------------------------------------------------------------------------
 # Single post execution
 # ---------------------------------------------------------------------------
 
@@ -127,6 +176,7 @@ async def run_image_post(
     *,
     max_retries: int,
     retry_delay: int,
+    publish: bool,
 ) -> dict[str, Any]:
     topic = item["topic"].strip()
     audience = item["audience"].strip()
@@ -140,7 +190,7 @@ async def run_image_post(
             await asyncio.sleep(retry_delay)
         try:
             tool = XHSImagePostPipeline()
-            result = await tool.execute(XHSImagePostInput(topic=topic, audience=audience))
+            result = await tool.execute(XHSImagePostInput(topic=topic, audience=audience, publish=publish))
             payload = result.model_dump()
             payload["post_type"] = "image"
             payload["topic"] = topic
@@ -164,6 +214,11 @@ async def run_image_post(
                             await notifier.send_image(Path(result.image_paths[0]), caption="封面图")
                     except Exception:
                         logger.warning("飞书通知发送失败", exc_info=True)
+                elif not publish:
+                    try:
+                        await send_content_to_feishu(result, "image", topic)
+                    except Exception:
+                        logger.warning("飞书内容审核发送失败", exc_info=True)
                 return payload
 
             last_error = result.error_message or "未知错误"
@@ -235,6 +290,11 @@ async def run_article_post(
                         await notifier.send_message("\n".join(lines))
                     except Exception:
                         logger.warning("飞书通知发送失败", exc_info=True)
+                elif not publish:
+                    try:
+                        await send_content_to_feishu(result, "article", topic)
+                    except Exception:
+                        logger.warning("飞书内容审核发送失败", exc_info=True)
                 return payload
 
             last_error = result.error_message or "未知错误"
@@ -317,7 +377,9 @@ async def run_batch(args: argparse.Namespace) -> int:
     logger.info("调度总数: %d 个帖子", total)
     sleep_mode = f"固定 {args.sleep}s" if args.sleep is not None else "动态 (5-10/17-21点=45min, 10-17点=90min, 21-5点=休眠)"
     logger.info("休眠策略: %s", sleep_mode)
-    logger.info("长文发布: %s  策略覆盖: %s", not args.no_publish, args.strategy or "无")
+    if args.feishu_only:
+        logger.info("运行模式: 飞书审核 (跳过 XHS 发布，内容发送到飞书)")
+    logger.info("长文发布: %s  策略覆盖: %s", not args.no_publish and not args.feishu_only, args.strategy or "无")
     logger.info("=" * 60)
 
     results: list[dict[str, Any]] = []
@@ -337,13 +399,14 @@ async def run_batch(args: argparse.Namespace) -> int:
                 item, type_idx, label,
                 max_retries=args.max_retries,
                 retry_delay=args.retry_delay,
+                publish=not args.feishu_only,
             )
         else:
             result = await run_article_post(
                 item, type_idx, label,
                 max_retries=args.max_retries,
                 retry_delay=args.retry_delay,
-                publish=not args.no_publish,
+                publish=not args.no_publish and not args.feishu_only,
                 strategy_override=args.strategy,
             )
 
@@ -422,6 +485,8 @@ def parse_args() -> argparse.Namespace:
         help="覆盖所有长文的策略",
     )
     p.add_argument("--no-publish", action="store_true", help="长文不发布（仅生成）")
+    p.add_argument("--feishu-only", action="store_true",
+                   help="跳过 XHS 发布，仅生成内容并发送到飞书审核")
 
     return p.parse_args()
 

@@ -128,19 +128,25 @@ class XHSImagePostPipeline(BasePipeline[XHSImagePostInput, XHSImagePostOutput]):
             logger.info(f"图片生成完成: {len(image_paths)} 张")
 
             # Phase 5: 发布
-            logger.info("-" * 40)
-            logger.info("Phase 5: 发布到小红书")
-            logger.info("-" * 40)
+            publish_result = None
+            if input_data.publish:
+                logger.info("-" * 40)
+                logger.info("Phase 5: 发布到小红书")
+                logger.info("-" * 40)
 
-            publisher_agent = PublisherAgent()
-            publish_result = await publisher_agent.forward(
-                content=content,
-                images=[Path(p) for p in image_paths],
-                output_dir=output_dir,
-            )
-            save_json(output_dir / "publish.json", publish_result.model_dump())
+                publisher_agent = PublisherAgent()
+                publish_result = await publisher_agent.forward(
+                    content=content,
+                    images=[Path(p) for p in image_paths],
+                    output_dir=output_dir,
+                )
+                save_json(output_dir / "publish.json", publish_result.model_dump())
 
-            logger.info(f"发布完成: {publish_result.published}")
+                logger.info(f"发布完成: {publish_result.published}")
+            else:
+                logger.info("-" * 40)
+                logger.info("Phase 5: 跳过发布")
+                logger.info("-" * 40)
 
             logger.info("=" * 60)
             logger.info("XHSImagePostPipeline 执行完成")
@@ -153,8 +159,8 @@ class XHSImagePostPipeline(BasePipeline[XHSImagePostInput, XHSImagePostOutput]):
                 hashtags=content.hashtags,
                 image_count=len(image_paths),
                 image_paths=image_paths,
-                published=publish_result.published,
-                post_url=publish_result.post_url,
+                published=publish_result.published if publish_result else False,
+                post_url=publish_result.post_url if publish_result and publish_result.post_url else None,
                 output_dir=str(output_dir),
             )
 

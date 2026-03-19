@@ -8,6 +8,7 @@ from typing import List, Optional, Dict, Any, TypedDict
 class XHSImagePostInput(BaseModel):
     topic: str
     audience: str
+    publish: bool = True
 
 
 class XHSImagePostOutput(BaseModel):
