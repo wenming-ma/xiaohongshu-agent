@@ -347,13 +347,11 @@ class ResearchAgent(BaseAgent):
         """记录单步结果"""
         result = state.current_result
         tracked_count = state.tracked_stats["post_detail_count"]
-        sources_count = result.sources_count
-        items_count = len(result.items)
 
         logger.info("本轮研究结果：")
-        logger.info("  - 帖子数量（追踪）: %d", tracked_count)
-        logger.info("  - 内容来源数量: %d", sources_count)
-        logger.info("  - 内容项数量: %d", items_count)
+        logger.info(f"  - 帖子数量（追踪）: {tracked_count}")
+        logger.info(f"  - 内容来源数量: {result.sources_count}")
+        logger.info(f"  - 内容项数量: {len(result.items)}")
 
     def log_success(self, span, state: ResearchState, iteration: int) -> None:
         """记录成功日志"""
