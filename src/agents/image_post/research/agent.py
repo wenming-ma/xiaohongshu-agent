@@ -100,7 +100,7 @@ class ResearchAgent(BaseAgent):
         async def soft_limit_instructions(ctx: RunContext) -> str | None:
             if ctx.usage.requests >= 25:
                 return (
-                    "URGENT: You have exceeded 25 API requests. The context window is nearly full.\n"
+                    "URGENT: The context window is nearly full.\n"
                     "STOP all browsing and tool calls immediately.\n"
                     "Output your ResearchResult NOW with all data collected so far."
                 )
