@@ -26,9 +26,9 @@ from ..schemas import (
     ImageTypeSpec,
     ImageGenContext,
 )
-from ....utils.providers import get_text_model, get_google_model, get_openai_model, GeminiImageClient
+from ....utils.providers import get_text_model, get_google_model, get_openai_model, GeminiImageClient, GeminiWebImageClient
 from ....utils.logger import get_logger
-from ....config.settings import RetryConfig
+from ....config.settings import APIConfig, RetryConfig
 from .validator import ImageQualityValidator
 from .prompts import (
     image_system_prompt,
@@ -44,6 +44,12 @@ from .utils import (
 )
 
 logger = get_logger(__name__)
+
+
+def _is_retryable_error(e: Exception) -> bool:
+    """判断是否为可降级到 Web 的可重试错误"""
+    msg = str(e).lower()
+    return any(kw in msg for kw in ("503", "unavailable", "overloaded", "timeout", "disconnected"))
 
 
 class ImageAgent(BaseAgent):
@@ -62,7 +68,14 @@ class ImageAgent(BaseAgent):
 
     def init_tools(self) -> None:
         """初始化 Gemini 图片 API 客户端和质量验证器"""
-        self.image_client = GeminiImageClient()
+        provider = APIConfig.GEMINI_IMAGE_PROVIDER
+        if provider == "web":
+            self.image_client = GeminiWebImageClient()
+        elif provider == "api":
+            self.image_client = GeminiImageClient()
+        else:  # "auto"
+            self.image_client = GeminiImageClient()
+            self.web_image_client = GeminiWebImageClient()
         self.image_quality_validator = ImageQualityValidator(
             max_retries=RetryConfig.MAX_RETRIES,
             initial_delay=2.0
@@ -380,12 +393,22 @@ class ImageAgent(BaseAgent):
                 prompt = await self.generate_prompt(content, research, topic, image_spec, gen_ctx)
                 final_prompt = prompt
 
-                # 2. 通过 API 生成图片
+                # 2. 通过 API 生成图片（auto 模式下 API 失败时降级到 Web）
                 output_path = output_dir / f"{image_type}.png"
-                image_path = await self.image_client.generate_image(
-                    prompt=prompt,
-                    output_path=output_path,
-                )
+                try:
+                    image_path = await self.image_client.generate_image(
+                        prompt=prompt,
+                        output_path=output_path,
+                    )
+                except Exception as api_err:
+                    if hasattr(self, 'web_image_client') and _is_retryable_error(api_err):
+                        logger.warning("API 失败，降级到 Gemini Web: %s", api_err)
+                        image_path = await self.web_image_client.generate_image(
+                            prompt=prompt,
+                            output_path=output_path,
+                        )
+                    else:
+                        raise
 
                 # 3. 质量验证（可选，如果验证器可用）
                 try:

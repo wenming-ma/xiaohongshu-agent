@@ -1,0 +1,289 @@
+"""
+Gemini Web UI 图片生成客户端
+
+通过 Playwright 脚本注入自动化 Gemini Web UI 生成图片。
+作为 Gemini API 的降级方案，在 API 返回 503 等错误时使用。
+"""
+import asyncio
+from pathlib import Path
+from typing import Optional
+
+from playwright.async_api import async_playwright, Page, Browser, BrowserContext
+
+from ...config.settings import APIConfig, PathConfig, SanitizerConfig, TimeoutConfig
+from ..image_sanitizer import sanitize_image
+from ..logger import get_logger
+from ..watermark_remover import remove_gemini_watermark
+
+logger = get_logger(__name__)
+
+# 一次性 JS 注入脚本：激活"创建图片"、验证 Pro 模式、输入提示词、发送
+_ONE_SHOT_JS = """
+async (prompt) => {
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+    // 1. 激活 "Create image" 模式
+    //    优先使用首页快捷按钮，否则用 Tools 菜单
+    let activated = false;
+    for (const btn of document.querySelectorAll('button')) {
+        if (btn.textContent.includes('Create image') && !btn.textContent.includes('Deselect')) {
+            btn.click();
+            activated = true;
+            break;
+        }
+    }
+    if (!activated) {
+        // 回退：通过 Tools 菜单激活
+        const toolsBtn = document.querySelector('.toolbox-drawer-button')
+            || [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Tools');
+        if (toolsBtn) {
+            toolsBtn.click();
+            await sleep(300);
+            for (const item of document.querySelectorAll('[role="menuitemcheckbox"]')) {
+                if (item.textContent.includes('Create image')) {
+                    item.click();
+                    activated = true;
+                    break;
+                }
+            }
+        }
+    }
+    if (!activated) throw new Error('CREATE_IMAGE_NOT_FOUND');
+    await sleep(500);
+
+    // 2. 验证/切换 Pro 模式
+    const modePicker = document.querySelector('[aria-label="Open mode picker"]');
+    if (modePicker && !modePicker.textContent.includes('Pro')) {
+        modePicker.click();
+        await sleep(300);
+        for (const mi of document.querySelectorAll('[role="menuitem"]')) {
+            if (mi.textContent.includes('Pro')) {
+                mi.click();
+                break;
+            }
+        }
+        await sleep(500);
+    }
+
+    // 3. 输入提示词（使用 execCommand 绕过 TrustedHTML 策略）
+    const editor = document.querySelector('[aria-label="Enter a prompt for Gemini"]');
+    if (!editor) throw new Error('EDITOR_NOT_FOUND');
+    editor.focus();
+    document.execCommand('selectAll', false, null);
+    document.execCommand('delete', false, null);
+    document.execCommand('insertText', false, prompt);
+    await sleep(300);
+
+    // 4. 点击发送
+    const sendBtn = document.querySelector('[aria-label="Send message"]');
+    if (!sendBtn) throw new Error('SEND_BTN_NOT_FOUND');
+    sendBtn.click();
+
+    return 'OK';
+}
+"""
+
+# 轮询检测生成完成的 JS
+_POLL_IMAGE_JS = """
+() => {
+    const imgs = document.querySelectorAll('img');
+    for (const img of imgs) {
+        if (img.naturalWidth > 200 && img.alt && img.alt.includes('AI generated')) {
+            return img.src;
+        }
+    }
+    return null;
+}
+"""
+
+# 检测登录状态的 JS（Google Account 链接是 <a> 标签，不是 <button>）
+_CHECK_LOGIN_JS = """
+() => {
+    const el = document.querySelector('a[aria-label*="Google Account"], button[aria-label*="Google Account"]');
+    return el !== null;
+}
+"""
+
+
+class GeminiWebImageClient:
+    """Gemini Web UI 图片生成客户端，使用 Playwright 脚本注入"""
+
+    def __init__(self, browser_session_dir: Optional[str] = None):
+        self._browser: Optional[Browser] = None
+        self._context: Optional[BrowserContext] = None
+        self._page: Optional[Page] = None
+        self._session_dir = browser_session_dir or PathConfig.BROWSER_SESSION_GEMINI
+
+    async def _ensure_browser(self) -> Page:
+        """懒初始化持久化 Chrome 上下文"""
+        if self._page and not self._page.is_closed():
+            return self._page
+
+        pw = await async_playwright().start()
+        self._context = await pw.chromium.launch_persistent_context(
+            user_data_dir=self._session_dir,
+            headless=False,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+            ],
+            viewport={"width": 1280, "height": 900},
+        )
+        self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
+        return self._page
+
+    async def generate_image(
+        self,
+        prompt: str,
+        output_path: Path,
+        image_size: Optional[str] = None,
+        aspect_ratio: Optional[str] = None,
+        max_retries: int = 3,
+    ) -> Path:
+        """
+        通过 Gemini Web UI 生成图片
+
+        Args:
+            prompt: 图片生成提示词
+            output_path: 输出文件路径
+            image_size: 未使用（保持与 API 客户端接口一致）
+            aspect_ratio: 未使用（保持与 API 客户端接口一致）
+            max_retries: 最大重试次数
+
+        Returns:
+            保存的图片路径
+        """
+        timeout = TimeoutConfig.GEMINI_WEB_TIMEOUT
+        gemini_url = APIConfig.GEMINI_URL
+
+        prompt = prompt.rstrip() + "\n\nIMPORTANT: Output must be 4K ultra-high resolution quality."
+
+        logger.info("[GeminiWeb] 开始生成图片: %s", output_path.name)
+        logger.debug("[GeminiWeb] 提示词: %s...", prompt[:100])
+
+        last_error: Optional[Exception] = None
+
+        for attempt in range(max_retries):
+            try:
+                page = await self._ensure_browser()
+
+                # 1. 导航到 Gemini（每次新聊天，避免上下文污染）
+                await page.goto(gemini_url, wait_until="domcontentloaded", timeout=30000)
+
+                # 2. 等待页面加载（等待编辑器 + 额外等待确保快捷按钮渲染）
+                await page.wait_for_selector(
+                    '[aria-label="Enter a prompt for Gemini"]',
+                    timeout=15000,
+                )
+                await asyncio.sleep(2)
+
+                # 3. 检查登录状态
+                is_logged_in = await page.evaluate(_CHECK_LOGIN_JS)
+                if not is_logged_in:
+                    raise RuntimeError(
+                        "Gemini Web 未登录。请手动在浏览器中登录 Google 账号后重试。"
+                        f"\n会话目录: {self._session_dir}"
+                    )
+
+                # 4. 一次性脚本注入：工具选择 + 提示词输入 + 发送
+                result = await page.evaluate(_ONE_SHOT_JS, prompt)
+                if result != "OK":
+                    raise RuntimeError(f"JS 注入失败: {result}")
+
+                logger.info("[GeminiWeb] 提示词已发送，等待图片生成...")
+
+                # 5. 轮询等待图片生成完成
+                image_url = await self._poll_for_image(page, timeout)
+
+                # 6. 下载图片（通过浏览器上下文，携带认证 cookies）
+                image_url = self._optimize_image_url(image_url)
+                image_data = await self._download_image_via_browser(page, image_url)
+
+                # 7. 保存图片
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_bytes(image_data)
+                logger.info("[GeminiWeb] 图片已保存: %s (%d KB)", output_path, len(image_data) // 1024)
+
+                # 8. 后处理：去水印 + 反 AI 检测
+                try:
+                    remove_gemini_watermark(output_path)
+                    logger.debug("[GeminiWeb] 可见水印已去除: %s", output_path.name)
+                except Exception as e:
+                    logger.warning("[GeminiWeb] 去可见水印失败，继续处理: %s", e)
+
+                if SanitizerConfig.ENABLED:
+                    try:
+                        output_path = await sanitize_image(output_path)
+                    except Exception as e:
+                        logger.warning("[GeminiWeb] 图片后处理失败，使用原始文件: %s", e)
+
+                return output_path
+
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "[GeminiWeb] 图片生成失败 (%d/%d): %s",
+                    attempt + 1, max_retries, str(e),
+                )
+                if attempt < max_retries - 1:
+                    delay = min(5 * (attempt + 1), 30)
+                    logger.info("[GeminiWeb] 等待 %d 秒后重试...", delay)
+                    await asyncio.sleep(delay)
+
+        raise last_error or Exception("[GeminiWeb] 图片生成失败，已达最大重试次数")
+
+    async def _poll_for_image(self, page: Page, timeout: int) -> str:
+        """轮询页面直到图片生成完成"""
+        poll_interval = 2
+        elapsed = 0
+
+        while elapsed < timeout:
+            image_url = await page.evaluate(_POLL_IMAGE_JS)
+            if image_url:
+                logger.info("[GeminiWeb] 图片生成完成 (耗时 %ds)", elapsed)
+                return image_url
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+
+        raise TimeoutError(f"[GeminiWeb] 图片生成超时 ({timeout}s)")
+
+    @staticmethod
+    def _optimize_image_url(url: str) -> str:
+        """优化图片 URL 获取更高分辨率"""
+        # lh3.googleusercontent.com URL 可通过修改后缀获取更高分辨率
+        if "=s1024" in url:
+            url = url.replace("=s1024", "=s2048")
+        elif url.endswith("-rj"):
+            url = url.rsplit("=", 1)[0] + "=s2048"
+        return url
+
+    async def _download_image_via_browser(self, page: Page, url: str, max_retries: int = 3) -> bytes:
+        """通过 Playwright API 请求上下文下载图片（携带浏览器 cookies）"""
+        last_error: Optional[Exception] = None
+
+        for attempt in range(max_retries):
+            try:
+                # 使用 Playwright 的 request context（自动携带浏览器 cookies）
+                resp = await page.context.request.get(url)
+                if resp.status != 200:
+                    raise ValueError(f"HTTP {resp.status}")
+                data = await resp.body()
+                if len(data) < 1024:
+                    raise ValueError(f"图片数据过小: {len(data)} bytes")
+                return data
+            except Exception as e:
+                last_error = e
+                logger.warning("[GeminiWeb] 图片下载失败 (%d/%d): %s", attempt + 1, max_retries, e)
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2)
+
+        raise last_error or Exception("[GeminiWeb] 图片下载失败")
+
+    async def close(self):
+        """清理浏览器资源"""
+        if self._context:
+            try:
+                await self._context.close()
+            except Exception:
+                pass
+            self._context = None
+            self._page = None

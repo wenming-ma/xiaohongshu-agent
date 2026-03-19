@@ -45,6 +45,7 @@ class TimeoutConfig:
     DOWNLOAD_TIMEOUT = 60
     POLL_INTERVAL = 2
     GEMINI_WAIT = 600
+    GEMINI_WEB_TIMEOUT = 120
     MCP_INIT_TIMEOUT = 90
 
 
@@ -56,7 +57,7 @@ class PathConfig:
     VIDEO_PROJECT_DIR = _PROJECT_ROOT / 'posts' / 'video-posts'
     BROWSER_SESSION_SHARED = str(_PROJECT_ROOT / 'browser-sessions' / 'shared')
     BROWSER_SESSION_XHS = BROWSER_SESSION_SHARED
-    BROWSER_SESSION_GEMINI = BROWSER_SESSION_SHARED
+    BROWSER_SESSION_GEMINI = str(_PROJECT_ROOT / 'browser-sessions' / 'gemini')
 
 
 class APIConfig:
@@ -81,6 +82,8 @@ class APIConfig:
     VERTEX_AI_LOCATION = os.getenv("VERTEX_AI_LOCATION", "global")
     VERTEX_AI_IMAGE_MODEL = os.getenv("VERTEX_AI_IMAGE_MODEL", "gemini-3-pro-image-preview")
     RETRYABLE_STATUS_CODES = (429, 500, 502, 503, 504)
+    # "api" = API only, "web" = web only, "auto" = API first then web fallback
+    GEMINI_IMAGE_PROVIDER = os.getenv("GEMINI_IMAGE_PROVIDER", "auto")
 
 
 class PublishConfig:

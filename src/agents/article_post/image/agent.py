@@ -11,7 +11,8 @@ from pydantic_ai import Agent
 
 from ....core.base_agent import BaseAgent, ValidationResult
 from ....utils.logger import get_logger
-from ....utils.providers import GeminiImageClient, get_text_model
+from ....utils.providers import GeminiImageClient, GeminiWebImageClient, get_text_model
+from ....config.settings import APIConfig
 from ..schemas import (
     ArticleBlock,
     ArticleBlockType,
@@ -27,12 +28,25 @@ from .prompts import image_system_prompt, image_user_prompt
 logger = get_logger(__name__)
 
 
+def _is_retryable_error(e: Exception) -> bool:
+    """判断是否为可降级到 Web 的可重试错误"""
+    msg = str(e).lower()
+    return any(kw in msg for kw in ("503", "unavailable", "overloaded", "timeout", "disconnected"))
+
+
 class ImageAgent(BaseAgent):
     role = "长文配图设计师"
     goal = "为长文生成头图和章节配图"
 
     def init_tools(self) -> None:
-        self.image_client = GeminiImageClient(aspect_ratio="16:9")
+        provider = APIConfig.GEMINI_IMAGE_PROVIDER
+        if provider == "web":
+            self.image_client = GeminiWebImageClient()
+        elif provider == "api":
+            self.image_client = GeminiImageClient(aspect_ratio="16:9")
+        else:  # "auto"
+            self.image_client = GeminiImageClient(aspect_ratio="16:9")
+            self.web_image_client = GeminiWebImageClient()
 
     def init_agent(self) -> None:
         self.prompt_agent = Agent(
@@ -100,7 +114,14 @@ class ImageAgent(BaseAgent):
             )
         )
         output_path = output_dir / f"{image_spec.image_key}.png"
-        image_path = await self.image_client.generate_image(prompt.output, output_path)
+        try:
+            image_path = await self.image_client.generate_image(prompt.output, output_path)
+        except Exception as api_err:
+            if hasattr(self, 'web_image_client') and _is_retryable_error(api_err):
+                logger.warning("API 失败，降级到 Gemini Web: %s", api_err)
+                image_path = await self.web_image_client.generate_image(prompt.output, output_path)
+            else:
+                raise
         return GeneratedArticleImage(
             image_key=image_spec.image_key,
             image_path=str(image_path),
