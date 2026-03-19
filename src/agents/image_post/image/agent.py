@@ -399,6 +399,7 @@ class ImageAgent(BaseAgent):
                     image_path = await self.image_client.generate_image(
                         prompt=prompt,
                         output_path=output_path,
+                        aspect_ratio="3:4",
                     )
                 except Exception as api_err:
                     if hasattr(self, 'web_image_client') and _is_retryable_error(api_err):
@@ -406,6 +407,7 @@ class ImageAgent(BaseAgent):
                         image_path = await self.web_image_client.generate_image(
                             prompt=prompt,
                             output_path=output_path,
+                            aspect_ratio="3:4",
                         )
                     else:
                         raise
