@@ -124,12 +124,25 @@ class UserProfileConfig:
 
 class SanitizerConfig:
     ENABLED = os.getenv("IMAGE_SANITIZER_ENABLED", "1") == "1"
+    # Stage 2: 相机噪声
     SHOT_NOISE_GAIN = float(os.getenv("IMAGE_SANITIZER_SHOT_GAIN", "20"))
-    READ_NOISE_SIGMA = float(os.getenv("IMAGE_SANITIZER_READ_SIGMA", "2.0"))
-    NOISE_BLEND = float(os.getenv("IMAGE_SANITIZER_NOISE_BLEND", "0.3"))
-    ROTATION_MAX_DEG = float(os.getenv("IMAGE_SANITIZER_ROTATION", "1.0"))
+    READ_NOISE_SIGMA = float(os.getenv("IMAGE_SANITIZER_READ_SIGMA", "1.5"))
+    NOISE_BLEND = float(os.getenv("IMAGE_SANITIZER_NOISE_BLEND", "0.25"))
+    # Stage 2b: Bayer 去马赛克
+    BAYER_BLEND = float(os.getenv("IMAGE_SANITIZER_BAYER_BLEND", "0.3"))
+    # Stage 2c: 镜头光学效果
+    VIGNETTE_STRENGTH = float(os.getenv("IMAGE_SANITIZER_VIGNETTE", "0.1"))
+    CA_SHIFT = float(os.getenv("IMAGE_SANITIZER_CA_SHIFT", "1.0"))
+    # Stage 3: 微几何变换
+    ROTATION_MAX_DEG = float(os.getenv("IMAGE_SANITIZER_ROTATION", "0"))
     SCALE_RANGE = float(os.getenv("IMAGE_SANITIZER_SCALE", "0.02"))
-    JPEG_QUALITY = int(os.getenv("IMAGE_SANITIZER_JPEG_QUALITY", "82"))
+    # Stage 3b: FFT 频域扰动
+    FFT_NOISE_STD = float(os.getenv("IMAGE_SANITIZER_FFT_NOISE", "0.02"))
+    # Stage 3c: LAB 色彩抖动
+    COLOR_JITTER_L = float(os.getenv("IMAGE_SANITIZER_JITTER_L", "3.0"))
+    COLOR_JITTER_AB = float(os.getenv("IMAGE_SANITIZER_JITTER_AB", "2.0"))
+    # Stage 4: JPEG 重编码
+    JPEG_QUALITY = int(os.getenv("IMAGE_SANITIZER_JPEG_QUALITY", "85"))
 
 
 class SubtitleConfig:

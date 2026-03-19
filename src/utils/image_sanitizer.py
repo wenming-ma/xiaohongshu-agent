@@ -1,13 +1,17 @@
 """
-图片后处理管线 - 降低 AI 检测标记
+图片后处理管线 V2 - 降低 AI 检测标记
 
-6阶段处理:
-1. 元数据清洗 - 去除 C2PA/EXIF/XMP/IPTC
-2. 相机噪声模拟 - 对抗像素统计检测
-3. 微几何变换 - 对抗频域指纹检测
-4. JPEG 重编码 - 破坏残余特征
+10阶段处理:
+1.  元数据清洗 - 去除 C2PA/EXIF/XMP/IPTC
+2.  相机噪声模拟 - 对抗像素统计检测
+2b. Bayer 去马赛克模拟 - 引入真实 CFA 通道相关性
+2c. 镜头光学效果 - 暗角 + 色差
+3.  微几何变换 - 对抗频域指纹检测
+3b. FFT 频域扰动 - 破坏扩散模型周期性指纹
+3c. LAB 色彩抖动 - 打破 AI 色彩均匀性
+4.  JPEG 重编码 - 破坏残余特征
 4b. 仿真 EXIF 注入 - 伪装为真实手机拍摄
-5. 输出验证 - 确认 AI 标记已清除
+5.  输出验证 - 确认 AI 标记已清除
 """
 import asyncio
 import io
@@ -19,6 +23,7 @@ from typing import Optional
 
 import numpy as np
 from PIL import Image
+from scipy.ndimage import uniform_filter
 
 from ..config.settings import SanitizerConfig
 from .logger import get_logger
@@ -47,13 +52,13 @@ class ImageSanitizer:
         return await asyncio.to_thread(self._sanitize_sync, image_path, output_path)
 
     def _sanitize_sync(self, image_path: Path, output_path: Optional[Path] = None) -> Path:
-        """同步执行4阶段管线"""
+        """同步执行完整管线"""
         if output_path is None:
             output_path = image_path.with_suffix(".jpg")
 
         img = Image.open(image_path).convert("RGB")
         original_size = img.size
-        logger.info("开始图片后处理: %s (%dx%d)", image_path.name, *original_size)
+        logger.info("开始图片后处理 V2: %s (%dx%d)", image_path.name, *original_size)
 
         # Stage 1: 元数据清洗
         img = self._strip_metadata(img)
@@ -61,8 +66,20 @@ class ImageSanitizer:
         # Stage 2: 相机噪声模拟
         img = self._add_camera_noise(img)
 
+        # Stage 2b: Bayer 去马赛克模拟
+        img = self._simulate_bayer_demosaic(img)
+
+        # Stage 2c: 镜头光学效果（暗角 + 色差）
+        img = self._apply_lens_effects(img)
+
         # Stage 3: 微几何变换
         img = self._micro_transform(img, original_size)
+
+        # Stage 3b: FFT 频域扰动
+        img = self._fft_perturb(img)
+
+        # Stage 3c: LAB 色彩抖动
+        img = self._color_jitter_lab(img)
 
         # Stage 4: JPEG 重编码
         self._save_jpeg(img, output_path)
@@ -110,20 +127,98 @@ class ImageSanitizer:
         logger.debug("Stage 2: 相机噪声已添加 (gain=%.1f, sigma=%.1f, blend=%.2f)", gain, sigma, blend)
         return Image.fromarray(noisy, mode="RGB")
 
+    def _simulate_bayer_demosaic(self, img: Image.Image) -> Image.Image:
+        """Stage 2b: Bayer CFA 采样 + 双线性去马赛克模拟"""
+        blend = SanitizerConfig.BAYER_BLEND
+        if blend <= 0:
+            return img
+
+        arr = np.array(img, dtype=np.float64)
+        h, w, _ = arr.shape
+
+        # 构建 Bayer RGGB 采样掩码
+        sample_mask = np.zeros((h, w, 3), dtype=np.float64)
+        sample_mask[0::2, 0::2, 0] = 1.0  # R at even row, even col
+        sample_mask[0::2, 1::2, 1] = 1.0  # G at even row, odd col
+        sample_mask[1::2, 0::2, 1] = 1.0  # G at odd row, even col
+        sample_mask[1::2, 1::2, 2] = 1.0  # B at odd row, odd col
+
+        # 按 Bayer 模式采样
+        bayer = arr * sample_mask
+
+        # 双线性插值恢复缺失通道（按采样点数量归一化，避免颜色偏移）
+        for c in range(3):
+            value_sum = uniform_filter(bayer[:, :, c], size=3)
+            count_avg = uniform_filter(sample_mask[:, :, c], size=3)
+            # 归一化：除以窗口内实际采样点比例
+            safe_count = np.maximum(count_avg, 1e-10)
+            interpolated = value_sum / safe_count
+            # 保留原始采样点的值
+            has_sample = sample_mask[:, :, c] > 0
+            interpolated[has_sample] = arr[has_sample, c]
+            bayer[:, :, c] = interpolated
+
+        # 与原图混合
+        result = arr * (1 - blend) + bayer * blend
+        logger.debug("Stage 2b: Bayer 去马赛克模拟 (blend=%.2f)", blend)
+        return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8), mode="RGB")
+
+    def _apply_lens_effects(self, img: Image.Image) -> Image.Image:
+        """Stage 2c: 镜头光学效果 - 暗角 + 色差"""
+        arr = np.array(img, dtype=np.float64)
+        h, w = arr.shape[:2]
+        cy, cx = h / 2, w / 2
+        max_dist = np.sqrt(cx**2 + cy**2)
+
+        # 暗角 (Vignetting): 边缘变暗
+        strength = SanitizerConfig.VIGNETTE_STRENGTH
+        if strength > 0:
+            Y, X = np.ogrid[:h, :w]
+            dist = np.sqrt((X - cx) ** 2 + (Y - cy) ** 2) / max_dist
+            vignette = 1.0 - strength * dist**2
+            arr *= vignette[:, :, np.newaxis]
+            arr = np.clip(arr, 0, 255)
+
+        # 色差 (Chromatic Aberration): R/B 通道径向微偏移
+        ca_shift = SanitizerConfig.CA_SHIFT
+        if ca_shift > 0:
+            scale_r = 1.0 + ca_shift / max(w, h)
+            scale_b = 1.0 - ca_shift / max(w, h)
+
+            for c, scale in [(0, scale_r), (2, scale_b)]:
+                ch = Image.fromarray(arr[:, :, c].astype(np.uint8))
+                new_w, new_h = int(w * scale), int(h * scale)
+                ch_resized = ch.resize((new_w, new_h), Image.BILINEAR)
+                ch_arr = np.array(ch_resized, dtype=np.float64)
+                # 居中裁切/填充回原尺寸
+                dy = (new_h - h) // 2
+                dx = (new_w - w) // 2
+                if scale > 1:
+                    arr[:, :, c] = ch_arr[dy:dy + h, dx:dx + w]
+                else:
+                    padded = np.full((h, w), arr[:, :, c].mean())
+                    sy, sx = -dy, -dx
+                    padded[sy:sy + new_h, sx:sx + new_w] = ch_arr
+                    arr[:, :, c] = padded
+
+        logger.debug("Stage 2c: 镜头效果 (vignette=%.2f, ca=%.1fpx)", strength, ca_shift)
+        return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), mode="RGB")
+
     def _micro_transform(self, img: Image.Image, original_size: tuple[int, int]) -> Image.Image:
         """Stage 3: 微几何变换 - 破坏频域指纹"""
         w, h = img.size
 
-        # 微旋转
+        # 微旋转（默认关闭）
         max_deg = SanitizerConfig.ROTATION_MAX_DEG
-        angle = random.uniform(-max_deg, max_deg)
-        img = img.rotate(angle, resample=Image.BICUBIC, expand=True)
-
-        # 裁切黑边 - 旋转后图片变大，裁切回原始尺寸
-        new_w, new_h = img.size
-        left = (new_w - w) // 2
-        top = (new_h - h) // 2
-        img = img.crop((left, top, left + w, top + h))
+        angle = 0.0
+        if max_deg > 0:
+            angle = random.uniform(-max_deg, max_deg)
+            img = img.rotate(angle, resample=Image.BICUBIC, expand=True)
+            # 裁切黑边 - 旋转后图片变大，裁切回原始尺寸
+            new_w, new_h = img.size
+            left = (new_w - w) // 2
+            top = (new_h - h) // 2
+            img = img.crop((left, top, left + w, top + h))
 
         # 微缩放
         scale_range = SanitizerConfig.SCALE_RANGE
@@ -138,6 +233,67 @@ class ImageSanitizer:
 
         logger.debug("Stage 3: 微几何变换 (angle=%.2f°, scale=%.3f)", angle, scale)
         return img
+
+    def _fft_perturb(self, img: Image.Image) -> Image.Image:
+        """Stage 3b: FFT 频域扰动 - 破坏扩散模型周期性指纹"""
+        noise_std = SanitizerConfig.FFT_NOISE_STD
+        if noise_std <= 0:
+            return img
+
+        arr = np.array(img, dtype=np.float64)
+        result = np.zeros_like(arr)
+
+        for c in range(3):
+            f = np.fft.fft2(arr[:, :, c])
+            fshift = np.fft.fftshift(f)
+
+            h, w = fshift.shape
+            center_y, center_x = h // 2, w // 2
+
+            # 保护低频中心（半径 10%），只扰动中高频
+            Y, X = np.ogrid[:h, :w]
+            dist = np.sqrt((X - center_x) ** 2 + (Y - center_y) ** 2)
+            protect_radius = min(h, w) * 0.1
+            mask = dist > protect_radius
+
+            # 对中高频幅度施加随机微扰
+            magnitude = np.abs(fshift)
+            phase = np.angle(fshift)
+            noise = np.random.normal(1.0, noise_std, magnitude.shape)
+            magnitude[mask] *= noise[mask]
+
+            fshift_modified = magnitude * np.exp(1j * phase)
+            result[:, :, c] = np.abs(np.fft.ifft2(np.fft.ifftshift(fshift_modified)))
+
+        logger.debug("Stage 3b: FFT 频域扰动 (noise_std=%.3f)", noise_std)
+        return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8), mode="RGB")
+
+    def _color_jitter_lab(self, img: Image.Image) -> Image.Image:
+        """Stage 3c: LAB 色彩空间抖动 - 打破 AI 图片的色彩均匀性"""
+        jitter_l = SanitizerConfig.COLOR_JITTER_L
+        jitter_ab = SanitizerConfig.COLOR_JITTER_AB
+        if jitter_l <= 0 and jitter_ab <= 0:
+            return img
+
+        lab = img.convert("LAB")
+        lab_arr = np.array(lab, dtype=np.float64)
+
+        # L 通道（亮度）：偏正偏移，补偿暗角等导致的亮度损失
+        if jitter_l > 0:
+            lab_arr[:, :, 0] += random.uniform(-1, jitter_l)
+
+        # A 通道（绿-红）：模拟色温偏移
+        if jitter_ab > 0:
+            lab_arr[:, :, 1] += random.uniform(-jitter_ab, jitter_ab)
+
+        # B 通道（蓝-黄）：模拟白平衡偏差
+        if jitter_ab > 0:
+            lab_arr[:, :, 2] += random.uniform(-jitter_ab, jitter_ab)
+
+        lab_arr = np.clip(lab_arr, 0, 255).astype(np.uint8)
+        result = Image.fromarray(lab_arr, mode="LAB").convert("RGB")
+        logger.debug("Stage 3c: LAB 色彩抖动 (L=%.1f, AB=%.1f)", jitter_l, jitter_ab)
+        return result
 
     def _save_jpeg(self, img: Image.Image, output_path: Path) -> None:
         """Stage 4: JPEG 重编码"""
