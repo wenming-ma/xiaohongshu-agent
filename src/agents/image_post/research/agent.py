@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from pydantic_ai import Agent
+from pydantic_ai.usage import UsageLimits
 
 from ....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import ResearchResult
@@ -201,7 +202,7 @@ class ResearchAgent(BaseAgent):
             prompt = state.continuation_prompt
 
         # 每轮都用全新 prompt 启动，丢弃历史对话以节省上下文
-        result = await self.generator.run(prompt)
+        result = await self.generator.run(prompt, usage_limits=UsageLimits(request_limit=None))
 
         # 更新状态
         state.current_result = result.output
