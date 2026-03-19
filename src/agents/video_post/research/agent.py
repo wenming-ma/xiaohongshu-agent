@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any, List
 
 from pydantic_ai import Agent
+from pydantic_ai.usage import UsageLimits
 
 from ....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import VideoResearchResult, Platform
@@ -103,10 +104,10 @@ class ResearchAgent(BaseAgent):
                 max_videos=state.max_videos,
             )
             logger.info("AI agent searching...")
-            result = await self.generator.run(prompt)
+            result = await self.generator.run(prompt, usage_limits=UsageLimits(request_limit=None))
         else:
             logger.info("AI agent continuing with feedback...")
-            result = await self.generator.run(message_history=state.message_history)
+            result = await self.generator.run(message_history=state.message_history, usage_limits=UsageLimits(request_limit=None))
 
         state.current_result = result.output
         state.message_history = list(result.all_messages())
