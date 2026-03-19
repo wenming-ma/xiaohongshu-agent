@@ -324,6 +324,12 @@ async def run_batch(args: argparse.Namespace) -> int:
     failed: list[dict[str, Any]] = []
 
     for i, (post_type, type_idx, item) in enumerate(schedule):
+        # 每个帖子执行前检查是否在工作时段，非工作时段则休眠到次日 5 点
+        if args.sleep is None and not is_work_hours():
+            wait = seconds_until_work_start()
+            logger.info("当前非工作时段，休眠 %d 秒 (%.1f 小时) 到次日 %d:00 …", wait, wait / 3600, WORK_START_HOUR)
+            await asyncio.sleep(wait)
+
         label = f"{i + 1}/{total}"
 
         if post_type == "image":
