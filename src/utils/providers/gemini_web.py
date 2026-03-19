@@ -106,22 +106,66 @@ _CHECK_LOGIN_JS = """
 
 
 class GeminiWebImageClient:
-    """Gemini Web UI 图片生成客户端，使用 Playwright 脚本注入"""
+    """Gemini Web UI 图片生成客户端，使用 Playwright 脚本注入，支持多账号轮换"""
+
+    # 类级别轮换索引，所有实例共享
+    _current_index: int = 0
 
     def __init__(self, browser_session_dir: Optional[str] = None):
-        self._browser: Optional[Browser] = None
         self._context: Optional[BrowserContext] = None
         self._page: Optional[Page] = None
-        self._session_dir = browser_session_dir or PathConfig.BROWSER_SESSION_GEMINI
+        self._active_session_dir: Optional[str] = None
+
+        base_dir = browser_session_dir or PathConfig.BROWSER_SESSION_GEMINI
+        self._session_dirs = self._discover_session_dirs(base_dir)
+        logger.info(
+            "[GeminiWeb] 发现 %d 个账号会话目录: %s",
+            len(self._session_dirs),
+            [Path(d).name for d in self._session_dirs],
+        )
+
+    @staticmethod
+    def _discover_session_dirs(base_dir: str) -> list[str]:
+        """扫描 base_dir 下 account* 子目录作为会话列表，无匹配时回退到 base_dir 本身"""
+        base = Path(base_dir)
+        base.mkdir(parents=True, exist_ok=True)
+        subdirs = sorted(
+            str(d) for d in base.iterdir()
+            if d.is_dir() and d.name.startswith("account")
+        )
+        return subdirs if subdirs else [str(base)]
+
+    def _pick_session_dir(self) -> str:
+        """选取当前轮换到的会话目录"""
+        idx = GeminiWebImageClient._current_index % len(self._session_dirs)
+        return self._session_dirs[idx]
+
+    def _rotate(self) -> None:
+        """轮换到下一个账号"""
+        old_idx = GeminiWebImageClient._current_index % len(self._session_dirs)
+        GeminiWebImageClient._current_index += 1
+        new_idx = GeminiWebImageClient._current_index % len(self._session_dirs)
+        logger.info(
+            "[GeminiWeb] 账号轮换: %s -> %s",
+            Path(self._session_dirs[old_idx]).name,
+            Path(self._session_dirs[new_idx]).name,
+        )
 
     async def _ensure_browser(self) -> Page:
-        """懒初始化持久化 Chrome 上下文"""
+        """懒初始化持久化 Chrome 上下文，会话目录变化时重新打开"""
+        session_dir = self._pick_session_dir()
+
+        # 会话目录变了，需要关闭旧的
+        if self._active_session_dir != session_dir:
+            await self.close()
+
         if self._page and not self._page.is_closed():
             return self._page
 
+        logger.info("[GeminiWeb] 使用会话目录: %s", Path(session_dir).name)
         pw = await async_playwright().start()
         self._context = await pw.chromium.launch_persistent_context(
-            user_data_dir=self._session_dir,
+            user_data_dir=session_dir,
             headless=False,
             args=[
                 "--disable-blink-features=AutomationControlled",
@@ -129,6 +173,7 @@ class GeminiWebImageClient:
             viewport={"width": 1280, "height": 900},
         )
         self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
+        self._active_session_dir = session_dir
         return self._page
 
     async def generate_image(
@@ -215,6 +260,10 @@ class GeminiWebImageClient:
                         output_path = await sanitize_image(output_path)
                     except Exception as e:
                         logger.warning("[GeminiWeb] 图片后处理失败，使用原始文件: %s", e)
+
+                # 成功后关闭浏览器并轮换到下一个账号
+                await self.close()
+                self._rotate()
 
                 return output_path
 
