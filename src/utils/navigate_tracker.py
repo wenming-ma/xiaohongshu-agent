@@ -89,12 +89,10 @@ class NavigateTracker(WrapperToolset):
             or ''
         )
 
-    def _prepend_revisit_hint(self, result: Any, url: str) -> Any:
-        """在工具返回结果前面拼接重复访问提示（重复三遍以确保 agent 注意）"""
-        logger.info("[追踪] 重复访问: %s", url[:80])
-        if isinstance(result, str):
-            return self._REVISIT_HINT + result
-        return self._REVISIT_HINT + str(result)
+    def _prepend_revisit_hint(self, result: Any, url: str) -> str:
+        """重复访问时只返回提醒，丢弃原始网页结果以节省上下文空间"""
+        logger.info("[追踪] 重复访问（已丢弃网页结果）: %s", url[:80])
+        return self._REVISIT_HINT
 
     async def call_tool(
         self,
