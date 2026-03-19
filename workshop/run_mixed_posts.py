@@ -77,12 +77,13 @@ def load_topics(path: Path) -> list[dict[str, Any]]:
 # Sleep helper
 # ---------------------------------------------------------------------------
 
-WORK_START_HOUR = 5   # 凌晨 5 点开始工作
-WORK_END_HOUR = 21    # 晚上 9 点开始休眠
+WORK_START_HOUR = 2   # 凌晨 2 点开始工作
+WORK_END_HOUR = 10    # 早上 10 点开始休眠
+POST_INTERVAL = 1500  # 发帖间隔 25 分钟 (25 * 60)
 
 
 def is_work_hours() -> bool:
-    """判断当前是否在工作时段 (5:00 - 20:59)"""
+    """判断当前是否在工作时段 (2:00 - 9:59)"""
     return WORK_START_HOUR <= datetime.now().hour < WORK_END_HOUR
 
 
@@ -102,19 +103,15 @@ def seconds_until_work_start() -> int:
 def get_sleep_seconds(override: int | None) -> int:
     """根据当前时段返回休眠秒数。
 
-    - 5:00-9:59 / 17:00-20:59 → 45 分钟 (2700s)
-    - 10:00-16:59 → 90 分钟 (5400s)
-    - 21:00-4:59 → 休眠到次日 5:00
+    - 2:00-9:59 → 25 分钟 (1500s)
+    - 10:00-1:59 → 休眠到次日 2:00
     - 如果 override 不为 None，则使用固定值
     """
     if override is not None:
         return override
     if not is_work_hours():
         return seconds_until_work_start()
-    hour = datetime.now().hour
-    if 5 <= hour < 10 or 17 <= hour < 21:
-        return 2700  # 45 min
-    return 5400  # 90 min
+    return POST_INTERVAL
 
 
 # ---------------------------------------------------------------------------
@@ -374,7 +371,7 @@ async def run_batch(args: argparse.Namespace) -> int:
     logger.info("图文话题: %s (第 %d 项起, 共 %d 个)", args.image_topics_file.name, args.start_image, len(image_selected))
     logger.info("长文话题: %s (第 %d 项起, 共 %d 个)", args.article_topics_file.name, args.start_article, len(article_selected))
     logger.info("调度总数: %d 个帖子", total)
-    sleep_mode = f"固定 {args.sleep}s" if args.sleep is not None else "动态 (5-10/17-21点=45min, 10-17点=90min, 21-5点=休眠)"
+    sleep_mode = f"固定 {args.sleep}s" if args.sleep is not None else "动态 (2-10点=25min, 10-2点=休眠)"
     logger.info("休眠策略: %s", sleep_mode)
     if args.feishu_only:
         logger.info("运行模式: 飞书审核 (跳过 XHS 发布，内容发送到飞书)")
