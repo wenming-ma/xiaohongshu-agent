@@ -117,8 +117,16 @@ async def review_groups(
             if isinstance(idx, int) and 0 <= idx < n_items:
                 all_indices.append(idx)
 
-    if len(all_indices) != n_items or set(all_indices) != set(range(n_items)):
-        issues.append(f"分组未完整覆盖所有 {n_items} 个关键信息，请确保每个信息只出现一次")
+    expected = set(range(n_items))
+    actual = set(all_indices)
+    missing = sorted(expected - actual)
+    duplicates = sorted(idx for idx in actual if all_indices.count(idx) > 1)
+    if missing:
+        issues.append(f"缺少 indices: {missing}")
+    if duplicates:
+        issues.append(f"重复 indices: {duplicates}")
+    if len(all_indices) != n_items and not missing and not duplicates:
+        issues.append(f"索引总数 {len(all_indices)} != 期望 {n_items}")
 
     if issues:
         review_result = ImageGroupingReviewResult(passed=False, score=0.0, summary="分组验证失败", issues=issues)
@@ -176,7 +184,6 @@ async def run_grouping_with_review(
             feedback = f"分组审核未通过（{review.score:.0f}分）：{review.summary}\n\n问题：\n{issues_text}"
             user_prompt = image_grouping_revision_user_prompt(
                 topic=topic,
-                key_infos_json=json.dumps(compact_items, ensure_ascii=False, indent=2),
                 max_group_size=target_group_size,
                 target_groups=target_groups,
                 feedback=feedback,
