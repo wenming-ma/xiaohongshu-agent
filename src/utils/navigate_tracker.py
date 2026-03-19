@@ -30,6 +30,12 @@ class NavigateTracker(WrapperToolset):
         '/discovery/item/',  # 发现页帖子详情
     ]
 
+    # 允许反复访问的导航页面（搜索结果、首页等），不计入重复访问检测
+    REVISIT_ALLOWED_PATHS = [
+        '/search_result',
+        '/explore',
+    ]
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # 实例级存储，避免复杂共享/深拷贝逻辑
@@ -113,12 +119,12 @@ class NavigateTracker(WrapperToolset):
         Returns:
             工具执行结果（重复访问时追加提示）
         """
-        # 在执行前检查是否重复访问
+        # 在执行前检查是否重复访问（白名单页面除外）
         is_revisit = False
         if self._is_navigate_call(name):
             url = self._get_navigate_url(tool_args)
             normalized = self._normalize_url(url)
-            if normalized and normalized in self._visited_urls:
+            if normalized and normalized in self._visited_urls and not self._is_revisit_allowed(normalized):
                 is_revisit = True
 
         # 执行工具调用
@@ -228,6 +234,19 @@ class NavigateTracker(WrapperToolset):
             if hasattr(payload, attr):
                 return self._payload_to_text(getattr(payload, attr))
         return str(payload)
+
+    def _is_revisit_allowed(self, url: str) -> bool:
+        """
+        判断 URL 是否允许重复访问（搜索结果页、首页等导航页面）
+
+        精确匹配路径：URL path 必须等于白名单路径（或仅多一个尾部斜杠），
+        避免 /explore/xxx 帖子详情页被误放行。
+        """
+        try:
+            path = urlsplit(url).path.rstrip('/')
+        except Exception:
+            return False
+        return any(path == allowed.rstrip('/') for allowed in self.REVISIT_ALLOWED_PATHS)
 
     def _is_post_detail_url(self, url: str) -> bool:
         """
