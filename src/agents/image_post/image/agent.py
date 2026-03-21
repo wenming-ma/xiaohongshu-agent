@@ -420,6 +420,7 @@ class ImageAgent(BaseAgent):
                         "content": content,
                         "research": research,
                         "image_type_info": image_spec,
+                        "image_prompt": final_prompt,
                     }
                     validation_result = await self.image_quality_validator.validate(
                         image_path=image_path,

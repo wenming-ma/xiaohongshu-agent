@@ -156,7 +156,7 @@ A candid photograph of a young Asian woman captured mid-laugh at a sunlit café 
 直接输出 Gemini 提示词，不要任何解释。
 **写实风格的提示词必须用叙事性段落描述**（建议约 200-350 词英文），像在给摄影师讲述一个场景。
 信息图/插画风格可以用结构化描述。
-提示词末尾必须加上：IMPORTANT: All text must be in Chinese characters (简体中文). Image aspect ratio must be 3:4 vertical (portrait). Do NOT use the words "perfect", "flawless", or "symmetrical".
+提示词末尾必须加上：IMPORTANT: All text must be in Chinese characters (简体中文). Image aspect ratio MUST be 3:4 vertical portrait (e.g. 1080×1440). Do NOT generate landscape or square images. Output must be 4K ultra-high resolution quality. Do NOT use the words "perfect", "flawless", or "symmetrical".
 """
 
 IMAGE_USER_PROMPT_TEMPLATE = """## 配图生成任务
@@ -385,11 +385,15 @@ IMAGE_QUALITY_REVIEW_USER_PROMPT_TEMPLATE = """## 图片质量验证任务
 ### 本图应表达的内容（用于判断是否跑题/货不对板）
 {expected_content}
 
+### 生成本图所用的提示词（用于理解创作意图）
+{image_prompt}
+
 请分析以下图片，验证其质量是否符合小红书发布标准。
 
 补充说明：
-- 详情图（detail_N）允许使用“主题板块/分组标题”作为顶部标题，不要求与总主题逐字一致；但不得出现与本图无关的板块标题
-- 相关性与要点数量以“本图应表达的内容”为准，不要仅依据总主题里的“5个/10个”等字样作判断
+- 详情图（detail_N）允许使用”主题板块/分组标题”作为顶部标题，不要求与总主题逐字一致；但不得出现与本图无关的板块标题
+- 相关性与要点数量以”本图应表达的内容”为准，不要仅依据总主题里的”5个/10个”等字样作判断
+- **提示词中刻意要求的真实感细节**（如自然瑕疵、灰尘、污渍、杂物、使用痕迹等）是反AI检测策略的一部分，不应因此扣分或判定不通过
 
 ### 验证项目
 

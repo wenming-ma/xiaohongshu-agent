@@ -66,12 +66,14 @@ class ImageQualityValidator(ExternalValidator):
         content = context.get("content")
         content_title = getattr(content, "title", "") if content is not None else ""
         expected_content = self._build_expected_content(context)
+        image_prompt = context.get("image_prompt", "（未提供）")
 
         user_prompt = image_quality_review_user_prompt(
             topic=topic,
             image_type=image_type,
             content_title=content_title,
             expected_content=expected_content,
+            image_prompt=image_prompt,
         )
 
         result = await self.agent.run(

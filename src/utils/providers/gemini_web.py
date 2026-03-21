@@ -17,13 +17,12 @@ from ..watermark_remover import remove_gemini_watermark
 
 logger = get_logger(__name__)
 
-# 一次性 JS 注入脚本：激活"创建图片"、验证 Pro 模式、输入提示词、发送
-_ONE_SHOT_JS = """
-async (prompt) => {
+# JS：激活 "Create image" 工具 + 切换 Pro 模式（不含提示词输入）
+_ACTIVATE_JS = """
+async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms));
 
     // 1. 激活 "Create image" 模式
-    //    优先使用首页快捷按钮，否则用 Tools 菜单
     let activated = false;
     for (const btn of document.querySelectorAll('button')) {
         if (btn.textContent.includes('Create image') && !btn.textContent.includes('Deselect')) {
@@ -33,7 +32,6 @@ async (prompt) => {
         }
     }
     if (!activated) {
-        // 回退：通过 Tools 菜单激活
         const toolsBtn = document.querySelector('.toolbox-drawer-button')
             || [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Tools');
         if (toolsBtn) {
@@ -64,25 +62,6 @@ async (prompt) => {
         }
         await sleep(500);
     }
-
-    // 3. 输入提示词（使用 execCommand 绕过 TrustedHTML 策略）
-    //    逐行插入：insertText 不处理换行，需用 insertParagraph 分段
-    const editor = document.querySelector('[aria-label="Enter a prompt for Gemini"]');
-    if (!editor) throw new Error('EDITOR_NOT_FOUND');
-    editor.focus();
-    document.execCommand('selectAll', false, null);
-    document.execCommand('delete', false, null);
-    const lines = prompt.split('\\n');
-    for (let i = 0; i < lines.length; i++) {
-        if (i > 0) document.execCommand('insertParagraph', false, null);
-        if (lines[i]) document.execCommand('insertText', false, lines[i]);
-    }
-    await sleep(300);
-
-    // 4. 点击发送
-    const sendBtn = document.querySelector('[aria-label="Send message"]');
-    if (!sendBtn) throw new Error('SEND_BTN_NOT_FOUND');
-    sendBtn.click();
 
     return 'OK';
 }
@@ -205,7 +184,8 @@ class GeminiWebImageClient:
         timeout = TimeoutConfig.GEMINI_WEB_TIMEOUT
         gemini_url = APIConfig.GEMINI_URL
 
-        prompt = prompt.rstrip() + "\n\nIMPORTANT: Output must be 4K ultra-high resolution quality. Image aspect ratio MUST be 3:4 vertical portrait (e.g. 1080x1440). Do NOT generate landscape or square images."
+        # 4K 和 3:4 比例要求已内置到 prompt generator 系统提示中，
+        # 由 LLM 直接生成在提示词末尾，无需代码追加。
 
         logger.info("[GeminiWeb] 开始生成图片: %s", output_path.name)
         logger.debug("[GeminiWeb] 提示词: %s...", prompt[:100])
@@ -234,10 +214,25 @@ class GeminiWebImageClient:
                         f"\n会话目录: {self._session_dir}"
                     )
 
-                # 4. 一次性脚本注入：工具选择 + 提示词输入 + 发送
-                result = await page.evaluate(_ONE_SHOT_JS, prompt)
+                # 4a. 激活 "Create image" + Pro 模式
+                result = await page.evaluate(_ACTIVATE_JS)
                 if result != "OK":
-                    raise RuntimeError(f"JS 注入失败: {result}")
+                    raise RuntimeError(f"工具激活失败: {result}")
+
+                # 4b. 通过 Playwright 剪贴板粘贴输入完整提示词
+                #     Gemini 富文本编辑器不响应 execCommand/合成 paste 事件，
+                #     必须用真实键盘操作 (Ctrl+V) 触发编辑器内部模型同步。
+                editor = page.locator('[aria-label="Enter a prompt for Gemini"]')
+                await editor.click()
+                await page.keyboard.press("Control+A")
+                await page.keyboard.press("Delete")
+                await page.evaluate("(text) => navigator.clipboard.writeText(text)", prompt)
+                await page.keyboard.press("Control+V")
+                await asyncio.sleep(0.5)
+
+                # 4c. 点击发送
+                send_btn = page.locator('[aria-label="Send message"]')
+                await send_btn.click()
 
                 logger.info("[GeminiWeb] 提示词已发送，等待图片生成...")
 
