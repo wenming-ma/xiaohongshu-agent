@@ -66,6 +66,7 @@ IMAGE_USER_PROMPT_TEMPLATE = """## 长文配图任务
 5. 严禁新增输入里没有的事实、数字、品牌背书或来源署名。
 6. 所有图片都必须按 16:9 宽屏横版构图，优先考虑横向延展的版式、横幅标题区和左右信息分布。
 7. 只输出最终提示词，不要输出解释。
+8. 提示词末尾必须加上：IMPORTANT: All text must be in Chinese characters (简体中文). Image aspect ratio MUST be 16:9 landscape (e.g. 1920×1080). Do NOT generate portrait or square images. Output must be 4K ultra-high resolution quality. Do NOT use the words "perfect", "flawless", or "symmetrical".
 """
 
 
