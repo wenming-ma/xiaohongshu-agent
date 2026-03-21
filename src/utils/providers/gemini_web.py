@@ -66,12 +66,17 @@ async (prompt) => {
     }
 
     // 3. 输入提示词（使用 execCommand 绕过 TrustedHTML 策略）
+    //    逐行插入：insertText 不处理换行，需用 insertParagraph 分段
     const editor = document.querySelector('[aria-label="Enter a prompt for Gemini"]');
     if (!editor) throw new Error('EDITOR_NOT_FOUND');
     editor.focus();
     document.execCommand('selectAll', false, null);
     document.execCommand('delete', false, null);
-    document.execCommand('insertText', false, prompt);
+    const lines = prompt.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+        if (i > 0) document.execCommand('insertParagraph', false, null);
+        if (lines[i]) document.execCommand('insertText', false, lines[i]);
+    }
     await sleep(300);
 
     // 4. 点击发送
