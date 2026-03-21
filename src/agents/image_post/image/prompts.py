@@ -106,7 +106,7 @@ Gemini 的核心优势是语言理解力，用完整的场景描述段落远优�
 
 ### 🔍 自然瑕疵（打破AI的"完美感"，极其关键）
 真实照片总有细微瑕疵，这些瑕疵反而让画面更可信：
-- **人物**：visible skin pores, subtle under-eye texture, natural skin blemishes, slight facial asymmetry, stray hair flyaways, genuine laugh lines
+- **人物**：visible skin pores, subtle under-eye texture, slight uneven skin tone, slight facial asymmetry, stray hair flyaways, genuine laugh lines
 - **环境**：chipped paint, cracked pavement, dust on surfaces, water stains, scratched metal, worn edges, peeling stickers
 - **食物**：crumbs scattered naturally, uneven plating, condensation on glass, sauce drips
 - **光线**：mixed color temperature (warm lamp + cool daylight), uneven light falloff, natural lens flare, slight overexposure in highlights
@@ -118,6 +118,7 @@ Gemini 的核心优势是语言理解力，用完整的场景描述段落远优�
 - ❌ studio white background（除非是纯产品图）
 - ❌ overly saturated colors, neon glow, artificial lighting
 - ❌ 任何暗示"完美无瑕"的描述
+- ❌ beauty mark, mole, birthmark（不要给人物脸上加痣/胎记）
 
 ### 💡 光线策略（避免平光）
 - **推荐**：golden hour side lighting, soft diffused window light, Rembrandt lighting (45° key light), overcast natural light, dappled tree shadows
@@ -148,7 +149,7 @@ photorealistic, portrait, Asian woman, 85mm, bokeh, golden hour, natural skin, f
 
 ### ✅ 好的提示词（叙事性描述）
 ```
-A candid photograph of a young Asian woman captured mid-laugh at a sunlit café terrace. Shot on a Sony A7IV with an 85mm f/1.4 lens, the background melts into a creamy bokeh of warm city lights. Late afternoon golden hour sunlight streams from the left, casting a gentle Rembrandt triangle on her cheek. Her skin shows natural texture—visible pores, a faint beauty mark near her jaw, subtle under-eye shadows. A few stray hairs catch the backlight. The color grading has the warm, slightly desaturated tones of Kodak Portra 400 film stock, with fine organic grain visible in the shadow areas. She wears a slightly wrinkled linen blouse; a half-finished iced coffee with condensation dripping down the glass sits on the weathered wooden table beside her. The composition is slightly off-center, as if the photographer captured this genuine moment from across the table.
+A candid photograph of a young Asian woman captured mid-laugh at a sunlit café terrace. Shot on a Sony A7IV with an 85mm f/1.4 lens, the background melts into a creamy bokeh of warm city lights. Late afternoon golden hour sunlight streams from the left, casting a gentle Rembrandt triangle on her cheek. Her skin shows natural texture—visible pores, slight uneven skin tone on her cheeks, subtle under-eye shadows. A few stray hairs catch the backlight. The color grading has the warm, slightly desaturated tones of Kodak Portra 400 film stock, with fine organic grain visible in the shadow areas. She wears a slightly wrinkled linen blouse; a half-finished iced coffee with condensation dripping down the glass sits on the weathered wooden table beside her. The composition is slightly off-center, as if the photographer captured this genuine moment from across the table.
 ```
 
 ## 输出格式
