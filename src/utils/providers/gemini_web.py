@@ -205,7 +205,7 @@ class GeminiWebImageClient:
         timeout = TimeoutConfig.GEMINI_WEB_TIMEOUT
         gemini_url = APIConfig.GEMINI_URL
 
-        prompt = prompt.rstrip() + "\n\nIMPORTANT: Output must be 4K ultra-high resolution quality."
+        prompt = prompt.rstrip() + "\n\nIMPORTANT: Output must be 4K ultra-high resolution quality. Image aspect ratio MUST be 3:4 vertical portrait (e.g. 1080x1440). Do NOT generate landscape or square images."
 
         logger.info("[GeminiWeb] 开始生成图片: %s", output_path.name)
         logger.debug("[GeminiWeb] 提示词: %s...", prompt[:100])
