@@ -6,7 +6,9 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 import re
 import html as _html
 from pathlib import Path
@@ -26,6 +28,35 @@ from ....utils.providers import get_text_model, get_google_model
 from .prompts import image_reader_system_prompt, image_reader_user_prompt
 
 logger = get_logger(__name__)
+
+
+def _load_keys(env_var: str) -> list[str]:
+    """Load comma-separated API keys from an env var, filtering blanks."""
+    raw = os.getenv(env_var, "")
+    return [k.strip() for k in raw.split(",") if k.strip()]
+
+
+class _KeyRotator:
+    """Round-robin key selector with automatic exhaustion tracking."""
+
+    def __init__(self, keys: list[str]):
+        self._keys = list(keys)
+        self._index = 0
+        self._exhausted: set[str] = set()
+
+    def next(self) -> str | None:
+        available = [k for k in self._keys if k not in self._exhausted]
+        if not available:
+            return None
+        key = available[self._index % len(available)]
+        self._index += 1
+        return key
+
+    def mark_exhausted(self, key: str) -> None:
+        self._exhausted.add(key)
+        logger.info("API key …%s marked exhausted, %d remaining",
+                     key[-6:], len(self._keys) - len(self._exhausted))
+
 
 SUPPORTED_IMAGE_SUFFIXES = frozenset({
     ".png",
@@ -164,6 +195,8 @@ class WebSearchAgent:
 
     def __init__(self):
         self._timeout = httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)
+        self._serper_keys = _KeyRotator(_load_keys("SERPER_API_KEY"))
+        self._tavily_keys = _KeyRotator(_load_keys("TAVILY_API_KEY"))
         self._expander_agent: Agent | None = None
         self._synthesis_agent: Agent | None = None
 
@@ -293,9 +326,8 @@ class WebSearchAgent:
 
             return json.dumps(payload, ensure_ascii=False)
 
-    async def _search_serper(self, query: str, max_results: int) -> dict[str, Any]:
+    async def _search_serper(self, query: str, max_results: int, api_key: str) -> dict[str, Any]:
         """Google Serper（需要 SERPER_API_KEY）"""
-        api_key = os.getenv("SERPER_API_KEY")
         headers = {"X-API-KEY": api_key, "Content-Type": "application/json"}
         payload = {"q": query, "num": max_results}
 
@@ -316,9 +348,8 @@ class WebSearchAgent:
 
         return {"query": query, "backend": "serper", "results": results, "error": ""}
 
-    async def _search_tavily(self, query: str, max_results: int) -> dict[str, Any]:
+    async def _search_tavily(self, query: str, max_results: int, api_key: str) -> dict[str, Any]:
         """Tavily（需要 TAVILY_API_KEY）"""
-        api_key = os.getenv("TAVILY_API_KEY")
         payload = {
             "api_key": api_key,
             "query": query,
@@ -468,11 +499,28 @@ class WebSearchAgent:
         )
 
     async def _search_once(self, query: str, max_results: int) -> dict[str, Any]:
-        """执行一次搜索（按可用后端选择）"""
-        if os.getenv("SERPER_API_KEY"):
-            return await self._search_serper(query, max_results=max_results)
-        if os.getenv("TAVILY_API_KEY"):
-            return await self._search_tavily(query, max_results=max_results)
+        """执行一次搜索（按可用后端选择，支持 key 轮换与 exhaustion）"""
+        serper_key = self._serper_keys.next()
+        if serper_key:
+            try:
+                return await self._search_serper(query, max_results=max_results, api_key=serper_key)
+            except httpx.HTTPStatusError as exc:
+                logger.warning("Serper search failed: %s", exc)
+                if exc.response.status_code in (400, 401, 403, 429):
+                    self._serper_keys.mark_exhausted(serper_key)
+            except Exception as exc:
+                logger.warning("Serper search failed: %s", exc)
+
+        tavily_key = self._tavily_keys.next()
+        if tavily_key:
+            try:
+                return await self._search_tavily(query, max_results=max_results, api_key=tavily_key)
+            except httpx.HTTPStatusError as exc:
+                logger.warning("Tavily search failed: %s", exc)
+                if exc.response.status_code in (401, 403, 429, 432):
+                    self._tavily_keys.mark_exhausted(tavily_key)
+            except Exception as exc:
+                logger.warning("Tavily search failed: %s", exc)
 
         data = await self._search_duckduckgo_instant_answer(query, max_results=max_results)
         if not (data.get("results") or []):

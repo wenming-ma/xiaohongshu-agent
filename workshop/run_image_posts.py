@@ -88,6 +88,7 @@ async def run_single(
     total: int,
     max_retries: int,
     retry_delay: int,
+    notify_feishu: bool = True,
 ) -> dict[str, Any]:
     topic = item["topic"].strip()
     audience = item["audience"].strip()
@@ -112,7 +113,7 @@ async def run_single(
                 logger.info("  成功: %s", result.title or topic)
 
                 # 飞书通知
-                if result.published:
+                if result.published and notify_feishu:
                     try:
                         notifier = get_feishu_notifier()
                         lines = [
@@ -175,7 +176,7 @@ async def run_batch(args: argparse.Namespace) -> int:
 
     for i, item in enumerate(selected):
         idx = base_idx + i
-        result = await run_single(item, idx, base_idx + total - 1, args.max_retries, args.retry_delay)
+        result = await run_single(item, idx, base_idx + total - 1, args.max_retries, args.retry_delay, notify_feishu=not args.no_feishu)
         results.append(result)
 
         if not result.get("success"):
@@ -223,6 +224,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-retries", type=int, default=10, help="单个话题最大重试次数")
     p.add_argument("--retry-delay", type=int, default=5, help="重试间隔秒数")
     p.add_argument("--sleep", type=int, default=None, help="话题之间固定休眠秒数 (留空则按时段自动: 5-10点/17-22点=45min, 其余=90min)")
+    p.add_argument("--no-feishu", action="store_true", default=False, help="禁用飞书通知")
     return p.parse_args()
 
 

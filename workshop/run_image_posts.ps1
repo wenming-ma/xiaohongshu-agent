@@ -7,15 +7,18 @@
 #   .\workshop\run_image_posts.ps1
 #   .\workshop\run_image_posts.ps1 -StartIndex 3
 #   .\workshop\run_image_posts.ps1 -StartIndex 5 -Limit 2
+#   .\workshop\run_image_posts.ps1 -TopicsFile avoid_topics.json
 #   .\workshop\run_image_posts.ps1 -Sleep 3600   # 固定休眠（覆盖动态策略）
 # ================================================
 
 param(
+    [string]$TopicsFile = "",
     [int]$StartIndex = 1,
     [int]$Limit = 0,
     [int]$MaxRetries = 10,
     [int]$RetryDelay = 5,
-    [int]$Sleep = 0
+    [int]$Sleep = 0,
+    [switch]$NoFeishu = $false
 )
 
 $ErrorActionPreference = "Continue"
@@ -25,7 +28,14 @@ $projectRoot = Split-Path -Parent $scriptDir
 
 # 构建 Python 脚本参数
 $pyScript = Join-Path $scriptDir "run_image_posts.py"
-$pyArgs = @($pyScript, "--start-index", $StartIndex, "--max-retries", $MaxRetries, "--retry-delay", $RetryDelay)
+# 话题文件：默认 image_topics.json
+$resolvedTopicsFile = if ($TopicsFile) {
+    if ([System.IO.Path]::IsPathRooted($TopicsFile)) { $TopicsFile } else { Join-Path $scriptDir $TopicsFile }
+} else {
+    Join-Path $scriptDir "image_topics.json"
+}
+
+$pyArgs = @($pyScript, "--topics-file", $resolvedTopicsFile, "--start-index", $StartIndex, "--max-retries", $MaxRetries, "--retry-delay", $RetryDelay)
 
 if ($Sleep -gt 0) {
     $pyArgs += @("--sleep", $Sleep)
@@ -35,9 +45,12 @@ if ($Limit -gt 0) {
     $pyArgs += @("--limit", $Limit)
 }
 
-# 读取 image_topics.json 计算总数用于显示
-$topicsFile = Join-Path $scriptDir "image_topics.json"
-$topics = Get-Content -Raw -Path $topicsFile -Encoding UTF8 | ConvertFrom-Json
+if ($NoFeishu) {
+    $pyArgs += "--no-feishu"
+}
+
+# 读取话题文件计算总数用于显示
+$topics = Get-Content -Raw -Path $resolvedTopicsFile -Encoding UTF8 | ConvertFrom-Json
 $totalCount = $topics.Count
 
 # 计算实际处理范围
@@ -45,6 +58,7 @@ $endIndex = if ($Limit -gt 0) { [Math]::Min($StartIndex + $Limit - 1, $totalCoun
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "XHS Image Post Batch Runner" -ForegroundColor Cyan
+Write-Host "Topics file: $resolvedTopicsFile" -ForegroundColor Cyan
 Write-Host "Agent: image_post (direct)" -ForegroundColor Cyan
 Write-Host "Topics: #$StartIndex ~ #$endIndex / $totalCount" -ForegroundColor Cyan
 Write-Host "Max retries: $MaxRetries" -ForegroundColor Cyan
