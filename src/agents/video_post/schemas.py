@@ -16,7 +16,7 @@ class XHSVideoPostInput(BaseModel):
     topic: str
     audience: str
     platforms: List[Platform] = [Platform.YOUTUBE, Platform.X, Platform.INSTAGRAM, Platform.FACEBOOK, Platform.TIKTOK]
-    max_videos: int = Field(default=5, ge=1, le=20)
+    max_videos: int = Field(default=10, ge=1, le=50)
     publish: bool = True
 
 
