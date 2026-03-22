@@ -114,7 +114,7 @@ class StyledImagePostPipeline(BasePipeline[StyledImagePostInput, StyledImagePost
             if ref_images.skipped:
                 logger.info("参考图片收集: 已跳过")
             else:
-                total_refs = sum(len(g.image_paths) for g in ref_images.groups)
+                total_refs = sum(len(item.image_paths) for g in ref_images.groups for item in g.items)
                 logger.info(f"参考图片收集完成: {total_refs} 张图片")
 
             # Phase 4: 内容创作
