@@ -167,6 +167,7 @@ class GeminiWebImageClient:
         image_size: Optional[str] = None,
         aspect_ratio: Optional[str] = None,
         max_retries: int = 3,
+        reference_images: list[Path] | None = None,
     ) -> Path:
         """
         通过 Gemini Web UI 生成图片
@@ -177,6 +178,7 @@ class GeminiWebImageClient:
             image_size: 未使用（保持与 API 客户端接口一致）
             aspect_ratio: 未使用（保持与 API 客户端接口一致）
             max_retries: 最大重试次数
+            reference_images: 参考图片路径列表（通过文件上传传入）
 
         Returns:
             保存的图片路径
@@ -184,10 +186,12 @@ class GeminiWebImageClient:
         timeout = TimeoutConfig.GEMINI_WEB_TIMEOUT
         gemini_url = APIConfig.GEMINI_URL
 
-        # 4K 和 3:4 比例要求已内置到 prompt generator 系统提示中，
-        # 由 LLM 直接生成在提示词末尾，无需代码追加。
-
         logger.info("[GeminiWeb] 开始生成图片: %s", output_path.name)
+        if reference_images:
+            valid_refs = [p for p in reference_images if p.exists()]
+            logger.info("[GeminiWeb] 附加 %d 张参考图片", len(valid_refs))
+        else:
+            valid_refs = []
         logger.debug("[GeminiWeb] 提示词: %s...", prompt[:100])
 
         last_error: Optional[Exception] = None
@@ -214,12 +218,16 @@ class GeminiWebImageClient:
                         f"\n会话目录: {self._session_dir}"
                     )
 
-                # 4a. 激活 "Create image" + Pro 模式
+                # 4a. 上传参考图片（如果有）
+                if valid_refs:
+                    await self._upload_reference_images(page, valid_refs)
+
+                # 4b. 激活 "Create image" + Pro 模式
                 result = await page.evaluate(_ACTIVATE_JS)
                 if result != "OK":
                     raise RuntimeError(f"工具激活失败: {result}")
 
-                # 4b. 输入提示词到编辑器
+                # 4c. 输入提示词到编辑器
                 editor = page.locator('[aria-label="Enter a prompt for Gemini"]')
                 await editor.click()
                 await page.keyboard.press("Control+A")
@@ -243,7 +251,7 @@ class GeminiWebImageClient:
                     await page.keyboard.insert_text(prompt)
                     await asyncio.sleep(0.5)
 
-                # 4c. 等待发送按钮可用后点击
+                # 4d. 等待发送按钮可用后点击
                 send_btn = page.locator('[aria-label="Send message"]')
                 try:
                     await send_btn.click(timeout=10000)
@@ -298,6 +306,38 @@ class GeminiWebImageClient:
                     await asyncio.sleep(delay)
 
         raise last_error or Exception("[GeminiWeb] 图片生成失败，已达最大重试次数")
+
+    async def _upload_reference_images(self, page: Page, image_paths: list[Path]) -> None:
+        """通过 Gemini Web UI 的文件上传功能上传参考图片"""
+        for i, img_path in enumerate(image_paths):
+            logger.info("[GeminiWeb] 上传参考图片 %d/%d: %s", i + 1, len(image_paths), img_path.name)
+
+            # 点击编辑器激活上传按钮
+            editor = page.locator('[aria-label="Enter a prompt for Gemini"]')
+            await editor.click()
+            await asyncio.sleep(0.5)
+
+            # 点击上传菜单按钮
+            upload_btn = page.locator('[aria-label="Open upload file menu"]')
+            if not await upload_btn.count():
+                # 菜单可能已展开
+                upload_btn = page.locator('[aria-label="Close upload file menu"]')
+            await upload_btn.click()
+            await asyncio.sleep(0.5)
+
+            # 设置 filechooser 监听并点击 "Upload files"
+            async with page.expect_file_chooser(timeout=10000) as fc_info:
+                upload_item = page.locator('text=Upload files').first
+                await upload_item.click()
+
+            file_chooser = await fc_info.value
+            await file_chooser.set_files(str(img_path))
+
+            # 等待上传完成（观察附件预览出现）
+            await asyncio.sleep(2)
+            logger.debug("[GeminiWeb] 参考图片 %d 上传完成", i + 1)
+
+        logger.info("[GeminiWeb] %d 张参考图片上传完成", len(image_paths))
 
     async def _poll_for_image(self, page: Page, timeout: int) -> str:
         """轮询页面直到图片生成完成"""

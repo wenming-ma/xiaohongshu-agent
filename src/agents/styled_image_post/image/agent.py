@@ -418,13 +418,12 @@ class ImageAgent(BaseAgent):
                 # 2. 通过 API 生成图片（auto 模式下 API 失败时降级到 Web）
                 output_path = output_dir / f"{image_type}.png"
                 try:
-                    # GeminiImageClient 支持 reference_images，GeminiWebImageClient 不支持
-                    gen_kwargs: dict = dict(prompt=prompt, output_path=output_path, aspect_ratio="3:4")
-                    if ref_image_paths and isinstance(self.image_client, GeminiImageClient):
-                        gen_kwargs["reference_images"] = ref_image_paths
-                    elif ref_image_paths:
-                        logger.warning("Web 模式不支持参考图片，将忽略 %d 张参考图", len(ref_image_paths))
-                    image_path = await self.image_client.generate_image(**gen_kwargs)
+                    image_path = await self.image_client.generate_image(
+                        prompt=prompt,
+                        output_path=output_path,
+                        aspect_ratio="3:4",
+                        reference_images=ref_image_paths,
+                    )
                 except Exception as api_err:
                     if hasattr(self, 'web_image_client') and _is_retryable_error(api_err):
                         logger.warning("API 失败，降级到 Gemini Web: %s", api_err)
@@ -432,6 +431,7 @@ class ImageAgent(BaseAgent):
                             prompt=prompt,
                             output_path=output_path,
                             aspect_ratio="3:4",
+                            reference_images=ref_image_paths,
                         )
                     else:
                         raise
