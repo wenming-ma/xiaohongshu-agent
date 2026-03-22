@@ -18,7 +18,7 @@ from .state import ResearchState
 
 logger = get_logger(__name__)
 
-MAX_ITERATIONS = 5
+MAX_ITERATIONS = 10
 
 
 class ResearchAgent(BaseAgent):
