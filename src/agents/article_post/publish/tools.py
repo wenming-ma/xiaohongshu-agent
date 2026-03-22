@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import logfire
 from pydantic_ai import Tool
 from pydantic_ai.mcp import MCPServerStdio
 
@@ -78,14 +79,24 @@ class ArticlePublishEditorTools:
         uploaded: list[dict[str, str]] = []
         failed: list[dict[str, str]] = []
 
-        for slot_key, file_path in plan:
+        logger.info("开始上传 %d 张图片", len(plan))
+        for idx, (slot_key, file_path) in enumerate(plan, 1):
             try:
+                logger.info("上传图片 %d/%d: %s -> %s", idx, len(plan), slot_key, file_path)
                 await self._upload_single_image(slot_key, file_path)
                 uploaded.append({"key": slot_key, "path": str(file_path)})
-                logger.info("图片上传成功: %s -> %s", slot_key, file_path)
+                logger.info("图片上传成功: %s", slot_key)
             except Exception as exc:
-                logger.warning("图片上传失败: %s -> %s: %s", slot_key, file_path, exc)
-                failed.append({"key": slot_key, "path": str(file_path), "error": str(exc)})
+                error_msg = f"{type(exc).__name__}: {exc}"
+                logger.warning("图片上传失败: %s -> %s", slot_key, error_msg)
+                logfire.warn(
+                    "article_image_upload_failed",
+                    slot_key=slot_key,
+                    file_path=str(file_path),
+                    error=error_msg,
+                    step_index=idx,
+                )
+                failed.append({"key": slot_key, "path": str(file_path), "error": error_msg})
 
         # Always cleanup slots (even if some images failed)
         try:
@@ -100,26 +111,35 @@ class ArticlePublishEditorTools:
 
     async def _upload_single_image(self, slot_key: str, file_path: Path) -> None:
         """Upload a single image: click slot → click image button → file_upload."""
-        # Step 1: click the slot paragraph to position cursor
-        await self._mcp_server.direct_call_tool(
-            name="browser_run_code",
-            args={"code": build_click_slot_script(slot_key)},
-        )
+        with logfire.span(
+            "article_image_upload:{slot_key}",
+            slot_key=slot_key,
+            file_path=str(file_path),
+        ):
+            # Step 1: click the slot paragraph to position cursor
+            logger.debug("图片上传 [%s] Step 1: 点击槽位段落", slot_key)
+            await self._mcp_server.direct_call_tool(
+                name="browser_run_code",
+                args={"code": build_click_slot_script(slot_key)},
+            )
 
-        # Step 2: click the image toolbar button (triggers file chooser)
-        await self._mcp_server.direct_call_tool(
-            name="browser_run_code",
-            args={"code": build_click_image_button_script()},
-        )
+            # Step 2: click the image toolbar button (triggers file chooser)
+            logger.debug("图片上传 [%s] Step 2: 点击图片工具栏按钮", slot_key)
+            await self._mcp_server.direct_call_tool(
+                name="browser_run_code",
+                args={"code": build_click_image_button_script()},
+            )
 
-        # Step 3: upload the file via the file chooser
-        await self._mcp_server.direct_call_tool(
-            name="browser_file_upload",
-            args={"paths": [str(file_path)]},
-        )
+            # Step 3: upload the file via the file chooser
+            logger.debug("图片上传 [%s] Step 3: 上传文件", slot_key)
+            await self._mcp_server.direct_call_tool(
+                name="browser_file_upload",
+                args={"paths": [str(file_path)]},
+            )
 
-        # Step 4: wait for CDN upload to complete
-        await asyncio.sleep(2)
+            # Step 4: wait for CDN upload to complete
+            await asyncio.sleep(2)
+            logger.info("图片上传 [%s] 完成", slot_key)
 
     async def cleanup_image_slots(self) -> str:
         """清理正文里残留的 `[IMAGE_SLOT:xxx]` 槽位段落。只在所有图片都插完之后调用。"""
