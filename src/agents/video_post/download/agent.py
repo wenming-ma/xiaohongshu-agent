@@ -19,7 +19,7 @@ PLATFORM_OPTS = {
     },
     Platform.INSTAGRAM: {
         "format": "best[ext=mp4]/best",
-        "extra_args": ["--cookies-from-browser", "chromium"],
+        "extra_args": ["--cookies-from-browser", "chrome"],
     },
     Platform.FACEBOOK: {
         "format": "best[ext=mp4]/best",
@@ -33,6 +33,7 @@ PLATFORM_OPTS = {
 
 MIN_FILE_SIZE = 100 * 1024  # 100KB
 MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB
+DOWNLOAD_TIMEOUT = 600  # 10 minutes
 
 
 class DownloadAgent(BaseAgent):
@@ -191,12 +192,18 @@ class DownloadAgent(BaseAgent):
                 info = ydl.extract_info(source.url, download=True)
                 filename = ydl.prepare_filename(info)
                 base = os.path.splitext(filename)[0]
-                for ext in ['.mp4', '.webm', '.mkv']:
+                for ext in ['.mp4', '.webm', '.mkv', '.avi', '.mov']:
                     candidate = base + ext
                     if os.path.exists(candidate):
                         return Path(candidate)
                 return Path(filename)
 
-        loop = asyncio.get_event_loop()
-        result_path = await loop.run_in_executor(None, _sync_download)
+        loop = asyncio.get_running_loop()
+        try:
+            result_path = await asyncio.wait_for(
+                loop.run_in_executor(None, _sync_download),
+                timeout=DOWNLOAD_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            raise TimeoutError(f"视频下载超时 ({DOWNLOAD_TIMEOUT}s): {source.url[:80]}")
         return result_path

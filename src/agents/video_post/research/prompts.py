@@ -210,38 +210,6 @@ Make preliminary judgments while collecting:
 Start searching! Remember: **Quality first, avoid low-quality videos, and USE ENGLISH KEYWORDS ONLY!**
 """
 
-RESEARCH_REVIEW_SYSTEM_PROMPT = """你是视频搜索结果审核专家。
-验证搜索结果的质量和完整性。
-
-## 审核标准
-1. 视频 URL 格式正确
-2. 互动数据合理
-3. 平台覆盖率达标
-4. 视频数量满足要求
-
-## 评分规则
-- 基础分 100
-- URL 格式错误: -20
-- 互动数据缺失: -10
-- 平台覆盖不足: -15
-- 数量不足: -20
-- 通过标准: score >= 70
-"""
-
-RESEARCH_REVIEW_USER_PROMPT_TEMPLATE = """## 审核视频搜索结果
-
-**主题**: {topic}
-**期望平台**: {platforms}
-**期望数量**: {max_videos}
-
-**搜索结果**:
-```json
-{research}
-```
-
-请评估结果质量并输出 ContentReviewResult。
-"""
-
 VIDEO_QUALITY_SYSTEM_PROMPT = """你是专业的视频内容质量评估专家，专注于识别高质量、有故事性的视频内容。
 
 ## 评估标准
@@ -319,11 +287,11 @@ VIDEO_QUALITY_SYSTEM_PROMPT = """你是专业的视频内容质量评估专家�
 - **总分 < 60**: 不通过，过滤掉
 
 ## 输出要求
-基于视频的标题、描述、互动数据、时长等元信息，给出：
-1. 各维度详细评分
-2. 总分
-3. 是否通过（passed）
-4. 详细反馈（优点和问题）
+基于以上评分规则，输出评估结果：
+- passed: 总分是否 >= 70
+- score: 总分（0-100）
+- issues: 具体问题列表
+- summary: 整体评估摘要（含各维度简要评分）
 """
 
 VIDEO_QUALITY_USER_PROMPT_TEMPLATE = """## 评估视频质量
@@ -370,14 +338,6 @@ def research_system_prompt(**variables: object) -> str:
 
 def research_user_prompt(**variables: object) -> str:
     return render_template(RESEARCH_USER_PROMPT_TEMPLATE, **variables)
-
-
-def research_review_system_prompt(**variables: object) -> str:
-    return render_template(RESEARCH_REVIEW_SYSTEM_PROMPT, **variables)
-
-
-def research_review_user_prompt(**variables: object) -> str:
-    return render_template(RESEARCH_REVIEW_USER_PROMPT_TEMPLATE, **variables)
 
 
 def video_quality_system_prompt(**variables: object) -> str:

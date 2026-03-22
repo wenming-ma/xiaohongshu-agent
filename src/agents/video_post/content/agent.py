@@ -60,6 +60,7 @@ class ContentAgent(BaseAgent):
         transcript: TranscriptionResult | None = None,
     ) -> XHSVideoContent:
         state = ContentState(research=research, video_source=video_source, topic=topic, transcript=transcript)
+        self._current_state = state
 
         logger.info(f"开始生成视频内容: {topic}")
 

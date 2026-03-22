@@ -59,8 +59,10 @@ CONTENT_USER_PROMPT_TEMPLATE = """## 原创视频内容创作任务
 **主题**: {topic}
 
 **视频内容概要**:
+- 来源平台: {platform}
 - 标题: {video_title}
 - 描述: {video_description}
+- 互动数据: {engagement}
 {transcript_section}
 **话题背景**:
 {research_summary}

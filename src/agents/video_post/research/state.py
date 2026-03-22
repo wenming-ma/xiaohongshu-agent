@@ -14,9 +14,6 @@ class ResearchState:
     max_videos: int
     output_dir: Path | None
 
-    # Track attempted keywords for variation strategy
-    attempted_keywords: List[str] = field(default_factory=list)
-
     message_history: list[ModelMessage] = field(default_factory=list)
     current_result: VideoResearchResult | None = None
 

@@ -3,7 +3,7 @@ from typing import List
 from pydantic_ai import Agent
 
 from ....core.base_validator import InternalValidator, InternalValidationResult
-from ..schemas import VideoResearchResult, VideoSource, Platform
+from ..schemas import VideoResearchResult, VideoSource, Platform, ContentReviewResult
 from ....utils.providers import get_text_model
 from ....utils.logger import get_logger
 from .prompts import video_quality_system_prompt, video_quality_user_prompt
@@ -82,6 +82,7 @@ class VideoQualityValidator(InternalValidator):
             model = get_text_model()
             self.quality_agent = Agent(
                 model=model,
+                output_type=ContentReviewResult,
                 system_prompt=video_quality_system_prompt(),
             )
 
@@ -105,22 +106,22 @@ class VideoQualityValidator(InternalValidator):
 
         try:
             result = await self.quality_agent.run(prompt)
-            response_text = result.output
+            review: ContentReviewResult = result.output
 
-            score = self._extract_score(response_text)
-            passed = score >= self.pass_score
+            passed = review.score >= self.pass_score
 
             if passed:
-                feedback = f"✅ 质量评分: {score}/100 - 通过"
+                feedback = f"✅ 质量评分: {review.score}/100 - 通过"
             else:
-                feedback = f"❌ 质量评分: {score}/100 - 未通过\n\n{response_text}"
+                issues_str = "\n".join(f"- {issue}" for issue in review.issues) if review.issues else ""
+                feedback = f"❌ 质量评分: {review.score}/100 - 未通过\n{review.summary}\n{issues_str}"
 
-            logger.info(f"视频质量评估: {video.title[:30]}... - 评分: {score}/100 - {'通过' if passed else '未通过'}")
+            logger.info(f"视频质量评估: {video.title[:30]}... - 评分: {review.score}/100 - {'通过' if passed else '未通过'}")
 
             validation_result = InternalValidationResult(
                 passed=passed,
                 feedback=feedback,
-                score=score,
+                score=review.score,
             )
             self._log_result(validation_result)
             return validation_result
@@ -132,32 +133,6 @@ class VideoQualityValidator(InternalValidator):
                 feedback=f"质量评估失败: {str(e)}",
                 score=0.0,
             )
-
-    def _extract_score(self, text: str) -> float:
-        import re
-
-        score_patterns = [
-            r"总分[：:]\s*(\d+)",
-            r"得分[：:]\s*(\d+)",
-            r"评分[：:]\s*(\d+)",
-            r"(\d+)\s*分",
-            r"(\d+)/100",
-        ]
-
-        for pattern in score_patterns:
-            match = re.search(pattern, text)
-            if match:
-                return float(match.group(1))
-
-        lines = text.split("\n")
-        for line in lines:
-            if "总分" in line or "得分" in line or "评分" in line:
-                numbers = re.findall(r"\d+", line)
-                if numbers:
-                    return float(numbers[0])
-
-        logger.warning("未能从响应中提取评分，默认50分")
-        return 50.0
 
 
 class VideoListQualityFilter:

@@ -27,7 +27,7 @@ class XHSVideoPostPipeline(BasePipeline[XHSVideoPostInput, XHSVideoPostOutput]):
         from .publish import PublisherAgent
 
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        safe_topic = "".join(c for c in input_data.topic if c.isalnum() or c in " -_")[:20]
+        safe_topic = "".join(c for c in input_data.topic if c.isalnum() or c in "-_")[:20]
         output_dir = PathConfig.VIDEO_PROJECT_DIR / f"{timestamp}-{safe_topic}"
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -62,7 +62,7 @@ class XHSVideoPostPipeline(BasePipeline[XHSVideoPostInput, XHSVideoPostOutput]):
             logger.info("")
             logger.info(f"✅ 搜索完成: 找到 {research.sources_count} 个高质量视频源")
             for i, source in enumerate(research.sources, 1):
-                logger.info(f"   {i}. [{source.platform.value}] {source.title[:50]}...")
+                logger.info(f"   {i}. [{source.platform.value}] {source.title[:50]}{'...' if len(source.title) > 50 else ''}")
             logger.info("")
 
             # Phase 2: 下载最佳视频
@@ -161,9 +161,7 @@ class XHSVideoPostPipeline(BasePipeline[XHSVideoPostInput, XHSVideoPostOutput]):
             )
 
         except Exception as e:
-            logger.error(f"XHSVideoPostPipeline 执行失败: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception("XHSVideoPostPipeline 执行失败")
 
             return XHSVideoPostOutput(
                 success=False,

@@ -22,6 +22,7 @@ class PublisherAgent(BaseAgent):
     goal = "自动化发布视频到小红书平台"
 
     def __init__(self):
+        self._current_output_dir: Path | None = None
         self.init_mcp_server()
         super().__init__()
 
@@ -57,11 +58,13 @@ class PublisherAgent(BaseAgent):
     ) -> VideoPublishResult:
         logger.info("准备发布视频到小红书: %s", content.title)
 
-        # 重新初始化 MCP Server，使其 cwd 指向帖子目录，
-        # 这样 Playwright 才能访问该目录下的视频文件进行上传
-        self.init_mcp_server(output_dir)
-        self.init_tools()
-        self.init_agent()
+        # 仅在 output_dir 变化时重新初始化 MCP Server，
+        # 避免 with_retry 重试时重复创建浏览器实例
+        if self._current_output_dir != output_dir:
+            self._current_output_dir = output_dir
+            self.init_mcp_server(output_dir)
+            self.init_tools()
+            self.init_agent()
 
         self._check_video(video_path)
 
@@ -73,6 +76,7 @@ class PublisherAgent(BaseAgent):
 
         user_prompt = self.build_prompt(content, video_path)
         publish_result = await self.step(user_prompt)
+        publish_result.content_snapshot = content.model_dump()
 
         validation = await self.validate(publish_result)
         if not validation.passed:

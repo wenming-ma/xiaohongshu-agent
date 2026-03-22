@@ -85,8 +85,11 @@ class ResearchAgent(BaseAgent):
                     with logfire.span('video_research:iteration', iteration=iteration + 1):
                         await self.step(state, iteration)
 
+                        self._filtered_sources = None
                         validation = await self.validate(state.current_result)
                         if validation.passed:
+                            if self._filtered_sources is not None:
+                                state.current_result.sources = self._filtered_sources
                             logger.info("Search and quality review passed")
                             return state.current_result
 
@@ -138,8 +141,7 @@ class ResearchAgent(BaseAgent):
         )
 
         if len(quality_videos) >= self.quality_filter.min_quality_videos:
-            # 更新结果，只保留高质量视频
-            output.sources = quality_videos
+            self._filtered_sources = quality_videos
             logger.info(f"质量审核通过: {len(quality_videos)} 个高质量视频")
             return ValidationResult.success(f"找到 {len(quality_videos)} 个高质量视频")
         else:
