@@ -13,6 +13,10 @@ from ....utils.subtitle_generator import WhisperTranscriber, WhisperSubtitleGene
 logger = get_logger(__name__)
 
 PLATFORM_OPTS = {
+    Platform.YOUTUBE: {
+        "format": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "extra_args": [],
+    },
     Platform.X: {
         "format": "best[ext=mp4]/best",
         "extra_args": [],
@@ -132,41 +136,102 @@ class DownloadAgent(BaseAgent):
             logger.warning(f"转录过程异常（不影响下载结果）: {e}")
 
         try:
-            subtitle_gen = WhisperSubtitleGenerator()
             video_path = Path(result.local_path)
             output_dir = video_path.parent
             subtitled_path = output_dir / f"{video_path.stem}_subtitled{video_path.suffix}"
 
-            subtitle_result_obj = await subtitle_gen.generate_and_burn(
-                video_path=video_path,
-                output_path=subtitled_path,
-                target_language="zh",
-            )
+            # 优先使用 yt-dlp 下载的中文字幕（YouTube 等平台）
+            ytdlp_srt = self._find_ytdlp_subtitle(video_path)
+            if ytdlp_srt:
+                logger.info(f"发现 yt-dlp 下载的字幕文件: {ytdlp_srt.name}")
+                await self._burn_existing_subtitle(video_path, ytdlp_srt, subtitled_path)
 
-            from ..schemas import SubtitleResult, SubtitleSegment
-            result.subtitle = SubtitleResult(
-                success=subtitle_result_obj.success,
-                segments=[
-                    SubtitleSegment(start=seg.start, end=seg.end, text=seg.text)
-                    for seg in subtitle_result_obj.segments
-                ],
-                language=subtitle_result_obj.language,
-                translated=subtitle_result_obj.translated,
-                srt_path=subtitle_result_obj.srt_path,
-                video_with_subs=subtitle_result_obj.video_with_subs,
-                error_message=subtitle_result_obj.error_message,
-            )
-
-            if subtitle_result_obj.success:
-                result.local_path = subtitle_result_obj.video_with_subs
-                logger.info(f"字幕生成并烧录成功: {subtitled_path}")
+                from ..schemas import SubtitleResult
+                result.subtitle = SubtitleResult(
+                    success=True,
+                    language="zh",
+                    translated=True,
+                    srt_path=str(ytdlp_srt),
+                    video_with_subs=str(subtitled_path),
+                )
+                result.local_path = str(subtitled_path)
+                logger.info(f"使用平台字幕烧录成功: {subtitled_path}")
             else:
-                logger.warning(f"字幕生成失败: {subtitle_result_obj.error_message}")
+                # 回退到 Whisper 转录 + LLM 翻译
+                subtitle_gen = WhisperSubtitleGenerator()
+                subtitle_result_obj = await subtitle_gen.generate_and_burn(
+                    video_path=video_path,
+                    output_path=subtitled_path,
+                    target_language="zh",
+                )
+
+                from ..schemas import SubtitleResult, SubtitleSegment
+                result.subtitle = SubtitleResult(
+                    success=subtitle_result_obj.success,
+                    segments=[
+                        SubtitleSegment(start=seg.start, end=seg.end, text=seg.text)
+                        for seg in subtitle_result_obj.segments
+                    ],
+                    language=subtitle_result_obj.language,
+                    translated=subtitle_result_obj.translated,
+                    srt_path=subtitle_result_obj.srt_path,
+                    video_with_subs=subtitle_result_obj.video_with_subs,
+                    error_message=subtitle_result_obj.error_message,
+                )
+
+                if subtitle_result_obj.success:
+                    result.local_path = subtitle_result_obj.video_with_subs
+                    logger.info(f"Whisper 字幕生成并烧录成功: {subtitled_path}")
+                else:
+                    logger.warning(f"字幕生成失败: {subtitle_result_obj.error_message}")
 
         except Exception as e:
             logger.warning(f"字幕生成过程异常（不影响下载结果）: {e}")
 
         return result
+
+    def _find_ytdlp_subtitle(self, video_path: Path) -> Path | None:
+        """查找 yt-dlp 下载的中文字幕文件（优先中文，其次英文）"""
+        base = video_path.stem
+        parent = video_path.parent
+
+        # 按优先级查找中文字幕
+        for lang in ["zh-Hans", "zh-Hant", "zh"]:
+            srt = parent / f"{base}.{lang}.srt"
+            if srt.exists():
+                return srt
+            vtt = parent / f"{base}.{lang}.vtt"
+            if vtt.exists():
+                return vtt
+
+        return None
+
+    async def _burn_existing_subtitle(self, video_path: Path, srt_path: Path, output_path: Path) -> None:
+        """将已有字幕文件烧录到视频中"""
+        import subprocess
+
+        srt_path_escaped = str(srt_path).replace("\\", "/").replace(":", r"\:")
+
+        cmd = [
+            "ffmpeg", "-i", str(video_path),
+            "-vf", f"subtitles={srt_path_escaped}:force_style='FontName=Microsoft YaHei,FontSize=24,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,Shadow=1'",
+            "-c:a", "copy",
+            "-y", str(output_path),
+        ]
+
+        logger.info("烧录平台字幕到视频...")
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        _, stderr = await process.communicate()
+
+        if process.returncode != 0:
+            raise RuntimeError(f"ffmpeg 字幕烧录失败: {stderr.decode()[-500:]}")
+
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            raise RuntimeError("烧录后的视频文件为空")
 
     async def _download_with_ytdlp(self, source: VideoSource, output_dir: Path) -> Path:
         import yt_dlp
@@ -186,6 +251,15 @@ class DownloadAgent(BaseAgent):
             "socket_timeout": 30,
             "retries": 3,
         }
+
+        # YouTube: 尝试下载中文字幕（自动生成或人工上传）
+        if source.platform == Platform.YOUTUBE:
+            ydl_opts.update({
+                "writesubtitles": True,
+                "writeautomaticsub": True,
+                "subtitleslangs": ["zh-Hans", "zh-Hant", "zh", "en"],
+                "subtitlesformat": "srt",
+            })
 
         def _sync_download():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:

@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, computed_field
 
 
 class Platform(str, Enum):
+    YOUTUBE = "youtube"
     X = "x"
     INSTAGRAM = "instagram"
     FACEBOOK = "facebook"
@@ -14,7 +15,7 @@ class Platform(str, Enum):
 class XHSVideoPostInput(BaseModel):
     topic: str
     audience: str
-    platforms: List[Platform] = [Platform.X, Platform.INSTAGRAM, Platform.FACEBOOK, Platform.TIKTOK]
+    platforms: List[Platform] = [Platform.YOUTUBE, Platform.X, Platform.INSTAGRAM, Platform.FACEBOOK, Platform.TIKTOK]
     max_videos: int = Field(default=5, ge=1, le=20)
     publish: bool = True
 

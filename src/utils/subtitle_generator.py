@@ -173,7 +173,7 @@ class WhisperSubtitleGenerator:
             model = get_text_model()
             self.translation_agent = Agent(
                 model=model,
-                system_prompt="你是专业的字幕翻译专家。将英文字幕翻译成简洁自然的中文，保持口语化风格。",
+                system_prompt="你是专业的字幕翻译专家。将外语字幕翻译成简洁自然的中文，保持口语化风格。支持英语、日语、韩语、法语、西班牙语等所有语言到中文的翻译。",
             )
 
     async def generate_and_burn(
@@ -193,9 +193,9 @@ class WhisperSubtitleGenerator:
                 audio_path.unlink(missing_ok=True)
 
             translated = False
-            if detected_lang == "en" and target_language == "zh" and SUBTITLE_CONFIG["ENABLE_TRANSLATION"]:
-                logger.info("检测到英文，开始翻译成中文...")
-                segments = await self._translate_to_chinese(segments)
+            if detected_lang != "zh" and target_language == "zh" and SUBTITLE_CONFIG["ENABLE_TRANSLATION"]:
+                logger.info(f"检测到 {detected_lang}，开始翻译成中文...")
+                segments = await self._translate_to_chinese(segments, source_language=detected_lang)
                 translated = True
 
             srt_path = output_path.with_suffix(".srt")
@@ -278,8 +278,15 @@ class WhisperSubtitleGenerator:
         logger.info(f"转录完成: {len(segments)} 个字幕片段")
         return segments, detected_lang
 
-    async def _translate_to_chinese(self, segments: list[SubtitleSegment]) -> list[SubtitleSegment]:
+    async def _translate_to_chinese(self, segments: list[SubtitleSegment], source_language: str = "en") -> list[SubtitleSegment]:
         self._init_translation_agent()
+
+        LANG_NAMES = {
+            "en": "英文", "ja": "日文", "ko": "韩文", "fr": "法文",
+            "es": "西班牙文", "de": "德文", "pt": "葡萄牙文", "ru": "俄文",
+            "th": "泰文", "vi": "越南文", "ar": "阿拉伯文", "it": "意大利文",
+        }
+        lang_name = LANG_NAMES.get(source_language, f"{source_language} 语言")
 
         batch_size = 15
         translated_segments = []
@@ -287,10 +294,10 @@ class WhisperSubtitleGenerator:
         for i in range(0, len(segments), batch_size):
             batch = segments[i:i + batch_size]
             texts = [f"{j+1}. {seg.text}" for j, seg in enumerate(batch)]
-            prompt = "将以下英文字幕翻译成中文，保持简洁自然。只输出翻译后的文本，每行一条，格式为 '序号. 翻译内容'：\n\n" + "\n".join(texts)
+            prompt = f"将以下{lang_name}字幕翻译成中文，保持简洁自然。只输出翻译后的文本，每行一条，格式为 '序号. 翻译内容'：\n\n" + "\n".join(texts)
 
             result = await self.translation_agent.run(prompt)
-            translated_lines = result.data.strip().split("\n")
+            translated_lines = result.output.strip().split("\n")
 
             for j, seg in enumerate(batch):
                 if j < len(translated_lines):
