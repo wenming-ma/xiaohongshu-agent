@@ -4,11 +4,13 @@ from ..core.pipeline_registry import PipelineRegistry
 from .article_post import XHSArticlePostPipeline
 from .image_post import XHSImagePostPipeline
 from .video_post import XHSVideoPostPipeline
+from .styled_image_post import StyledImagePostPipeline
 
 IMPLEMENTED_PIPELINES = (
     XHSArticlePostPipeline,
     XHSImagePostPipeline,
     XHSVideoPostPipeline,
+    StyledImagePostPipeline,
 )
 
 
@@ -23,5 +25,6 @@ __all__ = [
     "XHSArticlePostPipeline",
     "XHSImagePostPipeline",
     "XHSVideoPostPipeline",
+    "StyledImagePostPipeline",
     "register_pipelines",
 ]

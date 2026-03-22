@@ -81,6 +81,7 @@ class GeminiImageClient:
         image_size: Optional[str] = None,
         aspect_ratio: Optional[str] = None,
         max_retries: int = _MAX_RETRIES,
+        reference_images: list[Path] | None = None,
     ) -> Path:
         """
         生成图片并保存到指定路径
@@ -99,16 +100,22 @@ class GeminiImageClient:
         ratio = aspect_ratio or self.aspect_ratio
 
         logger.info("开始生成图片: %s (size=%s, aspect_ratio=%s)", output_path.name, size, ratio)
+        if reference_images:
+            logger.info("附加 %d 张参考图片", len([p for p in reference_images if p.exists()]))
         logger.debug("提示词: %s...", prompt[:100])
 
         last_error = None
         for attempt in range(max_retries):
             try:
+                parts = []
+                for ref_path in (reference_images or []):
+                    if ref_path.exists():
+                        img_bytes = ref_path.read_bytes()
+                        mime = mimetypes.guess_type(str(ref_path))[0] or "image/jpeg"
+                        parts.append(types.Part.from_bytes(data=img_bytes, mime_type=mime))
+                parts.append(types.Part.from_text(text=prompt))
                 contents = [
-                    types.Content(
-                        role="user",
-                        parts=[types.Part.from_text(text=prompt)],
-                    ),
+                    types.Content(role="user", parts=parts),
                 ]
 
                 generate_content_config = types.GenerateContentConfig(
@@ -210,6 +217,7 @@ async def generate_gemini_image(
     output_path: Path,
     image_size: Optional[str] = None,
     aspect_ratio: Optional[str] = None,
+    reference_images: list[Path] | None = None,
 ) -> Path:
     """便捷函数：生成 Gemini 图片"""
     client = GeminiImageClient()
@@ -218,4 +226,5 @@ async def generate_gemini_image(
         output_path,
         image_size=image_size,
         aspect_ratio=aspect_ratio,
+        reference_images=reference_images,
     )

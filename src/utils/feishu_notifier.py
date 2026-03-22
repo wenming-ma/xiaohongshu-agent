@@ -11,6 +11,7 @@
 import asyncio
 import json
 import threading
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -25,7 +26,7 @@ from lark_oapi.api.im.v1 import (
 )
 
 from .logger import get_logger
-from ..config.settings import FeishuConfig
+from ..config.settings import FeishuConfig, PathConfig
 
 logger = get_logger(__name__)
 
@@ -57,7 +58,14 @@ class FeishuNotifier:
 
         self.app_id = FeishuConfig.APP_ID
         self.app_secret = FeishuConfig.APP_SECRET
-        self.chat_id = FeishuConfig.CHAT_ID
+        self.dm_mode = FeishuConfig.DM_MODE
+        if self.dm_mode:
+            self.receive_id = FeishuConfig.MENTION_USER_ID
+            self.receive_id_type = "open_id"
+        else:
+            self.receive_id = FeishuConfig.CHAT_ID
+            self.receive_id_type = "chat_id"
+        self.chat_id = self.receive_id
 
         if not self.app_id or not self.app_secret:
             logger.warning("FEISHU_APP_ID / FEISHU_APP_SECRET 未配置，飞书通知功能将不可用")
@@ -74,6 +82,9 @@ class FeishuNotifier:
             # 用于接收用户回复的队列
             self._reply_queue: asyncio.Queue[str] = asyncio.Queue()
 
+            # 用于接收图片/文本的结构化队列 (text, image_path)
+            self._media_queue: asyncio.Queue[tuple[str, Path | None]] = asyncio.Queue()
+
             # WebSocket 后台线程
             self._polling_thread: Optional[threading.Thread] = None
             self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -82,7 +93,8 @@ class FeishuNotifier:
             self._status_message_ids: dict[str, str] = {}
 
         FeishuNotifier._initialized = True
-        logger.info("FeishuNotifier 初始化完成")
+        mode = "私聊模式" if self.dm_mode else "群聊模式"
+        logger.info("FeishuNotifier 初始化完成 (%s)", mode)
 
     # ------------------------------------------------------------------
     # 消息轮询（WebSocket 长连接）
@@ -119,11 +131,25 @@ class FeishuNotifier:
                 asyncio.run_coroutine_threadsafe(
                     self._reply_queue.put(text), self._loop
                 )
+                asyncio.run_coroutine_threadsafe(
+                    self._media_queue.put((text, None)), self._loop
+                )
             elif msg.message_type == "image":
                 logger.debug("收到图片消息")
+                # 向 reply_queue 放入文本标记（向后兼容）
                 asyncio.run_coroutine_threadsafe(
                     self._reply_queue.put("[IMAGE]"), self._loop
                 )
+                # 向 media_queue 放入结构化数据（下载图片）
+                try:
+                    image_key = json.loads(msg.content).get("image_key", "")
+                    if image_key and msg.message_id:
+                        asyncio.run_coroutine_threadsafe(
+                            self._download_and_queue_image(msg.message_id, image_key),
+                            self._loop,
+                        )
+                except Exception as e:
+                    logger.warning(f"解析图片消息失败: {e}")
 
         event_handler = (
             lark.EventDispatcherHandler.builder("", "")
@@ -201,7 +227,7 @@ class FeishuNotifier:
         try:
             request = (
                 CreateMessageRequest.builder()
-                .receive_id_type("chat_id")
+                .receive_id_type(self.receive_id_type)
                 .request_body(
                     CreateMessageRequestBody.builder()
                     .receive_id(target_chat)
@@ -351,7 +377,7 @@ class FeishuNotifier:
             # 第二步：发送图片消息
             request = (
                 CreateMessageRequest.builder()
-                .receive_id_type("chat_id")
+                .receive_id_type(self.receive_id_type)
                 .request_body(
                     CreateMessageRequestBody.builder()
                     .receive_id(target_chat)
@@ -407,6 +433,100 @@ class FeishuNotifier:
         reply = await self._reply_queue.get()
         logger.debug(f"收到用户回复: {reply[:50]}...")
         return reply
+
+    # ------------------------------------------------------------------
+    # 图片下载与多媒体等待
+    # ------------------------------------------------------------------
+
+    async def _download_and_queue_image(self, message_id: str, image_key: str) -> None:
+        """Download image from Feishu and put path in media queue"""
+        try:
+            from lark_oapi.api.im.v1 import GetMessageResourceRequest
+
+            request = (
+                GetMessageResourceRequest.builder()
+                .message_id(message_id)
+                .file_key(image_key)
+                .type("image")
+                .build()
+            )
+
+            response = await asyncio.to_thread(
+                self.client.im.v1.message_resource.get, request
+            )
+
+            if response.success():
+                save_dir = PathConfig.DOWNLOADS_DIR
+                save_dir.mkdir(parents=True, exist_ok=True)
+                save_path = save_dir / f"feishu_img_{uuid.uuid4().hex[:8]}.jpg"
+
+                # response.file is a file-like object
+                save_path.write_bytes(response.file.read())
+                logger.debug(f"飞书图片已下载: {save_path}")
+                await self._media_queue.put(("", save_path))
+            else:
+                logger.warning(f"下载飞书图片失败: code={response.code}, msg={response.msg}")
+                await self._media_queue.put(("[IMAGE_DOWNLOAD_FAILED]", None))
+        except Exception as e:
+            logger.warning(f"下载飞书图片异常: {e}")
+            await self._media_queue.put(("[IMAGE_DOWNLOAD_FAILED]", None))
+
+    async def wait_for_image_or_text(self) -> tuple[Path | None, str]:
+        """等待用户回复，返回 (图片路径, 文本)。图片和文本互斥。"""
+        if self.client is None:
+            return None, ""
+
+        if self._polling_thread is None:
+            await self.start_polling()
+
+        text, image_path = await self._media_queue.get()
+        return image_path, text
+
+    async def collect_images(
+        self,
+        prompt: str,
+        save_dir: Path,
+        done_keyword: str = "完成",
+        skip_keyword: str = "跳过",
+        next_keyword: str = "下一组",
+        max_images: int = 5,
+    ) -> tuple[list[Path], str]:
+        """发送提示并循环收集多张图片，直到用户回复关键词。
+
+        Returns:
+            (图片路径列表, 停止原因: "done"/"skip"/"next"/"max_reached")
+        """
+        if self.client is None:
+            return [], "skip"
+
+        await self.send_message(prompt)
+
+        collected: list[Path] = []
+        while len(collected) < max_images:
+            image_path, text = await self.wait_for_image_or_text()
+
+            if image_path is not None:
+                # User sent an image - copy to save_dir
+                dest = save_dir / f"ref_{len(collected) + 1:03d}{image_path.suffix or '.jpg'}"
+                import shutil
+                shutil.copy2(image_path, dest)
+                collected.append(dest)
+                logger.debug(f"收集参考图片 {len(collected)}: {dest}")
+                continue
+
+            # User sent text
+            text_lower = text.strip().lower()
+            if text_lower == done_keyword or text == done_keyword:
+                return collected, "done"
+            if text_lower == skip_keyword or text == skip_keyword:
+                return collected, "skip"
+            if text_lower == next_keyword or text == next_keyword:
+                return collected, "next"
+
+            # Unknown text, treat as continue signal
+            logger.debug(f"收到未知文本回复: {text}, 继续等待图片")
+
+        return collected, "max_reached"
 
     # ------------------------------------------------------------------
     # 便捷方法

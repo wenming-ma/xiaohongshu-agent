@@ -115,6 +115,7 @@ class FeishuConfig:
     CHAT_ID = os.getenv("FEISHU_CHAT_ID")
     MENTION_USER_ID = os.getenv("FEISHU_MENTION_USER_ID", "ou_4f24c411b1b8363b40a0ca18507db836")
     MENTION_USER_NAME = os.getenv("FEISHU_MENTION_USER_NAME", "马旖旎")
+    DM_MODE = os.getenv("FEISHU_DM_MODE", "0").lower() in ("1", "true", "yes", "on")
 
 
 class UserProfileConfig:
@@ -146,6 +147,11 @@ class SanitizerConfig:
     COLOR_JITTER_AB = float(os.getenv("IMAGE_SANITIZER_JITTER_AB", "2.0"))
     # Stage 4: JPEG 重编码
     JPEG_QUALITY = int(os.getenv("IMAGE_SANITIZER_JPEG_QUALITY", "85"))
+
+
+class ReferenceImageConfig:
+    ENABLED = os.getenv("REFERENCE_IMAGE_ENABLED", "1") == "1"
+    MAX_IMAGES_PER_GROUP = int(os.getenv("REFERENCE_IMAGE_MAX_PER_GROUP", "5"))
 
 
 class SubtitleConfig:
