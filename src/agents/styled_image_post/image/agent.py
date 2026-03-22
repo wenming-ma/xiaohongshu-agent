@@ -397,7 +397,19 @@ class ImageAgent(BaseAgent):
             logger.info("根据验证反馈重新生成提示词: %s", gen_ctx.validation_feedback[:100])
 
         result = await self.prompt_generator.run(user_prompt, deps=gen_ctx)
-        return result.output
+        prompt_text = result.output
+
+        # 校验：有参考图时，生成的提示词必须包含引用指令
+        if has_reference_images:
+            ref_keywords = ("reference", "attached", "参照", "参考")
+            if not any(kw in prompt_text.lower() for kw in ref_keywords):
+                logger.warning("生成的提示词未包含参考图片引用，自动注入兜底指令")
+                prompt_text += (
+                    "\n\nIMPORTANT: The attached reference images show the exact products to feature. "
+                    "Match their appearance (color, shape, texture, design) precisely in the generated image."
+                )
+
+        return prompt_text
 
     async def generate_via_api(
         self,

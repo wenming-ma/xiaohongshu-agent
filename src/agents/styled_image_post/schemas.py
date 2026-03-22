@@ -63,11 +63,20 @@ class ReferenceImageResult(BaseModel):
     groups: list[ReferenceImageGroup] = []
     skipped: bool = False
 
-    def get_images_for_group(self, group_index: int) -> list[Path]:
-        """获取该分组所有物品的所有参考图（平铺）"""
+    def get_images_for_group(self, group_index: int, max_total: int = 0) -> list[Path]:
+        """获取该分组所有物品的所有参考图（平铺，可截断）"""
+        from ..config.settings import ReferenceImageConfig
+        cap = max_total or ReferenceImageConfig.MAX_TOTAL_IMAGES_PER_GROUP
         for g in self.groups:
             if g.group_index == group_index:
-                return [Path(p) for item in g.items for p in item.image_paths]
+                all_paths = [Path(p) for item in g.items for p in item.image_paths]
+                if len(all_paths) > cap:
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        "分组 %d 参考图片 %d 张超过上限 %d，截断", group_index, len(all_paths), cap
+                    )
+                    return all_paths[:cap]
+                return all_paths
         return []
 
     def has_images_for_group(self, group_index: int) -> bool:

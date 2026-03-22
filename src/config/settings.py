@@ -151,7 +151,8 @@ class SanitizerConfig:
 
 class ReferenceImageConfig:
     ENABLED = os.getenv("REFERENCE_IMAGE_ENABLED", "1") == "1"
-    MAX_IMAGES_PER_GROUP = int(os.getenv("REFERENCE_IMAGE_MAX_PER_GROUP", "5"))
+    MAX_IMAGES_PER_ITEM = int(os.getenv("REFERENCE_IMAGE_MAX_PER_ITEM", "3"))
+    MAX_TOTAL_IMAGES_PER_GROUP = int(os.getenv("REFERENCE_IMAGE_MAX_TOTAL_PER_GROUP", "6"))
 
 
 class SubtitleConfig:

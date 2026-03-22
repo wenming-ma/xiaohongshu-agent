@@ -218,14 +218,14 @@ class GeminiWebImageClient:
                         f"\n会话目录: {self._active_session_dir}"
                     )
 
-                # 4a. 上传参考图片（如果有）
-                if valid_refs:
-                    await self._upload_reference_images(page, valid_refs)
-
-                # 4b. 激活 "Create image" + Pro 模式
+                # 4a. 激活 "Create image" + Pro 模式
                 result = await page.evaluate(_ACTIVATE_JS)
                 if result != "OK":
                     raise RuntimeError(f"工具激活失败: {result}")
+
+                # 4b. 上传参考图片（激活 Create image 后上传，避免模式切换清除附件）
+                if valid_refs:
+                    await self._upload_reference_images(page, valid_refs)
 
                 # 4c. 输入提示词到编辑器
                 editor = page.locator('[aria-label="Enter a prompt for Gemini"]')

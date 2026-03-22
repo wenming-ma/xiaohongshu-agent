@@ -118,7 +118,7 @@ class CollectAgent(BaseAgent):
                     done_keyword="完成",
                     skip_keyword="跳过",
                     next_keyword="下一个",
-                    max_images=ReferenceImageConfig.MAX_IMAGES_PER_GROUP,
+                    max_images=ReferenceImageConfig.MAX_IMAGES_PER_ITEM,
                 )
 
                 if stop_reason == "skip":
@@ -137,7 +137,7 @@ class CollectAgent(BaseAgent):
                         done_keyword="完成",
                         skip_keyword="跳过",
                         next_keyword="确定",
-                        max_images=ReferenceImageConfig.MAX_IMAGES_PER_GROUP,
+                        max_images=ReferenceImageConfig.MAX_IMAGES_PER_ITEM,
                     )
                     images.extend(more_images)
                     if reason2 == "skip":
