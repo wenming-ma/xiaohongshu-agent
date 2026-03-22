@@ -238,21 +238,21 @@ class ResearchReviewValidator(InternalValidator):
         dimension_results: list[ResearchDimensionReviewResult],
     ) -> ArticleResearchReviewResult:
         all_issues: list[ArticleResearchReviewIssue] = []
-        score = 100.0
         has_critical = False
 
         for dimension_result in dimension_results:
             for issue in dimension_result.issues:
                 all_issues.append(issue)
                 if issue.severity == "critical":
-                    score -= ReviewConfig.CRITICAL_PENALTY
                     has_critical = True
-                elif issue.severity == "warning":
-                    score -= ReviewConfig.WARNING_PENALTY
-                else:
-                    score -= ReviewConfig.INFO_PENALTY
 
-        score = max(score, 0.0)
+        # Use average of per-dimension scores (LLM-judged) instead of
+        # independent penalty calculation that could contradict dimension scores
+        score = (
+            sum(dr.score for dr in dimension_results) / len(dimension_results)
+            if dimension_results
+            else 0.0
+        )
         passed = score >= ReviewConfig.PASS_SCORE and not has_critical
         return ArticleResearchReviewResult(
             passed=passed,
