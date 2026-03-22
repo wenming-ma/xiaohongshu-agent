@@ -433,7 +433,7 @@ class CollectorCurator:
                 and videos_used < self.MAX_VIDEO_TRANSCRIPTS
                 and (wants_video or not any(source.transcript for source in state.collected_sources))
             ):
-                video_url = select_best_video_url(read_result)
+                video_url = select_best_video_url(read_result, result.url)
                 if video_url:
                     transcript_result = await self.video_transcriber.transcribe(video_url)
                     if transcript_result.success:

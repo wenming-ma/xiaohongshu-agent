@@ -612,12 +612,16 @@ def is_video_candidate(url: str, read_result: ReadPageResult) -> bool:
     return any(any(pattern in item for pattern in VIDEO_HOST_PATTERNS) for item in all_urls if item)
 
 
-def select_best_video_url(read_result: ReadPageResult) -> str:
+def select_best_video_url(read_result: ReadPageResult, page_url: str = "") -> str:
     candidates = [*read_result.video_urls, *read_result.iframe_urls]
     for candidate in candidates:
         if any(pattern in candidate for pattern in VIDEO_HOST_PATTERNS):
             return candidate
-    return candidates[0] if candidates else ""
+    if candidates:
+        return candidates[0]
+    if page_url and any(pattern in page_url for pattern in VIDEO_HOST_PATTERNS):
+        return page_url
+    return ""
 
 
 def score_candidate(
