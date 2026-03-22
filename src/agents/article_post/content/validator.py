@@ -172,18 +172,45 @@ class ContentReviewValidator(InternalValidator):
 
     @staticmethod
     def _build_feedback(review: ArticleReviewResult) -> str:
+        # Separate passed and failed dimensions so the model knows what NOT to break
+        passed_dims: list[str] = []
+        failed_dims: list[str] = []
+        for dr in review.dimension_results:
+            label = _DIMENSION_LABELS.get(dr.dimension, dr.dimension.value)
+            if dr.passed:
+                passed_dims.append(f"{label}({dr.score:.0f}分)")
+            else:
+                failed_dims.append(label)
+
         lines: list[str] = [
             f"**内容审核未通过**\n\n"
-            f"**审核评分**：{review.score:.1f}/100\n\n"
-            f"**具体问题**：",
+            f"**审核评分**：{review.score:.1f}/100\n",
         ]
+
+        if passed_dims:
+            lines.append(f"**已通过维度（请勿破坏）**：{', '.join(passed_dims)}\n")
+        if failed_dims:
+            lines.append(f"**需修复维度**：{', '.join(failed_dims)}\n")
+
+        # Only include issues from failed dimensions + critical issues from passed ones
+        lines.append("**具体问题**：")
         for dr in review.dimension_results:
-            if not dr.issues:
-                continue
             label = _DIMENSION_LABELS.get(dr.dimension, dr.dimension.value)
-            lines.append(f"\n### {label}")
-            for issue in dr.issues:
-                marker = _SEVERITY_MARKERS.get(issue.severity, "i")
-                suggestion = f"（建议：{issue.suggestion}）" if issue.suggestion else ""
-                lines.append(f"- [{marker}] {issue.description}{suggestion}")
+            if dr.passed:
+                # For passed dimensions, only surface critical issues (shouldn't exist, but safety net)
+                critical_issues = [i for i in dr.issues if i.severity == "critical"]
+                if not critical_issues:
+                    continue
+                lines.append(f"\n### {label}（已通过，仅需修复 critical）")
+                for issue in critical_issues:
+                    suggestion = f"（建议：{issue.suggestion}）" if issue.suggestion else ""
+                    lines.append(f"- [!!!] {issue.description}{suggestion}")
+            else:
+                if not dr.issues:
+                    continue
+                lines.append(f"\n### {label}（未通过，{dr.score:.0f}分）")
+                for issue in dr.issues:
+                    marker = _SEVERITY_MARKERS.get(issue.severity, "i")
+                    suggestion = f"（建议：{issue.suggestion}）" if issue.suggestion else ""
+                    lines.append(f"- [{marker}] {issue.description}{suggestion}")
         return "\n".join(lines)
