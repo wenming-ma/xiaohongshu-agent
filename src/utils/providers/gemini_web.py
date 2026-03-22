@@ -317,24 +317,27 @@ class GeminiWebImageClient:
             await editor.click()
             await asyncio.sleep(0.5)
 
-            # 点击上传菜单按钮
-            upload_btn = page.locator('[aria-label="Open upload file menu"]')
-            if not await upload_btn.count():
-                # 菜单可能已展开
-                upload_btn = page.locator('[aria-label="Close upload file menu"]')
-            await upload_btn.click()
-            await asyncio.sleep(0.5)
+            # 点击上传菜单按钮（可能是 Open 或 Close 状态）
+            open_btn = page.locator('[aria-label="Open upload file menu"]')
+            if await open_btn.count():
+                await open_btn.click()
+                await asyncio.sleep(0.5)
 
-            # 设置 filechooser 监听并点击 "Upload files"
+            # 通过 filechooser 上传文件
+            upload_item = page.locator('[data-test-id="local-images-files-uploader-button"]')
             async with page.expect_file_chooser(timeout=10000) as fc_info:
-                upload_item = page.locator('text=Upload files').first
                 await upload_item.click()
-
             file_chooser = await fc_info.value
             await file_chooser.set_files(str(img_path))
 
-            # 等待上传完成（观察附件预览出现）
-            await asyncio.sleep(2)
+            # 等待上传完成（Loading image 消失）
+            loading = page.locator('text=Loading image')
+            if await loading.count():
+                try:
+                    await loading.wait_for(state="hidden", timeout=30000)
+                except Exception:
+                    logger.warning("[GeminiWeb] 等待图片上传超时，继续执行")
+            await asyncio.sleep(1)
             logger.debug("[GeminiWeb] 参考图片 %d 上传完成", i + 1)
 
         logger.info("[GeminiWeb] %d 张参考图片上传完成", len(image_paths))
