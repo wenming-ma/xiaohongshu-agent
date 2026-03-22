@@ -224,8 +224,8 @@ class ImageAgent(BaseAgent):
                                     if item.image_paths
                                 ]
                                 break
-                    except (ValueError, IndexError):
-                        pass
+                    except (ValueError, IndexError) as e:
+                        logger.warning("解析分组索引失败 image_type=%s: %s", image_type, e)
 
             generated_image = await self.step(
                 content=content,

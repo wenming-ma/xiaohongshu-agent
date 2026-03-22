@@ -167,7 +167,7 @@ class CollectAgent(BaseAgent):
         if not validation.passed:
             logger.warning("参考图片收集验证: %s", validation.feedback)
 
-        total = sum(len(p) for g in collected_groups for item in g.items for p in [item.image_paths])
+        total = sum(len(item.image_paths) for g in collected_groups for item in g.items)
         logger.info("参考图片收集完成: %d 个分组, %d 张图片", len(collected_groups), total)
         return result
 

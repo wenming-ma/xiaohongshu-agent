@@ -1,6 +1,6 @@
 """XHS Styled Image Post Schemas"""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from pydantic import BaseModel, Field, computed_field
 from typing import List, Optional, Dict, Any, TypedDict
@@ -81,11 +81,7 @@ class ImageGenContext:
     topic: str = ""
     image_type: str = ""
     validation_feedback: str = ""
-    reference_item_names: list[str] = None  # 有参考图的物品名称列表
-
-    def __post_init__(self):
-        if self.reference_item_names is None:
-            self.reference_item_names = []
+    reference_item_names: list[str] = field(default_factory=list)
 
 
 class GroupSpec(TypedDict):

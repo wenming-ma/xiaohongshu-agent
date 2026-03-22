@@ -215,7 +215,7 @@ class GeminiWebImageClient:
                 if not is_logged_in:
                     raise RuntimeError(
                         "Gemini Web 未登录。请手动在浏览器中登录 Google 账号后重试。"
-                        f"\n会话目录: {self._session_dir}"
+                        f"\n会话目录: {self._active_session_dir}"
                     )
 
                 # 4a. 上传参考图片（如果有）
