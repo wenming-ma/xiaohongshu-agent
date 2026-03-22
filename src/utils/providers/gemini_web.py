@@ -219,20 +219,39 @@ class GeminiWebImageClient:
                 if result != "OK":
                     raise RuntimeError(f"工具激活失败: {result}")
 
-                # 4b. 通过 Playwright 剪贴板粘贴输入完整提示词
-                #     Gemini 富文本编辑器不响应 execCommand/合成 paste 事件，
-                #     必须用真实键盘操作 (Ctrl+V) 触发编辑器内部模型同步。
+                # 4b. 输入提示词到编辑器
                 editor = page.locator('[aria-label="Enter a prompt for Gemini"]')
                 await editor.click()
                 await page.keyboard.press("Control+A")
                 await page.keyboard.press("Delete")
+
+                # 尝试剪贴板粘贴（需要窗口焦点，可能失败）
                 await page.evaluate("(text) => navigator.clipboard.writeText(text)", prompt)
                 await page.keyboard.press("Control+V")
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(1)
 
-                # 4c. 点击发送
+                # 验证文本是否已输入，未输入则用 insertText 降级
+                has_text = await page.evaluate("""
+                    () => {
+                        const el = document.querySelector('[aria-label="Enter a prompt for Gemini"]');
+                        return el && el.textContent.trim().length > 0;
+                    }
+                """)
+                if not has_text:
+                    logger.warning("[GeminiWeb] 剪贴板粘贴未生效，改用 insertText 输入")
+                    await editor.click()
+                    await page.keyboard.insert_text(prompt)
+                    await asyncio.sleep(0.5)
+
+                # 4c. 等待发送按钮可用后点击
                 send_btn = page.locator('[aria-label="Send message"]')
-                await send_btn.click()
+                try:
+                    await send_btn.click(timeout=10000)
+                except Exception:
+                    # 发送按钮仍不可用，尝试 Enter 发送
+                    logger.warning("[GeminiWeb] 发送按钮不可用，尝试按 Enter 发送")
+                    await editor.focus()
+                    await page.keyboard.press("Enter")
 
                 logger.info("[GeminiWeb] 提示词已发送，等待图片生成...")
 

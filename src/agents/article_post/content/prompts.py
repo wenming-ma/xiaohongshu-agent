@@ -63,7 +63,7 @@ CONTENT_USER_PROMPT_TEMPLATE = """## 创作任务
 - `synthesize`: 多源整合输出新的中文长文，不列出参考来源
 
 ## 强约束
-- 标题 16-30 字，适合小红书长文
+- 标题不超过 20 字，适合小红书长文
 - lead 需要快速说明价值和看点
 - 至少 3 个 sections
 - closing 必须单独填写为正式收尾段落，不能为空，也不能只把收尾藏在最后一个 section
@@ -142,7 +142,7 @@ STRUCTURE_REVIEW_SYSTEM_PROMPT = """\
 按以下步骤逐项检查：
 
 ### 1. 必填字段完整性
-- title 是否存在且长度在 16-30 字？
+- title 是否存在且不超过 20 字？
 - lead 是否存在且 >= 30 字？
 - sections 是否 >= 3 个？
 - rendered_body 是否非空？

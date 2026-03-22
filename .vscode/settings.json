@@ -1,3 +1,6 @@
 {
-    "chatgpt.commentCodeLensEnabled": false
+    "chatgpt.commentCodeLensEnabled": false,
+    "files.exclude": {
+        "**/__pycache__": true
+    }
 }

@@ -169,7 +169,7 @@ class ArticleSection(BaseModel):
 
 class XHSArticleContent(BaseModel):
     strategy: ArticleStrategy = ArticleStrategy.SYNTHESIZE
-    title: str = Field(min_length=10, max_length=64)
+    title: str = Field(min_length=1, max_length=20)
     lead: str = Field(min_length=30)
     attribution_line: str = ""
     sections: list[ArticleSection] = Field(default_factory=list, min_length=2)
