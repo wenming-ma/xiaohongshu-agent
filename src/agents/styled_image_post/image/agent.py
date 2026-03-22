@@ -37,6 +37,7 @@ from .prompts import (
     image_grouping_system_prompt,
     image_grouping_review_system_prompt,
     REFERENCE_IMAGE_INSTRUCTION,
+    REFERENCE_IMAGE_SYSTEM_ADDENDUM,
 )
 from .utils import (
     build_compact_items,
@@ -99,9 +100,13 @@ class ImageAgent(BaseAgent):
         @self.prompt_generator.system_prompt
         async def dynamic_system_prompt(ctx: RunContext[ImageGenContext]) -> str:
             base_prompt = image_system_prompt()
+
+            # 有参考图片时，追加参考图片生成规则
+            if ctx.deps.reference_item_names:
+                base_prompt += REFERENCE_IMAGE_SYSTEM_ADDENDUM
+
             if ctx.deps.validation_feedback:
-                return (
-                    base_prompt +
+                base_prompt += (
                     "\n\n## 上次生成的图片问题（必须修复）\n"
                     f"{ctx.deps.validation_feedback}\n\n"
                     "请根据上述反馈调整提示词，确保生成的图片符合要求。"
@@ -202,14 +207,23 @@ class ImageAgent(BaseAgent):
         # 3. 逐张生成图片
         generated_images: list[GeneratedImage] = []
         for spec in image_specs:
-            # 查找当前 spec 对应的参考图片
+            # 查找当前 spec 对应的参考图片和物品名
             ref_paths: list[Path] | None = None
+            ref_item_names: list[str] = []
             if reference_images and not reference_images.skipped:
                 image_type = spec["type"]
                 if image_type.startswith("detail_"):
                     try:
                         group_idx = int(image_type.split("_")[1]) - 1
                         ref_paths = reference_images.get_images_for_group(group_idx) or None
+                        # 提取有参考图的物品名
+                        for g in reference_images.groups:
+                            if g.group_index == group_idx:
+                                ref_item_names = [
+                                    item.item_name for item in g.items
+                                    if item.image_paths
+                                ]
+                                break
                     except (ValueError, IndexError):
                         pass
 
@@ -220,6 +234,7 @@ class ImageAgent(BaseAgent):
                 output_dir=output_dir,
                 image_spec=spec,
                 ref_image_paths=ref_paths,
+                ref_item_names=ref_item_names,
             )
             generated_images.append(generated_image)
             logger.info("%s 生成完成", spec["type"])
@@ -249,6 +264,7 @@ class ImageAgent(BaseAgent):
         output_dir: Path,
         image_spec: ImageTypeSpec,
         ref_image_paths: list[Path] | None = None,
+        ref_item_names: list[str] | None = None,
     ) -> GeneratedImage:
         """
         工作流子步骤：生成单张图片
@@ -260,18 +276,20 @@ class ImageAgent(BaseAgent):
             output_dir: 输出目录
             image_spec: 图片规格
             ref_image_paths: 参考图片路径列表（可选）
-
-        Returns:
-            GeneratedImage: 生成的图片
+            ref_item_names: 有参考图的物品名称列表（可选）
         """
         image_type = image_spec["type"]
         image_desc = image_spec.get("desc", "")
 
         logger.info("[%s] %s", image_type, image_desc)
         if ref_image_paths:
-            logger.info("附加 %d 张参考图片", len(ref_image_paths))
+            logger.info("附加 %d 张参考图片 (物品: %s)", len(ref_image_paths), ", ".join(ref_item_names or []))
 
-        gen_ctx = ImageGenContext(topic=topic, image_type=image_type)
+        gen_ctx = ImageGenContext(
+            topic=topic,
+            image_type=image_type,
+            reference_item_names=ref_item_names or [],
+        )
 
         logger.info("启动 Gemini API 图片生成...")
         image_path, final_prompt = await self.generate_via_api(
@@ -363,8 +381,16 @@ class ImageAgent(BaseAgent):
             image_desc=image_desc,
         )
 
-        # 追加参考图片指令
-        if has_reference_images:
+        # 追加参考图片指令（含具体物品名）
+        if has_reference_images and gen_ctx.reference_item_names:
+            items_list = "、".join(gen_ctx.reference_item_names)
+            user_prompt += (
+                f"\n\n{REFERENCE_IMAGE_INSTRUCTION}\n"
+                f"以下物品已附上参考图片：**{items_list}**\n"
+                "在提示词中，描述这些物品时必须明确指示「参照附图中该物品的外观」，"
+                "包括颜色、款式、材质等视觉特征。"
+            )
+        elif has_reference_images:
             user_prompt += "\n\n" + REFERENCE_IMAGE_INSTRUCTION
 
         if gen_ctx.validation_feedback:

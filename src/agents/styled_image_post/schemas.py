@@ -81,6 +81,11 @@ class ImageGenContext:
     topic: str = ""
     image_type: str = ""
     validation_feedback: str = ""
+    reference_item_names: list[str] = None  # 有参考图的物品名称列表
+
+    def __post_init__(self):
+        if self.reference_item_names is None:
+            self.reference_item_names = []
 
 
 class GroupSpec(TypedDict):

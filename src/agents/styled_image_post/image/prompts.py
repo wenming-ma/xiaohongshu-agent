@@ -472,6 +472,24 @@ def image_quality_review_user_prompt(**variables: object) -> str:
     return render_template(IMAGE_QUALITY_REVIEW_USER_PROMPT_TEMPLATE, **variables)
 
 
+REFERENCE_IMAGE_SYSTEM_ADDENDUM = """
+
+## 🔴 参考图片模式（本次生成启用）
+
+本次生成附带了用户提供的产品参考图片。你生成的提示词必须适配这种"参考图+文本"的多模态输入模式。
+
+### 核心规则
+1. **在提示词中明确引用参考图**：对于有参考图的物品，提示词中必须写出类似 "the [物品名] matches the exact appearance shown in the attached reference photo, including its color, shape, texture and design details" 的指令
+2. **逐物品描述外观时引用参考图**：不要自行编造物品的颜色/款式/材质，而是指示模型"参照附图"
+3. **保持叙事风格**：仍然用叙事性段落描述整体场景，但在涉及有参考图的物品时，用 "as shown in the reference image" 等短语引导
+4. **没有参考图的物品**：正常描述，可以自由选择外观
+
+### 示例（有参考图的物品：渔夫帽、阔腿裤）
+```
+...She wears a cream-colored fisherman hat matching the exact style, color and texture shown in the attached reference photo — its soft brim and woven pattern faithfully reproduced. ...Her wide-leg pants replicate the reference image precisely: the same dark navy fabric, high-waisted cut, and slightly cropped length...
+```
+"""
+
 REFERENCE_IMAGE_INSTRUCTION = """## 参考图片说明
 已附上产品参考图片，展示了本图中推荐产品的真实外观。
 
@@ -495,4 +513,5 @@ __all__ = [
     "image_quality_review_system_prompt",
     "image_quality_review_user_prompt",
     "REFERENCE_IMAGE_INSTRUCTION",
+    "REFERENCE_IMAGE_SYSTEM_ADDENDUM",
 ]
