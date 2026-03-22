@@ -203,12 +203,12 @@ class GeminiWebImageClient:
                 # 1. 导航到 Gemini（每次新聊天，避免上下文污染）
                 await page.goto(gemini_url, wait_until="domcontentloaded", timeout=30000)
 
-                # 2. 等待页面加载（等待编辑器 + 额外等待确保快捷按钮渲染）
+                # 2. 等待页面加载（编辑器 + 网络空闲）
                 await page.wait_for_selector(
                     '[aria-label="Enter a prompt for Gemini"]',
-                    timeout=15000,
+                    timeout=30000,
                 )
-                await asyncio.sleep(2)
+                await page.wait_for_load_state("networkidle", timeout=15000)
 
                 # 3. 检查登录状态
                 is_logged_in = await page.evaluate(_CHECK_LOGIN_JS)
@@ -315,29 +315,40 @@ class GeminiWebImageClient:
             # 点击编辑器激活上传按钮
             editor = page.locator('[aria-label="Enter a prompt for Gemini"]')
             await editor.click()
-            await asyncio.sleep(0.5)
 
-            # 点击上传菜单按钮（可能是 Open 或 Close 状态）
+            # 等待上传按钮出现（网络慢时可能延迟渲染）
             open_btn = page.locator('[aria-label="Open upload file menu"]')
-            if await open_btn.count():
+            try:
+                await open_btn.wait_for(state="visible", timeout=5000)
                 await open_btn.click()
-                await asyncio.sleep(0.5)
+            except Exception:
+                pass  # 菜单可能已展开
+
+            # 等待 Upload files 按钮出现
+            upload_item = page.locator('[data-test-id="local-images-files-uploader-button"]')
+            await upload_item.wait_for(state="visible", timeout=5000)
 
             # 通过 filechooser 上传文件
-            upload_item = page.locator('[data-test-id="local-images-files-uploader-button"]')
             async with page.expect_file_chooser(timeout=10000) as fc_info:
                 await upload_item.click()
             file_chooser = await fc_info.value
             await file_chooser.set_files(str(img_path))
 
-            # 等待上传完成（Loading image 消失）
+            # 等待上传完成：先等 "Loading image" 出现，再等它消失
             loading = page.locator('text=Loading image')
-            if await loading.count():
+            try:
+                await loading.wait_for(state="visible", timeout=5000)
+                await loading.wait_for(state="hidden", timeout=60000)
+            except Exception:
+                # Loading 可能太快闪过，或超时 — 改用 Image preview 确认
+                logger.debug("[GeminiWeb] Loading 状态未捕获，等待预览图出现")
                 try:
-                    await loading.wait_for(state="hidden", timeout=30000)
+                    await page.locator('button:has-text("Remove file")').last.wait_for(
+                        state="visible", timeout=30000
+                    )
                 except Exception:
-                    logger.warning("[GeminiWeb] 等待图片上传超时，继续执行")
-            await asyncio.sleep(1)
+                    logger.warning("[GeminiWeb] 等待图片上传确认超时，继续执行")
+
             logger.debug("[GeminiWeb] 参考图片 %d 上传完成", i + 1)
 
         logger.info("[GeminiWeb] %d 张参考图片上传完成", len(image_paths))
