@@ -10,31 +10,31 @@ from ..schemas import VideoSource, DownloadResult, Platform
 from ....utils.logger import get_logger
 from ....utils.subtitle_generator import WhisperTranscriber, WhisperSubtitleGenerator, pick_subtitle_style
 from ....utils.font_selector import FontSelectorAgent, get_font_info, get_fonts_dir
+from ....utils.cookies import get_cookie_config
 
 logger = get_logger(__name__)
 
 PLATFORM_OPTS = {
     Platform.YOUTUBE: {
         "format": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-        "cookiesfrombrowser": ("chrome",),
+        "needs_cookies": True,
     },
     Platform.X: {
         "format": "best[ext=mp4]/best",
-        "extra_args": [],
     },
     Platform.INSTAGRAM: {
         "format": "best[ext=mp4]/best",
-        "cookiesfrombrowser": ("chrome",),
+        "needs_cookies": True,
     },
     Platform.FACEBOOK: {
         "format": "best[ext=mp4]/best",
-        "extra_args": [],
     },
     Platform.TIKTOK: {
         "format": "best[ext=mp4]/best",
-        "extra_args": [],
     },
 }
+
+_COOKIE_DB_ERROR = "Could not copy Chrome cookie database"
 
 MIN_FILE_SIZE = 100 * 1024  # 100KB
 MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB
@@ -488,6 +488,8 @@ class DownloadAgent(BaseAgent):
 
         platform_opts = PLATFORM_OPTS.get(source.platform, {})
         format_spec = platform_opts.get("format", "best[ext=mp4]/best")
+        needs_cookies = platform_opts.get("needs_cookies", False)
+        cookie_cfg = get_cookie_config() if needs_cookies else {}
 
         ydl_opts = {
             "format": format_spec,
@@ -497,13 +499,11 @@ class DownloadAgent(BaseAgent):
             "merge_output_format": "mp4",
             "socket_timeout": 30,
             "retries": 3,
+            **cookie_cfg,
         }
-        if "cookiesfrombrowser" in platform_opts:
-            ydl_opts["cookiesfrombrowser"] = platform_opts["cookiesfrombrowser"]
 
-        def _sync_download():
-            # Pass 1: download video only (no subtitles)
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        def _sync_download(opts: dict) -> Path:
+            with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(source.url, download=True)
                 filename = ydl.prepare_filename(info)
                 base = os.path.splitext(filename)[0]
@@ -516,7 +516,6 @@ class DownloadAgent(BaseAgent):
                 if video_path is None:
                     video_path = Path(filename)
 
-            # Pass 2: attempt subtitle download separately (non-fatal)
             if source.platform == Platform.YOUTUBE:
                 try:
                     sub_opts = {
@@ -529,7 +528,7 @@ class DownloadAgent(BaseAgent):
                         "subtitleslangs": ["zh-Hans", "zh-Hant", "zh", "en"],
                         "subtitlesformat": "srt",
                         "socket_timeout": 15,
-                        "cookiesfrombrowser": ("chrome",),
+                        **cookie_cfg,
                     }
                     with yt_dlp.YoutubeDL(sub_opts) as ydl:
                         ydl.extract_info(source.url, download=True)
@@ -542,9 +541,22 @@ class DownloadAgent(BaseAgent):
         loop = asyncio.get_running_loop()
         try:
             result_path = await asyncio.wait_for(
-                loop.run_in_executor(None, _sync_download),
+                loop.run_in_executor(None, _sync_download, ydl_opts),
                 timeout=DOWNLOAD_TIMEOUT,
             )
         except asyncio.TimeoutError:
             raise TimeoutError(f"视频下载超时 ({DOWNLOAD_TIMEOUT}s): {source.url[:80]}")
+        except Exception as e:
+            if _COOKIE_DB_ERROR in str(e) and cookie_cfg:
+                logger.warning("Chrome cookie 访问失败，尝试无 cookie 下载...")
+                no_cookie_opts = {k: v for k, v in ydl_opts.items() if k not in ("cookiesfrombrowser", "cookiefile")}
+                try:
+                    result_path = await asyncio.wait_for(
+                        loop.run_in_executor(None, _sync_download, no_cookie_opts),
+                        timeout=DOWNLOAD_TIMEOUT,
+                    )
+                except asyncio.TimeoutError:
+                    raise TimeoutError(f"视频下载超时 ({DOWNLOAD_TIMEOUT}s): {source.url[:80]}")
+            else:
+                raise
         return result_path

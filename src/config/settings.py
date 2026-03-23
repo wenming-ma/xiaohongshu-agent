@@ -55,6 +55,7 @@ class PathConfig:
     IMAGE_PROJECT_DIR = _PROJECT_ROOT / 'posts' / 'image-posts'
     ARTICLE_PROJECT_DIR = _PROJECT_ROOT / 'posts' / 'article-posts'
     VIDEO_PROJECT_DIR = _PROJECT_ROOT / 'posts' / 'video-posts'
+    COOKIES_FILE = str(_PROJECT_ROOT / "cookies.txt")
     BROWSER_SESSION_SHARED = str(_PROJECT_ROOT / 'browser-sessions' / 'shared')
     BROWSER_SESSION_XHS = BROWSER_SESSION_SHARED
     BROWSER_SESSION_GEMINI = str(_PROJECT_ROOT / 'browser-sessions' / 'gemini')

@@ -7,6 +7,7 @@ from ...core.pipeline_registry import PipelineRegistry
 from ...config.settings import PathConfig
 from ...utils.logger import get_logger
 from ...utils.file_ops import save_json
+from ...utils.cookies import get_cookie_config
 from .schemas import XHSVideoPostInput, XHSVideoPostOutput, VideoSource, EngagementMetrics
 
 logger = get_logger(__name__)
@@ -30,7 +31,7 @@ class XHSVideoPostPipeline(BasePipeline[XHSVideoPostInput, XHSVideoPostOutput]):
 
         def _fetch_meta(url: str) -> dict | None:
             try:
-                opts = {"quiet": True, "no_warnings": True, "skip_download": True, "socket_timeout": 15, "cookiesfrombrowser": ("chrome",)}
+                opts = {"quiet": True, "no_warnings": True, "skip_download": True, "socket_timeout": 15, **get_cookie_config()}
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(url, download=False)
                     return {
