@@ -30,7 +30,7 @@ class XHSVideoPostPipeline(BasePipeline[XHSVideoPostInput, XHSVideoPostOutput]):
 
         def _fetch_meta(url: str) -> dict | None:
             try:
-                opts = {"quiet": True, "no_warnings": True, "skip_download": True, "socket_timeout": 15}
+                opts = {"quiet": True, "no_warnings": True, "skip_download": True, "socket_timeout": 15, "cookiesfrombrowser": ("chrome",)}
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(url, download=False)
                     return {

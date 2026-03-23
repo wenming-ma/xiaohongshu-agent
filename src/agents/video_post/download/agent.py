@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 PLATFORM_OPTS = {
     Platform.YOUTUBE: {
         "format": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-        "extra_args": [],
+        "cookiesfrombrowser": ("chrome",),
     },
     Platform.X: {
         "format": "best[ext=mp4]/best",
@@ -24,7 +24,7 @@ PLATFORM_OPTS = {
     },
     Platform.INSTAGRAM: {
         "format": "best[ext=mp4]/best",
-        "extra_args": ["--cookies-from-browser", "chrome"],
+        "cookiesfrombrowser": ("chrome",),
     },
     Platform.FACEBOOK: {
         "format": "best[ext=mp4]/best",
@@ -498,6 +498,8 @@ class DownloadAgent(BaseAgent):
             "socket_timeout": 30,
             "retries": 3,
         }
+        if "cookiesfrombrowser" in platform_opts:
+            ydl_opts["cookiesfrombrowser"] = platform_opts["cookiesfrombrowser"]
 
         def _sync_download():
             # Pass 1: download video only (no subtitles)
@@ -527,6 +529,7 @@ class DownloadAgent(BaseAgent):
                         "subtitleslangs": ["zh-Hans", "zh-Hant", "zh", "en"],
                         "subtitlesformat": "srt",
                         "socket_timeout": 15,
+                        "cookiesfrombrowser": ("chrome",),
                     }
                     with yt_dlp.YoutubeDL(sub_opts) as ydl:
                         ydl.extract_info(source.url, download=True)
