@@ -90,6 +90,28 @@ _STYLE_KEYWORDS = {
 }
 
 
+_shared_whisper_model: Optional[WhisperModel] = None
+
+
+def _get_shared_whisper_model() -> WhisperModel:
+    global _shared_whisper_model
+    if _shared_whisper_model is None:
+        logger.info("加载 Whisper 模型（本地离线模式）...")
+        _shared_whisper_model = WhisperModel(
+            SUBTITLE_CONFIG["WHISPER_MODEL"],
+            device=SUBTITLE_CONFIG["WHISPER_DEVICE"],
+            compute_type=SUBTITLE_CONFIG["WHISPER_COMPUTE_TYPE"],
+            local_files_only=True,
+        )
+        logger.info("Whisper 模型加载完成")
+    return _shared_whisper_model
+
+
+def release_whisper_model() -> None:
+    global _shared_whisper_model
+    _shared_whisper_model = None
+
+
 def pick_subtitle_style(topic: str) -> dict:
     """根据话题关键词选择字幕配色方案"""
     topic_lower = topic.lower()
@@ -131,20 +153,8 @@ class SubtitleResult:
 class WhisperTranscriber:
     """使用本地 Whisper 模型进行转录（仅文本，用于 ContentAgent）"""
 
-    def __init__(self):
-        self.model: Optional[WhisperModel] = None
-
     def _load_whisper_model(self):
-        if self.model is None:
-            logger.info(f"加载 Whisper 模型（本地离线模式）...")
-
-            self.model = WhisperModel(
-                SUBTITLE_CONFIG["WHISPER_MODEL"],
-                device=SUBTITLE_CONFIG["WHISPER_DEVICE"],
-                compute_type=SUBTITLE_CONFIG["WHISPER_COMPUTE_TYPE"],
-                local_files_only=True,
-            )
-            logger.info("Whisper 模型加载完成")
+        self.model = _get_shared_whisper_model()
 
     async def transcribe(self, video_path: Path) -> "TranscriptionResult":
         from ..agents.video_post.schemas import TranscriptionResult
@@ -217,20 +227,10 @@ class WhisperTranscriber:
 class WhisperSubtitleGenerator:
 
     def __init__(self):
-        self.model: Optional[WhisperModel] = None
         self.translation_agent: Optional[Agent] = None
 
     def _load_whisper_model(self):
-        if self.model is None:
-            logger.info(f"加载 Faster-Whisper 模型（本地离线模式，设备: {SUBTITLE_CONFIG['WHISPER_DEVICE']})...")
-
-            self.model = WhisperModel(
-                SUBTITLE_CONFIG["WHISPER_MODEL"],
-                device=SUBTITLE_CONFIG["WHISPER_DEVICE"],
-                compute_type=SUBTITLE_CONFIG["WHISPER_COMPUTE_TYPE"],
-                local_files_only=True,
-            )
-            logger.info("Faster-Whisper 模型加载完成")
+        self.model = _get_shared_whisper_model()
 
     def _init_translation_agent(self):
         if self.translation_agent is None:

@@ -8,7 +8,7 @@ import logfire
 from ....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import VideoSource, DownloadResult, Platform
 from ....utils.logger import get_logger
-from ....utils.subtitle_generator import WhisperTranscriber, WhisperSubtitleGenerator, pick_subtitle_style
+from ....utils.subtitle_generator import WhisperTranscriber, WhisperSubtitleGenerator, pick_subtitle_style, release_whisper_model
 from ....utils.font_selector import FontSelectorAgent, get_font_info, get_fonts_dir
 from ....utils.cookies import get_cookie_config
 
@@ -90,6 +90,7 @@ class DownloadAgent(BaseAgent):
         # Step 3: 只对选中的视频做字体选择 + 字幕烧录
         await self._select_font(best.source)
         best = await self._transcribe(best)
+        release_whisper_model()
 
         # 清理未选中的视频文件
         for c in candidates:
@@ -518,6 +519,7 @@ class DownloadAgent(BaseAgent):
 
             if source.platform == Platform.YOUTUBE:
                 try:
+                    active_cookies = {k: v for k, v in opts.items() if k in ("cookiesfrombrowser", "cookiefile")}
                     sub_opts = {
                         "outtmpl": output_template,
                         "quiet": True,
@@ -528,7 +530,7 @@ class DownloadAgent(BaseAgent):
                         "subtitleslangs": ["zh-Hans", "zh-Hant", "zh", "en"],
                         "subtitlesformat": "srt",
                         "socket_timeout": 15,
-                        **cookie_cfg,
+                        **active_cookies,
                     }
                     with yt_dlp.YoutubeDL(sub_opts) as ydl:
                         ydl.extract_info(source.url, download=True)
