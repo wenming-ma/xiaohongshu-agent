@@ -35,3 +35,24 @@ IMPORTANT: Use natural browsing behavior, not direct search URLs!
         self.message_history.append(
             ModelRequest(parts=[UserPromptPart(content=enhanced_feedback)])
         )
+
+    def get_recent_history(self, max_rounds: int) -> list[ModelMessage]:
+        """保留首轮（含 SystemPrompt + 首条用户消息）+ 最近 N-1 轮"""
+        history = self.message_history
+        if not history or max_rounds <= 0:
+            return []
+
+        run_boundaries = [
+            idx
+            for idx, msg in enumerate(history)
+            if isinstance(msg, ModelRequest)
+            and any(isinstance(part, UserPromptPart) for part in msg.parts)
+        ]
+
+        if len(run_boundaries) <= max_rounds:
+            return history
+
+        # 首轮结束位置 = 第二轮开始位置
+        first_round_end = run_boundaries[1] if len(run_boundaries) > 1 else len(history)
+        recent_start = run_boundaries[-(max_rounds - 1)]
+        return history[:first_round_end] + history[recent_start:]

@@ -19,6 +19,7 @@ from .state import ResearchState
 logger = get_logger(__name__)
 
 MAX_ITERATIONS = 10
+MAX_HISTORY_ROUNDS = 3
 
 
 class ResearchAgent(BaseAgent):
@@ -110,7 +111,8 @@ class ResearchAgent(BaseAgent):
             result = await self.generator.run(prompt, usage_limits=UsageLimits(request_limit=None))
         else:
             logger.info("AI agent continuing with feedback...")
-            result = await self.generator.run(message_history=state.message_history, usage_limits=UsageLimits(request_limit=None))
+            recent_history = state.get_recent_history(MAX_HISTORY_ROUNDS)
+            result = await self.generator.run(message_history=recent_history, usage_limits=UsageLimits(request_limit=None))
 
         state.current_result = result.output
         state.message_history = list(result.all_messages())

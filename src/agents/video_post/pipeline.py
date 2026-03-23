@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 from pathlib import Path
 
@@ -6,7 +7,7 @@ from ...core.pipeline_registry import PipelineRegistry
 from ...config.settings import PathConfig
 from ...utils.logger import get_logger
 from ...utils.file_ops import save_json
-from .schemas import XHSVideoPostInput, XHSVideoPostOutput
+from .schemas import XHSVideoPostInput, XHSVideoPostOutput, VideoSource, EngagementMetrics
 
 logger = get_logger(__name__)
 
@@ -19,6 +20,47 @@ class XHSVideoPostPipeline(BasePipeline[XHSVideoPostInput, XHSVideoPostOutput]):
     content_type = "video_post"
     input_schema = XHSVideoPostInput
     output_schema = XHSVideoPostOutput
+
+    @staticmethod
+    async def _enrich_engagement(sources: list[VideoSource]) -> list[VideoSource]:
+        """用 yt-dlp 并行获取精确互动数据，替换浏览器抓取的不完整数据"""
+        import yt_dlp
+
+        loop = asyncio.get_running_loop()
+
+        def _fetch_meta(url: str) -> dict | None:
+            try:
+                opts = {"quiet": True, "no_warnings": True, "skip_download": True, "socket_timeout": 15}
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    return {
+                        "views": info.get("view_count") or 0,
+                        "likes": info.get("like_count") or 0,
+                        "comments": info.get("comment_count") or 0,
+                        "duration": info.get("duration") or 0,
+                    }
+            except Exception:
+                return None
+
+        tasks = [loop.run_in_executor(None, _fetch_meta, s.url) for s in sources]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        enriched = 0
+        for source, meta in zip(sources, results):
+            if isinstance(meta, Exception) or meta is None:
+                continue
+            source.engagement = EngagementMetrics(
+                views=meta["views"],
+                likes=meta["likes"],
+                comments=meta["comments"],
+                shares=source.engagement.shares,  # yt-dlp 没有 shares，保留原值
+            )
+            if meta["duration"] and not source.duration_seconds:
+                source.duration_seconds = meta["duration"]
+            enriched += 1
+
+        logger.info(f"互动数据补全完成: {enriched}/{len(sources)} 个视频")
+        return sources
 
     async def execute(self, input_data: XHSVideoPostInput) -> XHSVideoPostOutput:
         from .research import ResearchAgent
@@ -57,12 +99,20 @@ class XHSVideoPostPipeline(BasePipeline[XHSVideoPostInput, XHSVideoPostOutput]):
                 max_videos=input_data.max_videos,
                 output_dir=output_dir,
             )
+            # Phase 1.5: 用 yt-dlp 补全互动数据（浏览器抓取不可靠）
+            logger.info("补全视频互动数据（yt-dlp metadata）...")
+            research.sources = await self._enrich_engagement(research.sources)
+
             save_json(output_dir / "research.json", research.model_dump())
 
             logger.info("")
             logger.info(f"✅ 搜索完成: 找到 {research.sources_count} 个高质量视频源")
             for i, source in enumerate(research.sources, 1):
-                logger.info(f"   {i}. [{source.platform.value}] {source.title[:50]}{'...' if len(source.title) > 50 else ''}")
+                eng = source.engagement
+                logger.info(
+                    f"   {i}. [{source.platform.value}] {source.title[:40]}  "
+                    f"👁{eng.views} 👍{eng.likes} 💬{eng.comments}"
+                )
             logger.info("")
 
             # Phase 2: 下载最佳视频

@@ -124,9 +124,52 @@ class DownloadAgent(BaseAgent):
         return ValidationResult.success("视频文件验证通过")
 
     async def _transcribe(self, result: DownloadResult) -> DownloadResult:
+        video_path = Path(result.local_path)
+        output_dir = video_path.parent
+        subtitled_path = output_dir / f"{video_path.stem}_subtitled{video_path.suffix}"
+
+        # 优先检查 yt-dlp 下载的字幕 — 有则跳过 Whisper
+        ytdlp_srt = self._find_ytdlp_subtitle(video_path)
+
+        if ytdlp_srt:
+            logger.info(f"发现 yt-dlp 字幕文件: {ytdlp_srt.name}，跳过 Whisper 转录")
+
+            # 从 SRT 解析文本作为 transcript
+            try:
+                transcript_text = self._parse_srt_text(ytdlp_srt)
+                from ..schemas import TranscriptionResult
+                result.transcription = TranscriptionResult(
+                    success=True,
+                    transcript=transcript_text,
+                    language="zh",
+                )
+                logger.info(f"SRT 解析转录成功: {len(transcript_text)} 字符")
+            except Exception as e:
+                logger.warning(f"SRT 解析失败，回退到 Whisper: {e}")
+                ytdlp_srt = None  # 回退到下面的 Whisper 分支
+
+            if ytdlp_srt:
+                # 烧录字幕
+                try:
+                    await self._burn_existing_subtitle(video_path, ytdlp_srt, subtitled_path)
+                    from ..schemas import SubtitleResult
+                    result.subtitle = SubtitleResult(
+                        success=True,
+                        language="zh",
+                        translated=True,
+                        srt_path=str(ytdlp_srt),
+                        video_with_subs=str(subtitled_path),
+                    )
+                    result.local_path = str(subtitled_path)
+                    logger.info(f"平台字幕烧录成功: {subtitled_path}")
+                except Exception as e:
+                    logger.warning(f"字幕烧录异常（不影响下载结果）: {e}")
+                return result
+
+        # 无 yt-dlp 字幕 → Whisper 转录
         try:
             transcriber = WhisperTranscriber()
-            transcription = await transcriber.transcribe(Path(result.local_path))
+            transcription = await transcriber.transcribe(video_path)
             result.transcription = transcription
             if transcription.success:
                 logger.info(f"Whisper 转录成功: {len(transcription.transcript)} 字符")
@@ -135,60 +178,61 @@ class DownloadAgent(BaseAgent):
         except Exception as e:
             logger.warning(f"转录过程异常（不影响下载结果）: {e}")
 
+        # Whisper 字幕生成 + 烧录
         try:
-            video_path = Path(result.local_path)
-            output_dir = video_path.parent
-            subtitled_path = output_dir / f"{video_path.stem}_subtitled{video_path.suffix}"
+            subtitle_gen = WhisperSubtitleGenerator()
+            subtitle_result_obj = await subtitle_gen.generate_and_burn(
+                video_path=video_path,
+                output_path=subtitled_path,
+                target_language="zh",
+            )
 
-            # 优先使用 yt-dlp 下载的中文字幕（YouTube 等平台）
-            ytdlp_srt = self._find_ytdlp_subtitle(video_path)
-            if ytdlp_srt:
-                logger.info(f"发现 yt-dlp 下载的字幕文件: {ytdlp_srt.name}")
-                await self._burn_existing_subtitle(video_path, ytdlp_srt, subtitled_path)
+            from ..schemas import SubtitleResult, SubtitleSegment
+            result.subtitle = SubtitleResult(
+                success=subtitle_result_obj.success,
+                segments=[
+                    SubtitleSegment(start=seg.start, end=seg.end, text=seg.text)
+                    for seg in subtitle_result_obj.segments
+                ],
+                language=subtitle_result_obj.language,
+                translated=subtitle_result_obj.translated,
+                srt_path=subtitle_result_obj.srt_path,
+                video_with_subs=subtitle_result_obj.video_with_subs,
+                error_message=subtitle_result_obj.error_message,
+            )
 
-                from ..schemas import SubtitleResult
-                result.subtitle = SubtitleResult(
-                    success=True,
-                    language="zh",
-                    translated=True,
-                    srt_path=str(ytdlp_srt),
-                    video_with_subs=str(subtitled_path),
-                )
-                result.local_path = str(subtitled_path)
-                logger.info(f"使用平台字幕烧录成功: {subtitled_path}")
+            if subtitle_result_obj.success:
+                result.local_path = subtitle_result_obj.video_with_subs
+                logger.info(f"Whisper 字幕生成并烧录成功: {subtitled_path}")
             else:
-                # 回退到 Whisper 转录 + LLM 翻译
-                subtitle_gen = WhisperSubtitleGenerator()
-                subtitle_result_obj = await subtitle_gen.generate_and_burn(
-                    video_path=video_path,
-                    output_path=subtitled_path,
-                    target_language="zh",
-                )
-
-                from ..schemas import SubtitleResult, SubtitleSegment
-                result.subtitle = SubtitleResult(
-                    success=subtitle_result_obj.success,
-                    segments=[
-                        SubtitleSegment(start=seg.start, end=seg.end, text=seg.text)
-                        for seg in subtitle_result_obj.segments
-                    ],
-                    language=subtitle_result_obj.language,
-                    translated=subtitle_result_obj.translated,
-                    srt_path=subtitle_result_obj.srt_path,
-                    video_with_subs=subtitle_result_obj.video_with_subs,
-                    error_message=subtitle_result_obj.error_message,
-                )
-
-                if subtitle_result_obj.success:
-                    result.local_path = subtitle_result_obj.video_with_subs
-                    logger.info(f"Whisper 字幕生成并烧录成功: {subtitled_path}")
-                else:
-                    logger.warning(f"字幕生成失败: {subtitle_result_obj.error_message}")
-
+                logger.warning(f"字幕生成失败: {subtitle_result_obj.error_message}")
         except Exception as e:
             logger.warning(f"字幕生成过程异常（不影响下载结果）: {e}")
 
         return result
+
+    @staticmethod
+    def _parse_srt_text(srt_path: Path) -> str:
+        """从 SRT/VTT 文件中提取纯文本"""
+        import re
+        content = srt_path.read_text(encoding="utf-8", errors="replace")
+        # 去掉序号行、时间码行、VTT 头部，只保留文本
+        lines = []
+        for line in content.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if re.match(r"^\d+$", line):
+                continue
+            if re.match(r"[\d:,.]+ --> [\d:,.]+" , line):
+                continue
+            if line.startswith("WEBVTT") or line.startswith("Kind:") or line.startswith("Language:"):
+                continue
+            # 去掉 HTML 标签（如 <c>）
+            line = re.sub(r"<[^>]+>", "", line)
+            if line:
+                lines.append(line)
+        return " ".join(lines)
 
     def _find_ytdlp_subtitle(self, video_path: Path) -> Path | None:
         """查找 yt-dlp 下载的中文字幕文件（优先中文，其次英文）"""

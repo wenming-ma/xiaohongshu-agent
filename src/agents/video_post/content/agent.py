@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 from pydantic_ai import Agent
@@ -110,6 +111,37 @@ class ContentAgent(BaseAgent):
         state.message_history.extend(run_result.new_messages())
         self._current_state = state
 
+    def _mechanical_check(self, content: XHSVideoContent) -> tuple[float, list[str]]:
+        """确定性规则检查，返回 (扣分, 问题列表)"""
+        deductions = 0.0
+        issues = []
+
+        title_len = len(content.title)
+        if title_len < 10 or title_len > 30:
+            deductions += 20
+            issues.append(f"标题长度不合规: {title_len} 字（需 10-30）")
+
+        body_len = len(content.body)
+        if body_len < 50:
+            deductions += 20
+            issues.append(f"正文太短: {body_len} 字（需 >= 50）")
+
+        if len(content.hashtags) > 5:
+            deductions += 10
+            issues.append(f"标签过多: {len(content.hashtags)} 个（最多 5）")
+
+        if re.search(r"\*\*[^*]+\*\*|\*[^*]+\*|^#{1,6}\s|^\s*[-*]\s", content.body, re.MULTILINE):
+            deductions += 10
+            issues.append("正文包含 Markdown 格式")
+
+        if not content.call_to_action:
+            has_cta = bool(re.search(r"[？?]|评论|留言|分享|关注|点赞|收藏", content.body))
+            if not has_cta:
+                deductions += 10
+                issues.append("缺少互动引导")
+
+        return deductions, issues
+
     async def validate(self, output: Any) -> ValidationResult:
         if not isinstance(output, XHSVideoContent):
             return ValidationResult.failure("输出类型错误")
@@ -117,6 +149,26 @@ class ContentAgent(BaseAgent):
         if not output.title or not output.body:
             return ValidationResult.failure("缺少标题或正文")
 
+        # 先做确定性规则检查，不过就直接返回，不浪费 LLM 调用
+        deductions, mech_issues = self._mechanical_check(output)
+        if deductions >= 30:
+            score = max(0, 100 - deductions)
+            feedback = (
+                f"内容基础检查未通过。\n"
+                f"评分: {score:.1f}/100\n"
+            )
+            for issue in mech_issues:
+                feedback += f"- {issue}\n"
+            logger.warning(f"基础检查未通过（扣 {deductions} 分），跳过 LLM 审核")
+
+            state = self._current_state
+            state.current_review = ContentReviewResult(
+                passed=False, score=score, issues=mech_issues,
+                summary="基础规范检查未通过",
+            )
+            return ValidationResult.failure(feedback)
+
+        # 基础检查通过，调用 LLM 做 AI 痕迹检测
         state = self._current_state
         review_prompt = content_review_user_prompt(
             content=output.model_dump_json(indent=2),
@@ -127,6 +179,12 @@ class ContentAgent(BaseAgent):
         )
         state.current_review = review_result.output
         state.review_history.extend(review_result.new_messages())
+
+        # 将机械扣分叠加到 LLM 评分上
+        if mech_issues:
+            state.current_review.score = max(0, state.current_review.score - deductions)
+            state.current_review.issues = mech_issues + state.current_review.issues
+            state.current_review.passed = state.current_review.score >= 70
 
         if state.current_review.passed:
             return ValidationResult.success(f"审核通过，评分: {state.current_review.score:.1f}")

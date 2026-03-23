@@ -1,3 +1,4 @@
+import asyncio
 from typing import List
 
 from pydantic_ai import Agent
@@ -149,39 +150,42 @@ class VideoListQualityFilter:
         max_videos: int = 5,
     ) -> tuple[List[VideoSource], List[str]]:
         """
-        过滤视频列表，只保留高质量视频
+        并行评估视频质量，保留高质量视频
 
         Returns:
             (high_quality_videos, feedback_messages)
         """
-        logger.info(f"开始质量评估: {len(videos)} 个视频")
+        logger.info(f"开始并行质量评估: {len(videos)} 个视频")
+
+        async def _evaluate(video: VideoSource) -> tuple[VideoSource, InternalValidationResult]:
+            return video, await self.validator.validate(video, context={"topic": topic})
+
+        results = await asyncio.gather(*[_evaluate(v) for v in videos], return_exceptions=True)
 
         high_quality_videos = []
-        low_quality_videos = []
         feedback_messages = []
+        passed_count = 0
+        filtered_count = 0
 
-        for i, video in enumerate(videos):
-            logger.info(f"评估视频 [{i + 1}/{len(videos)}]: {video.title[:50]}...")
+        for i, item in enumerate(results):
+            if isinstance(item, Exception):
+                logger.warning(f"评估视频 [{i + 1}] 异常: {item}")
+                feedback_messages.append(f"评估异常: {videos[i].title[:50]}")
+                filtered_count += 1
+                continue
 
-            validation = await self.validator.validate(
-                video,
-                context={"topic": topic}
-            )
-
+            video, validation = item
             if validation.passed:
                 high_quality_videos.append(video)
-                logger.info(f"  ✅ 通过 - 评分: {validation.score}/100")
+                passed_count += 1
+                logger.info(f"  ✅ {video.title[:50]}... - 评分: {validation.score}/100")
             else:
-                low_quality_videos.append(video)
-                logger.warning(f"  ❌ 未通过 - 评分: {validation.score}/100")
+                filtered_count += 1
+                logger.warning(f"  ❌ {video.title[:50]}... - 评分: {validation.score}/100")
                 feedback_messages.append(
                     f"过滤掉低质量视频: {video.title[:50]} (评分: {validation.score}/100)"
                 )
 
-            if len(high_quality_videos) >= max_videos:
-                logger.info(f"已找到足够的高质量视频 ({max_videos} 个)，停止评估")
-                break
+        logger.info(f"质量过滤完成: {passed_count} 个通过，{filtered_count} 个被过滤")
 
-        logger.info(f"质量过滤完成: {len(high_quality_videos)} 个通过，{len(low_quality_videos)} 个被过滤")
-
-        return high_quality_videos, feedback_messages
+        return high_quality_videos[:max_videos], feedback_messages
