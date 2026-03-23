@@ -1,9 +1,7 @@
-import base64
 from pathlib import Path
 
 from pydantic import BaseModel
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelRequest, UserPromptPart, ImageUrl
 
 from ....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import CoverImageResult, XHSVideoContent
@@ -56,8 +54,8 @@ class CoverAgent(BaseAgent):
             # Step 1: 截取关键帧
             frames = await extract_frames(video_path, output_dir)
 
-            # Step 2: LLM 看截图 + 内容，生成封面 prompt
-            prompt = await self._generate_cover_prompt(frames, content, topic)
+            # Step 2: LLM 根据文字信息生成封面 prompt
+            prompt = await self._generate_cover_prompt(content, topic)
             logger.info(f"封面 prompt: {prompt[:100]}...")
 
             # Step 3: Gemini 生成封面图（API 优先，失败回退 Web）
@@ -105,25 +103,14 @@ class CoverAgent(BaseAgent):
 
     async def _generate_cover_prompt(
         self,
-        frames: list[Path],
         content: XHSVideoContent,
         topic: str,
     ) -> str:
-        """多模态 LLM 看截图 + 内容信息，生成封面图 prompt"""
-        parts = []
-
-        for frame in frames:
-            b64 = base64.b64encode(frame.read_bytes()).decode()
-            parts.append(ImageUrl(url=f"data:image/png;base64,{b64}"))
-
-        text = cover_user_prompt(
+        """LLM 根据文字信息生成封面图 prompt（截图只作为 Gemini 图片生成的参考）"""
+        prompt = cover_user_prompt(
             topic=topic,
             title=content.title,
             body=content.body[:200],
         )
-        parts.append(UserPromptPart(content=text))
-
-        result = await self.prompt_agent.run(
-            [ModelRequest(parts=parts)]
-        )
+        result = await self.prompt_agent.run(prompt)
         return result.output.prompt

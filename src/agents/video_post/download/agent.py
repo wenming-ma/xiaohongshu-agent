@@ -59,26 +59,181 @@ class DownloadAgent(BaseAgent):
         topic: str = "",
     ) -> DownloadResult:
         self._topic = topic
-        sorted_sources = sorted(sources, key=lambda s: s.engagement_score, reverse=True)
 
-        logger.info(f"尝试下载 {len(sorted_sources)} 个视频源")
+        logger.info(f"尝试下载 {len(sources)} 个视频源")
 
-        for i, source in enumerate(sorted_sources):
-            logger.info(f"尝试下载 [{i+1}/{len(sorted_sources)}]: {source.platform.value} - {source.url[:60]}")
+        # Step 1: 下载所有视频并转录
+        candidates: list[DownloadResult] = []
+        for i, source in enumerate(sources):
+            logger.info(f"尝试下载 [{i+1}/{len(sources)}]: {source.platform.value} - {source.url[:60]}")
 
             result = await self.step(source, output_dir)
             validation = await self.validate(result)
 
-            if validation.passed:
-                logger.info(f"下载成功: {result.local_path}")
-                # LLM 选择最佳字体
-                await self._select_font(result.source)
-                result = await self._transcribe(result)
+            if not validation.passed:
+                logger.warning(f"下载失败: {result.error_message}")
+                continue
+
+            logger.info(f"下载成功: {result.local_path}")
+
+            # 转录（获取字幕文本用于打分）
+            result = await self._transcribe_text_only(result)
+            candidates.append(result)
+
+        if not candidates:
+            raise RuntimeError(f"所有 {len(sources)} 个视频源下载均失败")
+
+        # Step 2: 综合打分 + LLM 评估，选最佳视频
+        best = await self._pick_best(candidates, topic)
+        logger.info(f"选中最佳视频: {best.source.title[:50]}")
+
+        # Step 3: 只对选中的视频做字体选择 + 字幕烧录
+        await self._select_font(best.source)
+        best = await self._transcribe(best)
+
+        # 清理未选中的视频文件
+        for c in candidates:
+            if c is not best and c.local_path:
+                path = Path(c.local_path)
+                if path.exists():
+                    path.unlink(missing_ok=True)
+
+        return best
+
+    async def _transcribe_text_only(self, result: DownloadResult) -> DownloadResult:
+        """仅提取转录文本（用于打分），不生成字幕和烧录"""
+        video_path = Path(result.local_path)
+
+        ytdlp_srt = self._find_ytdlp_subtitle(video_path)
+        if ytdlp_srt:
+            try:
+                transcript_text = self._parse_srt_text(ytdlp_srt)
+                from ..schemas import TranscriptionResult
+                result.transcription = TranscriptionResult(
+                    success=True, transcript=transcript_text, language="zh",
+                )
+                logger.info(f"SRT 转录: {len(transcript_text)} 字符")
                 return result
+            except Exception as e:
+                logger.warning(f"SRT 解析失败: {e}")
 
-            logger.warning(f"下载失败: {result.error_message}")
+        try:
+            transcriber = WhisperTranscriber()
+            transcription = await transcriber.transcribe(video_path)
+            result.transcription = transcription
+            if transcription.success:
+                logger.info(f"Whisper 转录: {len(transcription.transcript)} 字符, 语言: {transcription.language}")
+        except Exception as e:
+            logger.warning(f"转录失败: {e}")
 
-        raise RuntimeError(f"所有 {len(sorted_sources)} 个视频源下载均失败")
+        return result
+
+    def _score_video(self, result: DownloadResult, topic: str) -> float:
+        """综合打分：转录质量 + 互动数据 + 时长合理性"""
+        score = 0.0
+        source = result.source
+
+        # 转录质量（0-40 分）
+        if result.transcription and result.transcription.success:
+            transcript_len = len(result.transcription.transcript)
+            # 转录越长说明内容越丰富，上限 2000 字符得满分
+            score += min(transcript_len / 2000, 1.0) * 30
+            # 中文内容加分（目标平台是小红书）
+            if result.transcription.language == "zh":
+                score += 10
+            elif result.transcription.language in ("ja", "ko"):
+                score += 5
+
+        # 互动数据（0-30 分）
+        eng = source.engagement
+        # 取对数避免极端值主导
+        import math
+        if eng.likes > 0:
+            score += min(math.log10(eng.likes) / 6, 1.0) * 15  # 1M likes = 满分
+        if eng.comments > 0:
+            score += min(math.log10(eng.comments) / 5, 1.0) * 10  # 100K comments = 满分
+        if eng.views > 0:
+            score += min(math.log10(eng.views) / 7, 1.0) * 5  # 10M views = 满分
+
+        # 时长合理性（0-20 分）
+        duration = source.duration_seconds
+        if 60 <= duration <= 300:
+            score += 20  # 1-5 分钟最理想
+        elif 300 < duration <= 600:
+            score += 15  # 5-10 分钟不错
+        elif 30 <= duration < 60:
+            score += 10  # 30 秒-1 分钟偏短
+        elif 600 < duration <= 900:
+            score += 10  # 10-15 分钟偏长
+        else:
+            score += 5  # 太短或太长
+
+        # 文件大小合理性（0-10 分）
+        size_mb = result.file_size_bytes / (1024 * 1024)
+        if 5 <= size_mb <= 200:
+            score += 10
+        elif size_mb > 200:
+            score += 5
+
+        return score
+
+    async def _pick_best(self, candidates: list[DownloadResult], topic: str) -> DownloadResult:
+        """规则打分 + LLM 评估内容质量，选出最佳视频"""
+        from pydantic import BaseModel, Field
+        from pydantic_ai import Agent
+        from ....utils.providers import get_text_model
+
+        # Step 1: 规则打分
+        scored = [(self._score_video(c, topic), c) for c in candidates]
+        for s, c in scored:
+            logger.info(f"  规则分 {s:.0f}: {c.source.title[:50]} ({c.source.platform.value})")
+
+        # Step 2: LLM 从候选中选出最佳
+        class VideoPick(BaseModel):
+            best_index: int = Field(description="最佳视频的序号（从 0 开始）")
+            reason: str = Field(description="选择理由")
+
+        videos_desc = []
+        for i, (rule_score, c) in enumerate(scored):
+            transcript_preview = ""
+            if c.transcription and c.transcription.success:
+                transcript_preview = c.transcription.transcript[:200]
+            videos_desc.append(
+                f"[{i}] 标题: {c.source.title}\n"
+                f"    平台: {c.source.platform.value}, 时长: {c.source.duration_seconds}秒\n"
+                f"    👍{c.source.engagement.likes} 💬{c.source.engagement.comments} 👁{c.source.engagement.views}\n"
+                f"    规则分: {rule_score:.0f}\n"
+                f"    转录预览: {transcript_preview or '无转录'}"
+            )
+
+        prompt = (
+            f"话题: {topic}\n\n"
+            f"以下是 {len(scored)} 个候选视频，请选出最适合在小红书发布的一个。\n"
+            f"考虑因素：内容丰富度、信息价值、小红书用户兴趣匹配度、转录质量。\n\n"
+            + "\n\n".join(videos_desc)
+        )
+
+        try:
+            picker = Agent(
+                model=get_text_model(),
+                output_type=VideoPick,
+                system_prompt="你是小红书内容选品专家。从候选视频中选出最适合发布的一个。优先选择内容完整、信息丰富、适合中国年轻用户的视频。",
+            )
+            result = await picker.run(prompt)
+            pick = result.output
+
+            idx = pick.best_index
+            if 0 <= idx < len(scored):
+                logger.info(f"LLM 选择: [{idx}] {scored[idx][1].source.title[:50]} — {pick.reason}")
+                return scored[idx][1]
+            else:
+                logger.warning(f"LLM 返回无效索引 {idx}，回退规则分最高")
+        except Exception as e:
+            logger.warning(f"LLM 选择失败，回退规则分最高: {e}")
+
+        # 回退：规则分最高
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return scored[0][1]
 
     async def step(self, source: VideoSource, output_dir: Path) -> DownloadResult:
         with logfire.span('video_download:step', platform=source.platform.value, url=source.url[:80]):
@@ -302,7 +457,7 @@ class DownloadAgent(BaseAgent):
 
             cmd = [
                 "ffmpeg", "-i", str(video_path),
-                "-vf", f"subtitles=sub.srt:force_style='FontName={font_name},FontSize=28,Bold=1,PrimaryColour={style['PrimaryColour']},OutlineColour={style['OutlineColour']},BackColour=&H80000000,Outline=3,Shadow=2,BorderStyle=1,MarginV=30'",
+                "-vf", f"subtitles=sub.srt:force_style='FontName={font_name},FontSize=18,Bold=1,PrimaryColour={style['PrimaryColour']},OutlineColour={style['OutlineColour']},BackColour=&H80000000,Outline=2,Shadow=1,BorderStyle=1,MarginV=30'",
                 "-c:a", "copy",
                 "-y", str(output_path),
             ]

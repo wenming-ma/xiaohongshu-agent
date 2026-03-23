@@ -32,7 +32,7 @@ SUBTITLE_CONFIG = {
     "WHISPER_COMPUTE_TYPE": "float16",
     "TARGET_LANGUAGE": "zh",
     "FONT_NAME": "Microsoft YaHei",
-    "FONT_SIZE": 28,
+    "FONT_SIZE": 18,
     "ENABLE_TRANSLATION": True,
 }
 
@@ -365,7 +365,7 @@ class WhisperSubtitleGenerator:
                 "要求：\n"
                 "- 口语化、轻松活泼，像朋友聊天，不要书面语\n"
                 "- 适当加 emoji 增加趣味性（每 3-5 条加一个，别每条都加）\n"
-                "- 语气词可以保留（比如"哇""嘿""嗯"）\n"
+                "- 语气词可以保留（比如'哇''嘿''嗯'）\n"
                 "- 保持简短，字幕不宜太长\n\n"
                 "只输出翻译后的文本，每行一条，格式为 '序号. 翻译内容'：\n\n"
             ) + "\n".join(texts)
@@ -432,7 +432,7 @@ class WhisperSubtitleGenerator:
 
             cmd = [
                 "ffmpeg", "-i", str(video_path),
-                "-vf", f"subtitles=sub.srt:force_style='FontName={font_name},FontSize={SUBTITLE_CONFIG['FONT_SIZE']},Bold=1,PrimaryColour={style['PrimaryColour']},OutlineColour={style['OutlineColour']},BackColour=&H80000000,Outline=3,Shadow=2,BorderStyle=1,MarginV=30'",
+                "-vf", f"subtitles=sub.srt:force_style='FontName={font_name},FontSize={SUBTITLE_CONFIG['FONT_SIZE']},Bold=1,PrimaryColour={style['PrimaryColour']},OutlineColour={style['OutlineColour']},BackColour=&H80000000,Outline=2,Shadow=1,BorderStyle=1,MarginV=30'",
                 "-c:a", "copy",
                 "-y", str(output_path),
             ]
