@@ -32,9 +32,73 @@ SUBTITLE_CONFIG = {
     "WHISPER_COMPUTE_TYPE": "float16",
     "TARGET_LANGUAGE": "zh",
     "FONT_NAME": "Microsoft YaHei",
-    "FONT_SIZE": 24,
+    "FONT_SIZE": 28,
     "ENABLE_TRANSLATION": True,
 }
+
+# ASS 颜色格式: &H00BBGGRR（注意 BGR 顺序）
+SUBTITLE_STYLES = {
+    "food": {  # 美食/烹饪 → 暖黄色
+        "PrimaryColour": "&H0000FFFF",   # 亮黄 #FFFF00
+        "OutlineColour": "&H00000000",   # 黑色描边
+    },
+    "fashion": {  # 穿搭/美妆 → 粉色
+        "PrimaryColour": "&H00B469FF",   # 粉色 #FF69B4
+        "OutlineColour": "&H00FFFFFF",   # 白色描边
+    },
+    "travel": {  # 旅行/生活 → 天蓝
+        "PrimaryColour": "&H00FFBF00",   # 天蓝 #00BFFF
+        "OutlineColour": "&H00FFFFFF",   # 白色描边
+    },
+    "tech": {  # 科技/数码 → 青色
+        "PrimaryColour": "&H00FFFF00",   # 青色 #00FFFF
+        "OutlineColour": "&H00000000",   # 黑色描边
+    },
+    "fitness": {  # 运动/健身 → 活力绿
+        "PrimaryColour": "&H0000FF7F",   # 春绿 #7FFF00
+        "OutlineColour": "&H00000000",   # 黑色描边
+    },
+    "default": {  # 默认 → 白色
+        "PrimaryColour": "&H00FFFFFF",
+        "OutlineColour": "&H00000000",
+    },
+}
+
+# 话题关键词 → 配色方案映射
+_STYLE_KEYWORDS = {
+    "food": [
+        "美食", "烹饪", "做饭", "食谱", "料理", "便当", "甜点", "烘焙", "厨房", "菜",
+        "food", "cook", "recipe", "bento", "kitchen", "bake", "meal", "dish", "ramen",
+        "sushi", "dessert", "lunch", "dinner", "breakfast",
+    ],
+    "fashion": [
+        "穿搭", "时尚", "美妆", "化妆", "护肤", "搭配", "衣服", "口红", "妆容",
+        "fashion", "makeup", "beauty", "skincare", "outfit", "style", "cosmetic",
+    ],
+    "travel": [
+        "旅行", "旅游", "攻略", "打卡", "探店", "城市", "酒店", "风景", "游",
+        "travel", "trip", "tour", "vlog", "explore", "city", "hotel", "景",
+    ],
+    "tech": [
+        "科技", "数码", "手机", "电脑", "测评", "开箱", "编程", "AI",
+        "tech", "review", "unbox", "phone", "computer", "gadget", "code",
+    ],
+    "fitness": [
+        "健身", "运动", "减肥", "瑜伽", "跑步", "训练", "塑形",
+        "fitness", "workout", "gym", "yoga", "exercise", "training",
+    ],
+}
+
+
+def pick_subtitle_style(topic: str) -> dict:
+    """根据话题关键词选择字幕配色方案"""
+    topic_lower = topic.lower()
+    for style_name, keywords in _STYLE_KEYWORDS.items():
+        if any(kw in topic_lower for kw in keywords):
+            logger.info(f"字幕配色: {style_name}")
+            return SUBTITLE_STYLES[style_name]
+    logger.info("字幕配色: default")
+    return SUBTITLE_STYLES["default"]
 
 
 class SubtitleSegment:
@@ -173,7 +237,7 @@ class WhisperSubtitleGenerator:
             model = get_text_model()
             self.translation_agent = Agent(
                 model=model,
-                system_prompt="你是专业的字幕翻译专家。将外语字幕翻译成简洁自然的中文，保持口语化风格。支持英语、日语、韩语、法语、西班牙语等所有语言到中文的翻译。",
+                system_prompt="你是小红书风格的字幕翻译专家。翻译风格要求：口语化、轻松活泼，像年轻人日常聊天；适当使用 emoji 增加趣味感（不要过度）；保留语气词和情感表达；翻译要简短精练，适合视频字幕阅读。支持英语、日语、韩语、法语、西班牙语等所有语言到中文的翻译。",
             )
 
     async def generate_and_burn(
@@ -181,6 +245,8 @@ class WhisperSubtitleGenerator:
         video_path: Path,
         output_path: Path,
         target_language: str = "zh",
+        topic: str = "",
+        font_file: str = "",
     ) -> SubtitleResult:
         try:
             logger.info(f"开始生成字幕: {video_path.name}")
@@ -202,7 +268,7 @@ class WhisperSubtitleGenerator:
             self._generate_srt(segments, srt_path)
             logger.info(f"SRT 文件生成: {srt_path}")
 
-            await self._burn_subtitles(video_path, srt_path, output_path)
+            await self._burn_subtitles(video_path, srt_path, output_path, topic=topic, font_file=font_file)
             logger.info(f"字幕烧录完成: {output_path}")
 
             return SubtitleResult(
@@ -294,7 +360,15 @@ class WhisperSubtitleGenerator:
         for i in range(0, len(segments), batch_size):
             batch = segments[i:i + batch_size]
             texts = [f"{j+1}. {seg.text}" for j, seg in enumerate(batch)]
-            prompt = f"将以下{lang_name}字幕翻译成中文，保持简洁自然。只输出翻译后的文本，每行一条，格式为 '序号. 翻译内容'：\n\n" + "\n".join(texts)
+            prompt = (
+                f"将以下{lang_name}字幕翻译成中文。\n\n"
+                "要求：\n"
+                "- 口语化、轻松活泼，像朋友聊天，不要书面语\n"
+                "- 适当加 emoji 增加趣味性（每 3-5 条加一个，别每条都加）\n"
+                "- 语气词可以保留（比如"哇""嘿""嗯"）\n"
+                "- 保持简短，字幕不宜太长\n\n"
+                "只输出翻译后的文本，每行一条，格式为 '序号. 翻译内容'：\n\n"
+            ) + "\n".join(texts)
 
             result = await self.translation_agent.run(prompt)
             translated_lines = result.output.strip().split("\n")
@@ -330,29 +404,46 @@ class WhisperSubtitleGenerator:
         ms = int((seconds % 1) * 1000)
         return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
-    async def _burn_subtitles(self, video_path: Path, srt_path: Path, output_path: Path) -> None:
+    async def _burn_subtitles(self, video_path: Path, srt_path: Path, output_path: Path, topic: str = "", font_file: str = "") -> None:
         import shutil
         import tempfile
+        from .font_selector import get_font_info, get_fonts_dir
 
-        # ffmpeg subtitles 滤镜对路径中的特殊字符（中文、全角符号等）极不友好，
-        # 把 SRT 复制到纯 ASCII 临时路径彻底规避转义问题
-        tmp_srt = Path(tempfile.mktemp(suffix=".srt", prefix="sub_"))
+        style = pick_subtitle_style(topic)
+        font_info = get_font_info(font_file) if font_file else None
+        font_name = font_info["font_family"] if font_info else SUBTITLE_CONFIG["FONT_NAME"]
+
+        # 把 SRT 和字体复制到临时目录，ffmpeg 以 cwd=tmp_dir 运行，
+        # 用相对路径 sub.srt 彻底规避 Windows 路径冒号转义问题
+        tmp_dir = Path(tempfile.mkdtemp(prefix="subs_"))
         try:
-            shutil.copy2(srt_path, tmp_srt)
-            srt_escaped = str(tmp_srt).replace("\\", "/").replace(":", r"\:")
+            shutil.copy2(srt_path, tmp_dir / "sub.srt")
+            env = None
+            if font_info:
+                shutil.copy2(get_fonts_dir() / font_file, tmp_dir / font_file)
+                import os
+                fonts_conf = tmp_dir / "fonts.conf"
+                fonts_conf.write_text(
+                    f'<?xml version="1.0"?>\n<fontconfig><dir>{tmp_dir}</dir></fontconfig>\n',
+                    encoding="utf-8",
+                )
+                env = os.environ.copy()
+                env["FONTCONFIG_FILE"] = str(fonts_conf)
 
             cmd = [
                 "ffmpeg", "-i", str(video_path),
-                "-vf", f"subtitles={srt_escaped}:force_style='FontName={SUBTITLE_CONFIG['FONT_NAME']},FontSize={SUBTITLE_CONFIG['FONT_SIZE']},PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,Shadow=1'",
+                "-vf", f"subtitles=sub.srt:force_style='FontName={font_name},FontSize={SUBTITLE_CONFIG['FONT_SIZE']},Bold=1,PrimaryColour={style['PrimaryColour']},OutlineColour={style['OutlineColour']},BackColour=&H80000000,Outline=3,Shadow=2,BorderStyle=1,MarginV=30'",
                 "-c:a", "copy",
                 "-y", str(output_path),
             ]
 
-            logger.info("开始烧录字幕到视频...")
+            logger.info(f"开始烧录字幕到视频（字体: {font_name}）...")
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                cwd=str(tmp_dir),
+                env=env,
             )
             _, stderr = await process.communicate()
 
@@ -362,4 +453,4 @@ class WhisperSubtitleGenerator:
             if not output_path.exists() or output_path.stat().st_size == 0:
                 raise RuntimeError("烧录后的视频文件为空")
         finally:
-            tmp_srt.unlink(missing_ok=True)
+            shutil.rmtree(tmp_dir, ignore_errors=True)

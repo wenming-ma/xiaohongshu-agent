@@ -126,6 +126,7 @@ class XHSVideoPostPipeline(BasePipeline[XHSVideoPostInput, XHSVideoPostOutput]):
             download_result = await download_agent.forward(
                 sources=research.sources,
                 output_dir=output_dir,
+                topic=input_data.topic,
             )
             save_json(output_dir / "download.json", download_result.model_dump())
 

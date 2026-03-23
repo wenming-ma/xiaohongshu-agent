@@ -8,7 +8,8 @@ import logfire
 from ....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import VideoSource, DownloadResult, Platform
 from ....utils.logger import get_logger
-from ....utils.subtitle_generator import WhisperTranscriber, WhisperSubtitleGenerator
+from ....utils.subtitle_generator import WhisperTranscriber, WhisperSubtitleGenerator, pick_subtitle_style
+from ....utils.font_selector import FontSelectorAgent, get_font_info, get_fonts_dir
 
 logger = get_logger(__name__)
 
@@ -55,7 +56,9 @@ class DownloadAgent(BaseAgent):
         self,
         sources: List[VideoSource],
         output_dir: Path,
+        topic: str = "",
     ) -> DownloadResult:
+        self._topic = topic
         sorted_sources = sorted(sources, key=lambda s: s.engagement_score, reverse=True)
 
         logger.info(f"尝试下载 {len(sorted_sources)} 个视频源")
@@ -68,6 +71,8 @@ class DownloadAgent(BaseAgent):
 
             if validation.passed:
                 logger.info(f"下载成功: {result.local_path}")
+                # LLM 选择最佳字体
+                await self._select_font(result.source)
                 result = await self._transcribe(result)
                 return result
 
@@ -122,6 +127,21 @@ class DownloadAgent(BaseAgent):
             return ValidationResult.failure(f"不支持的视频格式: {suffix}")
 
         return ValidationResult.success("视频文件验证通过")
+
+    async def _select_font(self, source: VideoSource) -> None:
+        """使用 LLM Agent 根据视频内容选择最佳字幕字体"""
+        try:
+            selector = FontSelectorAgent()
+            selection = await selector.select_font(
+                topic=getattr(self, '_topic', ''),
+                video_title=source.title,
+                video_description=source.description,
+            )
+            self._font_file = selection.font_file
+            logger.info(f"字体选择: {selection.font_file} — {selection.reason}")
+        except Exception as e:
+            self._font_file = ""
+            logger.warning(f"字体选择失败，使用默认字体: {e}")
 
     async def _transcribe(self, result: DownloadResult) -> DownloadResult:
         video_path = Path(result.local_path)
@@ -185,6 +205,8 @@ class DownloadAgent(BaseAgent):
                 video_path=video_path,
                 output_path=subtitled_path,
                 target_language="zh",
+                topic=getattr(self, '_topic', ''),
+                font_file=getattr(self, '_font_file', ''),
             )
 
             from ..schemas import SubtitleResult, SubtitleSegment
@@ -251,30 +273,47 @@ class DownloadAgent(BaseAgent):
         return None
 
     async def _burn_existing_subtitle(self, video_path: Path, srt_path: Path, output_path: Path) -> None:
-        """将已有字幕文件烧录到视频中（使用临时文件规避 ffmpeg 路径转义问题）"""
+        """将已有字幕文件烧录到视频中（使用临时目录 + cwd 规避 ffmpeg 路径转义问题）"""
         import shutil
         import subprocess
         import tempfile
 
-        # ffmpeg subtitles 滤镜对路径中的特殊字符（中文、全角符号等）极不友好，
-        # 把 SRT 复制到纯 ASCII 临时路径彻底规避转义问题
-        tmp_srt = Path(tempfile.mktemp(suffix=".srt", prefix="sub_"))
+        style = pick_subtitle_style(getattr(self, '_topic', ''))
+        font_file = getattr(self, '_font_file', '')
+        font_info = get_font_info(font_file) if font_file else None
+        font_name = font_info["font_family"] if font_info else "Microsoft YaHei"
+
+        # 把 SRT 和字体复制到临时目录，ffmpeg 以 cwd=tmp_dir 运行，
+        # 用相对路径 sub.srt 彻底规避 Windows 路径冒号转义问题
+        tmp_dir = Path(tempfile.mkdtemp(prefix="subs_"))
         try:
-            shutil.copy2(srt_path, tmp_srt)
-            srt_escaped = str(tmp_srt).replace("\\", "/").replace(":", r"\:")
+            shutil.copy2(srt_path, tmp_dir / "sub.srt")
+            env = None
+            if font_info:
+                shutil.copy2(get_fonts_dir() / font_file, tmp_dir / font_file)
+                import os
+                fonts_conf = tmp_dir / "fonts.conf"
+                fonts_conf.write_text(
+                    f'<?xml version="1.0"?>\n<fontconfig><dir>{tmp_dir}</dir></fontconfig>\n',
+                    encoding="utf-8",
+                )
+                env = os.environ.copy()
+                env["FONTCONFIG_FILE"] = str(fonts_conf)
 
             cmd = [
                 "ffmpeg", "-i", str(video_path),
-                "-vf", f"subtitles={srt_escaped}:force_style='FontName=Microsoft YaHei,FontSize=24,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,Shadow=1'",
+                "-vf", f"subtitles=sub.srt:force_style='FontName={font_name},FontSize=28,Bold=1,PrimaryColour={style['PrimaryColour']},OutlineColour={style['OutlineColour']},BackColour=&H80000000,Outline=3,Shadow=2,BorderStyle=1,MarginV=30'",
                 "-c:a", "copy",
                 "-y", str(output_path),
             ]
 
-            logger.info("烧录字幕到视频...")
+            logger.info(f"烧录字幕到视频（字体: {font_name}）...")
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                cwd=str(tmp_dir),
+                env=env,
             )
             _, stderr = await process.communicate()
 
@@ -284,7 +323,7 @@ class DownloadAgent(BaseAgent):
             if not output_path.exists() or output_path.stat().st_size == 0:
                 raise RuntimeError("烧录后的视频文件为空")
         finally:
-            tmp_srt.unlink(missing_ok=True)
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     async def _download_with_ytdlp(self, source: VideoSource, output_dir: Path) -> Path:
         import yt_dlp
