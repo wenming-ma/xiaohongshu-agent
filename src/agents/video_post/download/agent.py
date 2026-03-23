@@ -37,7 +37,7 @@ PLATFORM_OPTS = {
 
 MIN_FILE_SIZE = 100 * 1024  # 100KB
 MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB
-DOWNLOAD_TIMEOUT = 600  # 10 minutes
+DOWNLOAD_TIMEOUT = 1200  # 20 minutes
 
 
 class DownloadAgent(BaseAgent):
@@ -252,25 +252,42 @@ class DownloadAgent(BaseAgent):
             "retries": 3,
         }
 
-        # YouTube: 尝试下载中文字幕（自动生成或人工上传）
-        if source.platform == Platform.YOUTUBE:
-            ydl_opts.update({
-                "writesubtitles": True,
-                "writeautomaticsub": True,
-                "subtitleslangs": ["zh-Hans", "zh-Hant", "zh", "en"],
-                "subtitlesformat": "srt",
-            })
-
         def _sync_download():
+            # Pass 1: download video only (no subtitles)
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(source.url, download=True)
                 filename = ydl.prepare_filename(info)
                 base = os.path.splitext(filename)[0]
+                video_path = None
                 for ext in ['.mp4', '.webm', '.mkv', '.avi', '.mov']:
                     candidate = base + ext
                     if os.path.exists(candidate):
-                        return Path(candidate)
-                return Path(filename)
+                        video_path = Path(candidate)
+                        break
+                if video_path is None:
+                    video_path = Path(filename)
+
+            # Pass 2: attempt subtitle download separately (non-fatal)
+            if source.platform == Platform.YOUTUBE:
+                try:
+                    sub_opts = {
+                        "outtmpl": output_template,
+                        "quiet": True,
+                        "no_warnings": True,
+                        "skip_download": True,
+                        "writesubtitles": True,
+                        "writeautomaticsub": True,
+                        "subtitleslangs": ["zh-Hans", "zh-Hant", "zh", "en"],
+                        "subtitlesformat": "srt",
+                        "socket_timeout": 15,
+                    }
+                    with yt_dlp.YoutubeDL(sub_opts) as ydl:
+                        ydl.extract_info(source.url, download=True)
+                    logger.info("字幕下载成功")
+                except Exception as e:
+                    logger.warning(f"字幕下载失败（不影响视频下载）: {e}")
+
+            return video_path
 
         loop = asyncio.get_running_loop()
         try:
