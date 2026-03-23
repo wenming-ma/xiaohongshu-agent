@@ -251,31 +251,40 @@ class DownloadAgent(BaseAgent):
         return None
 
     async def _burn_existing_subtitle(self, video_path: Path, srt_path: Path, output_path: Path) -> None:
-        """将已有字幕文件烧录到视频中"""
+        """将已有字幕文件烧录到视频中（使用临时文件规避 ffmpeg 路径转义问题）"""
+        import shutil
         import subprocess
+        import tempfile
 
-        srt_path_escaped = str(srt_path).replace("\\", "/").replace(":", r"\:")
+        # ffmpeg subtitles 滤镜对路径中的特殊字符（中文、全角符号等）极不友好，
+        # 把 SRT 复制到纯 ASCII 临时路径彻底规避转义问题
+        tmp_srt = Path(tempfile.mktemp(suffix=".srt", prefix="sub_"))
+        try:
+            shutil.copy2(srt_path, tmp_srt)
+            srt_escaped = str(tmp_srt).replace("\\", "/").replace(":", r"\:")
 
-        cmd = [
-            "ffmpeg", "-i", str(video_path),
-            "-vf", f"subtitles={srt_path_escaped}:force_style='FontName=Microsoft YaHei,FontSize=24,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,Shadow=1'",
-            "-c:a", "copy",
-            "-y", str(output_path),
-        ]
+            cmd = [
+                "ffmpeg", "-i", str(video_path),
+                "-vf", f"subtitles={srt_escaped}:force_style='FontName=Microsoft YaHei,FontSize=24,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,Shadow=1'",
+                "-c:a", "copy",
+                "-y", str(output_path),
+            ]
 
-        logger.info("烧录平台字幕到视频...")
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        _, stderr = await process.communicate()
+            logger.info("烧录字幕到视频...")
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            _, stderr = await process.communicate()
 
-        if process.returncode != 0:
-            raise RuntimeError(f"ffmpeg 字幕烧录失败: {stderr.decode()[-500:]}")
+            if process.returncode != 0:
+                raise RuntimeError(f"ffmpeg 字幕烧录失败: {stderr.decode()[-500:]}")
 
-        if not output_path.exists() or output_path.stat().st_size == 0:
-            raise RuntimeError("烧录后的视频文件为空")
+            if not output_path.exists() or output_path.stat().st_size == 0:
+                raise RuntimeError("烧录后的视频文件为空")
+        finally:
+            tmp_srt.unlink(missing_ok=True)
 
     async def _download_with_ytdlp(self, source: VideoSource, output_dir: Path) -> Path:
         import yt_dlp

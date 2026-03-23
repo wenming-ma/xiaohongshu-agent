@@ -24,7 +24,7 @@ You are a cross-platform video content researcher, focused on discovering **high
    - Well-produced with editing
 
 3. **Reasonable Duration**
-   - 30 seconds - 5 minutes is ideal
+   - 30 seconds - 15 minutes is ideal
    - Information-dense, not dragging
 
 ### ❌ Avoid Low-Quality Videos:
@@ -41,7 +41,7 @@ You are a cross-platform video content researcher, focused on discovering **high
 
 3. **Technical Issues**
    - Too short (<20 seconds)
-   - Too long (>10 minutes)
+   - Too long (>15 minutes)
    - Extremely poor quality
 
 ## Search Strategy
@@ -65,7 +65,7 @@ You are a cross-platform video content researcher, focused on discovering **high
 1. Navigate to https://www.youtube.com
 2. Click on the search bar at the top
 3. Type your search query and press Enter
-4. Click "Filters" and select "Short (< 4 minutes)" or "Medium (4-20 minutes)" under Duration
+4. Click "Filters" and select "Medium (4-20 minutes)" under Duration
 5. Sort by relevance or view count
 6. Scroll down to load more results
 7. Click into videos to check duration, description, likes, and comments
@@ -200,7 +200,7 @@ Make preliminary judgments while collecting:
 - Does the title clearly describe complete content?
 - Does the description show storytelling/tutorial/depth?
 - Is it from a professional creator (not casual recording)?
-- Is the duration reasonable (30 seconds-5 minutes)?
+- Is the duration reasonable (30 seconds-15 minutes)?
 
 ### Step 7: Filter and Sort
 - Sort by quality and engagement combined
@@ -240,7 +240,7 @@ VIDEO_QUALITY_SYSTEM_PROMPT = """你是专业的视频内容质量评估专家�
    - 音频清晰可听
 
 4. **时长合理**
-   - 30秒-5分钟为佳
+   - 30秒-15分钟为佳
    - 内容充实，不拖沓
 
 5. **原创性**
@@ -271,7 +271,7 @@ VIDEO_QUALITY_SYSTEM_PROMPT = """你是专业的视频内容质量评估专家�
 
 5. **时长不当**
    - 过短（<20秒）信息量不足
-   - 过长（>10分钟）不适合短视频平台
+   - 过长（>15分钟）不适合短视频平台
 
 ## 评分规则（总分100）
 
@@ -334,7 +334,7 @@ VIDEO_QUALITY_USER_PROMPT_TEMPLATE = """## 评估视频质量
 
 3. **小红书适配性**（30分）
    - 内容是否符合小红书用户兴趣
-   - 时长是否合理（30秒-5分钟为佳）
+   - 时长是否合理（30秒-15分钟为佳）
    - 话题是否与"{topic}"相关
 
 请严格评分，只有真正高质量的视频才应该通过！

@@ -331,25 +331,35 @@ class WhisperSubtitleGenerator:
         return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
     async def _burn_subtitles(self, video_path: Path, srt_path: Path, output_path: Path) -> None:
-        srt_path_escaped = str(srt_path).replace("\\", "/").replace(":", r"\:")
+        import shutil
+        import tempfile
 
-        cmd = [
-            "ffmpeg", "-i", str(video_path),
-            "-vf", f"subtitles={srt_path_escaped}:force_style='FontName={SUBTITLE_CONFIG['FONT_NAME']},FontSize={SUBTITLE_CONFIG['FONT_SIZE']},PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,Shadow=1'",
-            "-c:a", "copy",
-            "-y", str(output_path),
-        ]
+        # ffmpeg subtitles 滤镜对路径中的特殊字符（中文、全角符号等）极不友好，
+        # 把 SRT 复制到纯 ASCII 临时路径彻底规避转义问题
+        tmp_srt = Path(tempfile.mktemp(suffix=".srt", prefix="sub_"))
+        try:
+            shutil.copy2(srt_path, tmp_srt)
+            srt_escaped = str(tmp_srt).replace("\\", "/").replace(":", r"\:")
 
-        logger.info("开始烧录字幕到视频...")
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        _, stderr = await process.communicate()
+            cmd = [
+                "ffmpeg", "-i", str(video_path),
+                "-vf", f"subtitles={srt_escaped}:force_style='FontName={SUBTITLE_CONFIG['FONT_NAME']},FontSize={SUBTITLE_CONFIG['FONT_SIZE']},PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,Shadow=1'",
+                "-c:a", "copy",
+                "-y", str(output_path),
+            ]
 
-        if process.returncode != 0:
-            raise RuntimeError(f"ffmpeg 字幕烧录失败: {stderr.decode()[-500:]}")
+            logger.info("开始烧录字幕到视频...")
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            _, stderr = await process.communicate()
 
-        if not output_path.exists() or output_path.stat().st_size == 0:
-            raise RuntimeError("烧录后的视频文件为空")
+            if process.returncode != 0:
+                raise RuntimeError(f"ffmpeg 字幕烧录失败: {stderr.decode()[-500:]}")
+
+            if not output_path.exists() or output_path.stat().st_size == 0:
+                raise RuntimeError("烧录后的视频文件为空")
+        finally:
+            tmp_srt.unlink(missing_ok=True)
