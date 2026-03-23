@@ -30,18 +30,22 @@ class XHSVideoPostPipeline(BasePipeline[XHSVideoPostInput, XHSVideoPostOutput]):
         loop = asyncio.get_running_loop()
 
         def _fetch_meta(url: str) -> dict | None:
-            try:
-                opts = {"quiet": True, "no_warnings": True, "skip_download": True, "socket_timeout": 15, **get_cookie_config()}
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    info = ydl.extract_info(url, download=False)
-                    return {
-                        "views": info.get("view_count") or 0,
-                        "likes": info.get("like_count") or 0,
-                        "comments": info.get("comment_count") or 0,
-                        "duration": info.get("duration") or 0,
-                    }
-            except Exception:
-                return None
+            base_opts = {"quiet": True, "no_warnings": True, "skip_download": True, "socket_timeout": 15}
+            for opts in [{**base_opts, **get_cookie_config()}, base_opts]:
+                try:
+                    with yt_dlp.YoutubeDL(opts) as ydl:
+                        info = ydl.extract_info(url, download=False)
+                        return {
+                            "views": info.get("view_count") or 0,
+                            "likes": info.get("like_count") or 0,
+                            "comments": info.get("comment_count") or 0,
+                            "duration": info.get("duration") or 0,
+                        }
+                except Exception as e:
+                    if "Could not copy Chrome cookie database" in str(e) and "cookiesfrombrowser" in opts:
+                        continue
+                    return None
+            return None
 
         tasks = [loop.run_in_executor(None, _fetch_meta, s.url) for s in sources]
         results = await asyncio.gather(*tasks, return_exceptions=True)
