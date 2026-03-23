@@ -143,6 +143,33 @@ class XHSVideoPostPipeline(BasePipeline[XHSVideoPostInput, XHSVideoPostOutput]):
                 logger.info(f"   字幕片段: {len(download_result.subtitle.segments)} 条")
             logger.info("")
 
+            # Phase 2.5: AI 配音（将外语音频替换为中文配音）
+            if (
+                download_result.subtitle
+                and download_result.subtitle.success
+                and download_result.subtitle.srt_path
+            ):
+                logger.info("=" * 60)
+                logger.info("Phase 2.5: AI 中文配音")
+                logger.info("=" * 60)
+                logger.info("")
+                try:
+                    from ...utils.video_dubbing import dub_video
+
+                    video_for_dub = Path(download_result.local_path)
+                    dubbed_path = video_for_dub.parent / f"{video_for_dub.stem}_dubbed{video_for_dub.suffix}"
+                    await dub_video(
+                        video_path=video_for_dub,
+                        srt_path=Path(download_result.subtitle.srt_path),
+                        output_path=dubbed_path,
+                        work_dir=output_dir / "dubbing_work",
+                    )
+                    download_result.local_path = str(dubbed_path)
+                    logger.info(f"✅ 配音完成: {dubbed_path.name}")
+                except Exception as e:
+                    logger.warning(f"配音失败（不影响发布）: {e}")
+                logger.info("")
+
             # Phase 3: 内容适配
             logger.info("=" * 60)
             logger.info("Phase 3: 小红书内容创作")
