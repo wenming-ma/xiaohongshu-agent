@@ -66,6 +66,7 @@ class XHSVideoPostPipeline(BasePipeline[XHSVideoPostInput, XHSVideoPostOutput]):
         from .research import ResearchAgent
         from .download import DownloadAgent
         from .content import ContentAgent
+        from .cover import CoverAgent
         from .publish import PublisherAgent
 
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -164,6 +165,30 @@ class XHSVideoPostPipeline(BasePipeline[XHSVideoPostInput, XHSVideoPostOutput]):
             logger.info(f"   话题标签: {', '.join(content.hashtags)}")
             logger.info("")
 
+            # Phase 3.5: 封面图生成
+            logger.info("=" * 60)
+            logger.info("Phase 3.5: 视频封面生成")
+            logger.info("=" * 60)
+            logger.info("")
+
+            cover_path = None
+            try:
+                cover_agent = CoverAgent()
+                cover_result = await cover_agent.forward(
+                    video_path=Path(download_result.local_path),
+                    content=content,
+                    topic=input_data.topic,
+                    output_dir=output_dir,
+                )
+                if cover_result.success:
+                    cover_path = Path(cover_result.cover_path)
+                    logger.info(f"✅ 封面生成成功: {cover_path.name}")
+                else:
+                    logger.warning(f"封面生成失败: {cover_result.error_message}，将使用默认封面")
+            except Exception as e:
+                logger.warning(f"封面生成异常: {e}，将使用默认封面")
+            logger.info("")
+
             # Phase 4: 发布
             if input_data.publish:
                 logger.info("=" * 60)
@@ -177,6 +202,7 @@ class XHSVideoPostPipeline(BasePipeline[XHSVideoPostInput, XHSVideoPostOutput]):
                     content=content,
                     video_path=Path(download_result.local_path),
                     output_dir=output_dir,
+                    cover_path=cover_path,
                 )
                 save_json(output_dir / "publish.json", publish_result.model_dump())
 

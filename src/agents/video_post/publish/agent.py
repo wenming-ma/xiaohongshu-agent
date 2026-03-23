@@ -55,6 +55,7 @@ class PublisherAgent(BaseAgent):
         content: XHSVideoContent,
         video_path: Path,
         output_dir: Path,
+        cover_path: Path | None = None,
     ) -> VideoPublishResult:
         logger.info("准备发布视频到小红书: %s", content.title)
 
@@ -74,7 +75,7 @@ class PublisherAgent(BaseAgent):
             full_body = f"{full_body}\n\n{content.call_to_action}"
         self.body_inject_tool.bind_body(full_body)
 
-        user_prompt = self.build_prompt(content, video_path)
+        user_prompt = self.build_prompt(content, video_path, cover_path)
         publish_result = await self.step(user_prompt)
         publish_result.content_snapshot = content.model_dump()
 
@@ -107,7 +108,7 @@ class PublisherAgent(BaseAgent):
         size_mb = video_path.stat().st_size / (1024 * 1024)
         logger.info(f"视频文件: {video_path.name} ({size_mb:.1f} MB)")
 
-    def build_prompt(self, content: XHSVideoContent, video_path: Path) -> str:
+    def build_prompt(self, content: XHSVideoContent, video_path: Path, cover_path: Path | None = None) -> str:
         # 话题通过页面话题芯片单独添加，不拼接到正文中
         hashtags_str = "\n".join([f"   - {tag}" for tag in content.hashtags]) if content.hashtags else "无"
 
@@ -115,4 +116,5 @@ class PublisherAgent(BaseAgent):
             title=content.title,
             hashtags=hashtags_str,
             video_path=str(video_path.absolute()),
+            cover_path=str(cover_path.absolute()) if cover_path and cover_path.exists() else "",
         )

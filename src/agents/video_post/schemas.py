@@ -117,6 +117,12 @@ class ContentReviewResult(BaseModel):
     summary: str = ""
 
 
+class CoverImageResult(BaseModel):
+    success: bool
+    cover_path: str = ""
+    error_message: str = ""
+
+
 class VideoPublishResult(BaseModel):
     published: bool
     platform: str = "xiaohongshu"
