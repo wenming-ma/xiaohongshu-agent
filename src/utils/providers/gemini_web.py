@@ -96,6 +96,7 @@ class GeminiWebImageClient:
     _current_index: int = 0
 
     def __init__(self, browser_session_dir: Optional[str] = None):
+        self._pw = None  # Playwright 实例，必须存储以便正确清理
         self._context: Optional[BrowserContext] = None
         self._page: Optional[Page] = None
         self._active_session_dir: Optional[str] = None
@@ -146,16 +147,31 @@ class GeminiWebImageClient:
         if self._page and not self._page.is_closed():
             return self._page
 
+        # 确保旧资源完全清理（处理 page 已关闭但 pw/context 仍在的情况）
+        await self.close()
+
+        # 清理残留的 Chrome profile 锁文件（崩溃恢复）
+        self._cleanup_profile_locks(session_dir)
+
         logger.info("[GeminiWeb] 使用会话目录: %s", Path(session_dir).name)
-        pw = await async_playwright().start()
-        self._context = await pw.chromium.launch_persistent_context(
-            user_data_dir=session_dir,
-            headless=False,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-            ],
-            viewport={"width": 1280, "height": 900},
-        )
+        self._pw = await async_playwright().start()
+        try:
+            self._context = await self._pw.chromium.launch_persistent_context(
+                user_data_dir=session_dir,
+                headless=False,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                ],
+                viewport={"width": 1280, "height": 900},
+            )
+        except Exception:
+            # 浏览器启动失败，清理 Playwright 实例防止泄漏
+            try:
+                await self._pw.stop()
+            except Exception:
+                pass
+            self._pw = None
+            raise
         self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
         self._active_session_dir = session_dir
         return self._page
@@ -300,6 +316,8 @@ class GeminiWebImageClient:
                     "[GeminiWeb] 图片生成失败 (%d/%d): %s",
                     attempt + 1, max_retries, str(e),
                 )
+                # 清理浏览器资源，确保下次重试从干净状态开始
+                await self.close()
                 if attempt < max_retries - 1:
                     delay = min(5 * (attempt + 1), 30)
                     logger.info("[GeminiWeb] 等待 %d 秒后重试...", delay)
@@ -400,8 +418,20 @@ class GeminiWebImageClient:
 
         raise last_error or Exception("[GeminiWeb] 图片下载失败")
 
+    @staticmethod
+    def _cleanup_profile_locks(user_data_dir: str):
+        """清理残留的 Chrome profile 锁文件（处理前次崩溃遗留）"""
+        for lock_name in ("lockfile", "SingletonLock"):
+            lock_path = Path(user_data_dir) / lock_name
+            try:
+                if lock_path.exists():
+                    lock_path.unlink()
+                    logger.info("[GeminiWeb] 清理残留锁文件: %s", lock_name)
+            except OSError:
+                pass  # 文件仍被运行中的进程锁定，跳过
+
     async def close(self):
-        """清理浏览器资源"""
+        """清理浏览器资源（包括 Playwright 实例）"""
         if self._context:
             try:
                 await self._context.close()
@@ -409,3 +439,9 @@ class GeminiWebImageClient:
                 pass
             self._context = None
             self._page = None
+        if self._pw:
+            try:
+                await self._pw.stop()
+            except Exception:
+                pass
+            self._pw = None
