@@ -115,7 +115,6 @@ class XHSVideoExtractTool:
         import yt_dlp
 
         output_template = str(dest.with_suffix(".%(ext)s"))
-        browser_profile_dir = Path(PathConfig.BROWSER_SESSION_SHARED)
 
         def _sync_download() -> Path:
             ydl_opts = {
@@ -134,7 +133,6 @@ class XHSVideoExtractTool:
                         "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                     ),
                 },
-                "cookiesfrombrowser": ("chromium", str(browser_profile_dir)),
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(page_url, download=True)

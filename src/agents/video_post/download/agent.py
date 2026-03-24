@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 from pathlib import Path
 from typing import Any, List
 
@@ -10,35 +11,53 @@ from ..schemas import VideoSource, DownloadResult, Platform
 from ....utils.logger import get_logger
 from ....utils.subtitle_generator import WhisperTranscriber, WhisperSubtitleGenerator, pick_subtitle_style, release_whisper_model
 from ....utils.font_selector import FontSelectorAgent, get_font_info, get_fonts_dir
-from ....utils.cookies import get_cookie_config
 
 logger = get_logger(__name__)
 
+BEST_QUALITY_FORMAT = "bestvideo*+bestaudio/best"
+
 PLATFORM_OPTS = {
     Platform.YOUTUBE: {
-        "format": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-        "needs_cookies": True,
+        "format": BEST_QUALITY_FORMAT,
     },
     Platform.X: {
-        "format": "best[ext=mp4]/best",
+        "format": BEST_QUALITY_FORMAT,
     },
     Platform.INSTAGRAM: {
-        "format": "best[ext=mp4]/best",
-        "needs_cookies": True,
+        "format": BEST_QUALITY_FORMAT,
     },
     Platform.FACEBOOK: {
-        "format": "best[ext=mp4]/best",
+        "format": BEST_QUALITY_FORMAT,
     },
     Platform.TIKTOK: {
-        "format": "best[ext=mp4]/best",
+        "format": BEST_QUALITY_FORMAT,
     },
 }
-
-_COOKIE_DB_ERROR = "Could not copy Chrome cookie database"
 
 MIN_FILE_SIZE = 100 * 1024  # 100KB
 MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB
 DOWNLOAD_TIMEOUT = 1200  # 20 minutes
+DEFAULT_PRESELECT_TOP_K = 3
+
+
+class _YtDlpLogger:
+    @staticmethod
+    def debug(msg: str) -> None:
+        if msg.startswith("[debug] "):
+            return
+        logger.debug("yt-dlp: %s", msg)
+
+    @staticmethod
+    def info(msg: str) -> None:
+        logger.debug("yt-dlp: %s", msg)
+
+    @staticmethod
+    def warning(msg: str) -> None:
+        logger.debug("yt-dlp warning: %s", msg)
+
+    @staticmethod
+    def error(msg: str) -> None:
+        logger.debug("yt-dlp error: %s", msg)
 
 
 class DownloadAgent(BaseAgent):
@@ -57,37 +76,48 @@ class DownloadAgent(BaseAgent):
         sources: List[VideoSource],
         output_dir: Path,
         topic: str = "",
+        preselect_top_k: int = DEFAULT_PRESELECT_TOP_K,
     ) -> DownloadResult:
         self._topic = topic
 
-        logger.info(f"尝试下载 {len(sources)} 个视频源")
+        if not sources:
+            raise RuntimeError("没有可下载的视频源")
 
-        # Step 1: 下载所有视频并转录
-        candidates: list[DownloadResult] = []
-        for i, source in enumerate(sources):
-            logger.info(f"尝试下载 [{i+1}/{len(sources)}]: {source.platform.value} - {source.url[:60]}")
+        total_sources = len(sources)
+        top_k = max(1, min(preselect_top_k, total_sources))
+        logger.info(f"候选视频总数: {total_sources}，预筛选 Top {top_k} 进入下载")
 
-            result = await self.step(source, output_dir)
-            validation = await self.validate(result)
+        # Step 1: 先做轻量预评分，避免下载全部候选
+        selected_sources = self._preselect_sources(sources, topic, top_k)
 
-            if not validation.passed:
-                logger.warning(f"下载失败: {result.error_message}")
-                continue
+        # Step 2: 仅下载 TopK，并做转录用于精细评分
+        candidates = await self._download_candidates(
+            selected_sources,
+            output_dir,
+            stage_name=f"Top{len(selected_sources)}",
+        )
 
-            logger.info(f"下载成功: {result.local_path}")
-
-            # 转录（获取字幕文本用于打分）
-            result = await self._transcribe_text_only(result)
-            candidates.append(result)
+        # 回退：若 TopK 全部失败，再尝试其余候选，避免整批失败
+        if not candidates and len(selected_sources) < total_sources:
+            selected_urls = {s.url for s in selected_sources}
+            fallback_sources = [s for s in sources if s.url not in selected_urls]
+            logger.warning(
+                f"Top{len(selected_sources)} 下载全部失败，回退尝试剩余 {len(fallback_sources)} 个候选"
+            )
+            candidates = await self._download_candidates(
+                fallback_sources,
+                output_dir,
+                stage_name="Fallback",
+            )
 
         if not candidates:
-            raise RuntimeError(f"所有 {len(sources)} 个视频源下载均失败")
+            raise RuntimeError(f"所有 {total_sources} 个视频源下载均失败")
 
-        # Step 2: 综合打分 + LLM 评估，选最佳视频
+        # Step 3: 综合打分 + LLM 评估，选最佳视频
         best = await self._pick_best(candidates, topic)
         logger.info(f"选中最佳视频: {best.source.title[:50]}")
 
-        # Step 3: 只对选中的视频做字体选择 + 字幕烧录
+        # Step 4: 只对选中的视频做字体选择 + 字幕烧录
         await self._select_font(best.source)
         best = await self._transcribe(best)
         release_whisper_model()
@@ -100,6 +130,129 @@ class DownloadAgent(BaseAgent):
                     path.unlink(missing_ok=True)
 
         return best
+
+    async def _download_candidates(
+        self,
+        sources: List[VideoSource],
+        output_dir: Path,
+        stage_name: str,
+    ) -> list[DownloadResult]:
+        """下载候选并提取转录文本（用于后续细评分）。"""
+        candidates: list[DownloadResult] = []
+        for i, source in enumerate(sources):
+            logger.info(
+                f"[{stage_name}] 尝试下载 [{i + 1}/{len(sources)}]: "
+                f"{source.platform.value} - {source.url[:60]}"
+            )
+
+            result = await self.step(source, output_dir)
+            validation = await self.validate(result)
+
+            if not validation.passed:
+                logger.warning(f"[{stage_name}] 下载失败: {result.error_message}")
+                continue
+
+            logger.info(f"[{stage_name}] 下载成功: {result.local_path}")
+
+            # 转录（获取字幕文本用于细评分）
+            result = await self._transcribe_text_only(result)
+            candidates.append(result)
+
+        return candidates
+
+    @staticmethod
+    def _extract_topic_tokens(topic: str) -> list[str]:
+        """提取话题关键词（中文/英文），用于预评分的文本相关性。"""
+        raw = re.findall(r"[a-zA-Z0-9\u4e00-\u9fff]+", topic.lower())
+        # 过滤极短 token，避免噪声词过多
+        return [t for t in raw if len(t) >= 2]
+
+    def _pre_score_source(self, source: VideoSource, topic: str) -> float:
+        """
+        预评分（仅用元数据，不下载）：
+        - 互动数据
+        - 时长合理性
+        - 视频清晰度
+        - 标题/描述与话题相关性
+        """
+        import math
+
+        score = 0.0
+
+        # 互动数据（0-55）
+        eng = source.engagement
+        if eng.likes > 0:
+            score += min(math.log10(eng.likes) / 6, 1.0) * 25
+        if eng.comments > 0:
+            score += min(math.log10(eng.comments) / 5, 1.0) * 20
+        if eng.views > 0:
+            score += min(math.log10(eng.views) / 7, 1.0) * 10
+
+        # 时长（0-25）
+        duration = source.duration_seconds
+        if 60 <= duration <= 300:
+            score += 25
+        elif 300 < duration <= 600:
+            score += 18
+        elif 30 <= duration < 60 or 600 < duration <= 900:
+            score += 12
+        else:
+            score += 6
+
+        # 视频清晰度（0-20）
+        width = source.video_width or 0
+        height = source.video_height or 0
+        if width > 0 and height > 0:
+            # 对横屏/竖屏统一用短边判档，避免 720x1280 被误判成 1280p。
+            short_edge = min(width, height)
+        else:
+            short_edge = max(width, height)
+
+        if short_edge >= 2160:
+            score += 20
+        elif short_edge >= 1440:
+            score += 18
+        elif short_edge >= 1080:
+            score += 15
+        elif short_edge >= 720:
+            score += 10
+        elif short_edge >= 480:
+            score += 6
+        elif short_edge > 0:
+            score += 3
+
+        # 话题相关性（0-20）
+        topic_tokens = self._extract_topic_tokens(topic)
+        if topic_tokens:
+            haystack = f"{source.title} {source.description}".lower()
+            matched = sum(1 for t in topic_tokens if t in haystack)
+            score += min(matched / len(topic_tokens), 1.0) * 20
+
+        return score
+
+    def _preselect_sources(
+        self,
+        sources: List[VideoSource],
+        topic: str,
+        top_k: int,
+    ) -> List[VideoSource]:
+        """轻量预筛选：从候选中选出 TopK 进入下载。"""
+        scored = [(self._pre_score_source(s, topic), s) for s in sources]
+        scored.sort(key=lambda x: (x[0], x[1].engagement_score), reverse=True)
+
+        logger.info(f"预评分完成（仅元数据），Top {top_k}：")
+        for i, (score, source) in enumerate(scored[:top_k], 1):
+            resolution = (
+                f"{source.video_width}x{source.video_height}"
+                if source.video_width and source.video_height
+                else "未知"
+            )
+            logger.info(
+                f"  {i}. 预分 {score:.1f} | 清晰度 {resolution} | "
+                f"[{source.platform.value}] {source.title[:50]}"
+            )
+
+        return [s for _, s in scored[:top_k]]
 
     async def _transcribe_text_only(self, result: DownloadResult) -> DownloadResult:
         """仅提取转录文本（用于打分），不生成字幕和烧录"""
@@ -489,8 +642,6 @@ class DownloadAgent(BaseAgent):
 
         platform_opts = PLATFORM_OPTS.get(source.platform, {})
         format_spec = platform_opts.get("format", "best[ext=mp4]/best")
-        needs_cookies = platform_opts.get("needs_cookies", False)
-        cookie_cfg = get_cookie_config() if needs_cookies else {}
 
         ydl_opts = {
             "format": format_spec,
@@ -500,7 +651,7 @@ class DownloadAgent(BaseAgent):
             "merge_output_format": "mp4",
             "socket_timeout": 30,
             "retries": 3,
-            **cookie_cfg,
+            "logger": _YtDlpLogger(),
         }
 
         def _sync_download(opts: dict) -> Path:
@@ -519,7 +670,6 @@ class DownloadAgent(BaseAgent):
 
             if source.platform == Platform.YOUTUBE:
                 try:
-                    active_cookies = {k: v for k, v in opts.items() if k in ("cookiesfrombrowser", "cookiefile")}
                     sub_opts = {
                         "outtmpl": output_template,
                         "quiet": True,
@@ -530,7 +680,7 @@ class DownloadAgent(BaseAgent):
                         "subtitleslangs": ["zh-Hans", "zh-Hant", "zh", "en"],
                         "subtitlesformat": "srt",
                         "socket_timeout": 15,
-                        **active_cookies,
+                        "logger": _YtDlpLogger(),
                     }
                     with yt_dlp.YoutubeDL(sub_opts) as ydl:
                         ydl.extract_info(source.url, download=True)
@@ -542,23 +692,9 @@ class DownloadAgent(BaseAgent):
 
         loop = asyncio.get_running_loop()
         try:
-            result_path = await asyncio.wait_for(
+            return await asyncio.wait_for(
                 loop.run_in_executor(None, _sync_download, ydl_opts),
                 timeout=DOWNLOAD_TIMEOUT,
             )
         except asyncio.TimeoutError:
             raise TimeoutError(f"视频下载超时 ({DOWNLOAD_TIMEOUT}s): {source.url[:80]}")
-        except Exception as e:
-            if _COOKIE_DB_ERROR in str(e) and cookie_cfg:
-                logger.warning("Chrome cookie 访问失败，尝试无 cookie 下载...")
-                no_cookie_opts = {k: v for k, v in ydl_opts.items() if k not in ("cookiesfrombrowser", "cookiefile")}
-                try:
-                    result_path = await asyncio.wait_for(
-                        loop.run_in_executor(None, _sync_download, no_cookie_opts),
-                        timeout=DOWNLOAD_TIMEOUT,
-                    )
-                except asyncio.TimeoutError:
-                    raise TimeoutError(f"视频下载超时 ({DOWNLOAD_TIMEOUT}s): {source.url[:80]}")
-            else:
-                raise
-        return result_path

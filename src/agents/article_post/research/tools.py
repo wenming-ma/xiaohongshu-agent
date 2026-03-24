@@ -387,7 +387,6 @@ class GenericVideoTranscriber:
         import yt_dlp
 
         output_template = str(temp_dir / "source.%(ext)s")
-        browser_profile_dir = Path(PathConfig.BROWSER_SESSION_SHARED)
 
         def _sync_download() -> Path:
             opts = {
@@ -398,7 +397,6 @@ class GenericVideoTranscriber:
                 "merge_output_format": "mp4",
                 "socket_timeout": 30,
                 "retries": 2,
-                "cookiesfrombrowser": ("chromium", str(browser_profile_dir)),
             }
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)

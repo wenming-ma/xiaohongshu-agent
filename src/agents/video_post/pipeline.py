@@ -7,7 +7,6 @@ from ...core.pipeline_registry import PipelineRegistry
 from ...config.settings import PathConfig
 from ...utils.logger import get_logger
 from ...utils.file_ops import save_json
-from ...utils.cookies import get_cookie_config
 from .schemas import XHSVideoPostInput, XHSVideoPostOutput, VideoSource, EngagementMetrics
 
 logger = get_logger(__name__)
@@ -30,21 +29,34 @@ class XHSVideoPostPipeline(BasePipeline[XHSVideoPostInput, XHSVideoPostOutput]):
         loop = asyncio.get_running_loop()
 
         def _fetch_meta(url: str) -> dict | None:
-            base_opts = {"quiet": True, "no_warnings": True, "skip_download": True, "socket_timeout": 15}
-            for opts in [{**base_opts, **get_cookie_config()}, base_opts]:
-                try:
-                    with yt_dlp.YoutubeDL(opts) as ydl:
-                        info = ydl.extract_info(url, download=False)
-                        return {
-                            "views": info.get("view_count") or 0,
-                            "likes": info.get("like_count") or 0,
-                            "comments": info.get("comment_count") or 0,
-                            "duration": info.get("duration") or 0,
-                        }
-                except Exception as e:
-                    if "Could not copy Chrome cookie database" in str(e) and "cookiesfrombrowser" in opts:
-                        continue
-                    return None
+            opts = {"quiet": True, "no_warnings": True, "skip_download": True, "socket_timeout": 15}
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    width = info.get("width") or 0
+                    height = info.get("height") or 0
+
+                    # 某些站点不会在顶层返回分辨率，回退到 requested_formats/formats 里挑最大分辨率。
+                    if not width or not height:
+                        best_pixels = 0
+                        for fmt in (info.get("requested_formats") or info.get("formats") or []):
+                            w = fmt.get("width") or 0
+                            h = fmt.get("height") or 0
+                            pixels = w * h
+                            if pixels > best_pixels:
+                                best_pixels = pixels
+                                width, height = w, h
+
+                    return {
+                        "views": info.get("view_count") or 0,
+                        "likes": info.get("like_count") or 0,
+                        "comments": info.get("comment_count") or 0,
+                        "duration": info.get("duration") or 0,
+                        "width": width,
+                        "height": height,
+                    }
+            except Exception:
+                return None
             return None
 
         tasks = [loop.run_in_executor(None, _fetch_meta, s.url) for s in sources]
@@ -62,6 +74,9 @@ class XHSVideoPostPipeline(BasePipeline[XHSVideoPostInput, XHSVideoPostOutput]):
             )
             if meta["duration"] and not source.duration_seconds:
                 source.duration_seconds = meta["duration"]
+            if meta["width"] and meta["height"]:
+                source.video_width = meta["width"]
+                source.video_height = meta["height"]
             enriched += 1
 
         logger.info(f"互动数据补全完成: {enriched}/{len(sources)} 个视频")
@@ -125,7 +140,10 @@ class XHSVideoPostPipeline(BasePipeline[XHSVideoPostInput, XHSVideoPostOutput]):
             logger.info("=" * 60)
             logger.info("Phase 2: 视频下载与处理")
             logger.info("=" * 60)
-            logger.info(f"准备下载 {len(research.sources)} 个视频（按互动量排序）")
+            preselect_top_k = min(3, len(research.sources))
+            logger.info(
+                f"准备对 {len(research.sources)} 个候选做预评分，先下载 Top {preselect_top_k}"
+            )
             logger.info("")
 
             download_agent = DownloadAgent()
@@ -133,6 +151,7 @@ class XHSVideoPostPipeline(BasePipeline[XHSVideoPostInput, XHSVideoPostOutput]):
                 sources=research.sources,
                 output_dir=output_dir,
                 topic=input_data.topic,
+                preselect_top_k=preselect_top_k,
             )
             save_json(output_dir / "download.json", download_result.model_dump())
 

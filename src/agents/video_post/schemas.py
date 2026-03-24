@@ -46,6 +46,8 @@ class VideoSource(BaseModel):
     description: str = ""
     author: str = ""
     duration_seconds: int = 0
+    video_width: int = 0
+    video_height: int = 0
     engagement: EngagementMetrics = EngagementMetrics()
     thumbnail_url: str = ""
 

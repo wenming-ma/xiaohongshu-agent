@@ -7,6 +7,13 @@ def _split_csv_env(name: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _bool_env(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
 class RetryConfig:
     MAX_RETRIES = 12
     INITIAL_DELAY = 2.0
@@ -55,7 +62,6 @@ class PathConfig:
     IMAGE_PROJECT_DIR = _PROJECT_ROOT / 'posts' / 'image-posts'
     ARTICLE_PROJECT_DIR = _PROJECT_ROOT / 'posts' / 'article-posts'
     VIDEO_PROJECT_DIR = _PROJECT_ROOT / 'posts' / 'video-posts'
-    COOKIES_FILE = str(_PROJECT_ROOT / "cookies.txt")
     BROWSER_SESSION_SHARED = str(_PROJECT_ROOT / 'browser-sessions' / 'shared')
     BROWSER_SESSION_XHS = BROWSER_SESSION_SHARED
     BROWSER_SESSION_GEMINI = str(_PROJECT_ROOT / 'browser-sessions' / 'gemini')
@@ -164,3 +170,11 @@ class SubtitleConfig:
     FONT_NAME = "Microsoft YaHei"
     FONT_SIZE = 24
     ENABLE_TRANSLATION = True
+
+
+class BrowserConfig:
+    PLAYWRIGHT_RESEARCH_HEADLESS = _bool_env("PLAYWRIGHT_RESEARCH_HEADLESS", True)
+    VIDEO_RESEARCH_HEADLESS = _bool_env(
+        "VIDEO_RESEARCH_HEADLESS",
+        PLAYWRIGHT_RESEARCH_HEADLESS,
+    )
