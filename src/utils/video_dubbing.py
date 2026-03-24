@@ -12,6 +12,7 @@
 """
 
 import asyncio
+import os
 import re
 import subprocess
 import tempfile
@@ -21,12 +22,44 @@ from .logger import get_logger
 
 logger = get_logger(__name__)
 
+# 项目路径与统一缓存路径
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+PROJECT_CACHE = PROJECT_ROOT / ".cache"
+HF_HUB_CACHE_DIR = PROJECT_CACHE / "huggingface" / "hub"
+MODELSCOPE_CACHE_DIR = PROJECT_CACHE / "modelscope"
+TORCH_CACHE_DIR = PROJECT_CACHE / "torch"
+AUDIO_SEPARATOR_MODEL_DIR = PROJECT_CACHE / "audio-separator" / "models"
+
 # IndexTTS-2 模型路径
-INDEXTTS_DIR = Path(__file__).parent.parent.parent / "submodules" / "index-tts"
+INDEXTTS_DIR = PROJECT_ROOT / "submodules" / "index-tts"
 INDEXTTS_CHECKPOINTS = INDEXTTS_DIR / "checkpoints"
 
 # 人声分离模型（自动下载）
 SEPARATOR_MODEL = "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
+
+
+def _prepare_model_cache_env() -> None:
+    """统一设置模型缓存目录到项目 .cache，避免落到仓库根 checkpoints。"""
+    HF_HUB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    MODELSCOPE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    TORCH_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    AUDIO_SEPARATOR_MODEL_DIR.mkdir(parents=True, exist_ok=True)
+
+    os.environ["XDG_CACHE_HOME"] = str(PROJECT_CACHE)
+    os.environ["HF_HOME"] = str(PROJECT_CACHE / "huggingface")
+    os.environ["HF_HUB_CACHE"] = str(HF_HUB_CACHE_DIR)
+    os.environ["TRANSFORMERS_CACHE"] = str(HF_HUB_CACHE_DIR)
+    os.environ["MODELSCOPE_CACHE"] = str(MODELSCOPE_CACHE_DIR)
+    os.environ["TORCH_HOME"] = str(TORCH_CACHE_DIR)
+    os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+
+    # 如果 huggingface_hub 已经被导入，强制覆盖其运行时缓存常量。
+    try:
+        import huggingface_hub.constants as hf_constants
+        if hasattr(hf_constants, "HF_HUB_CACHE"):
+            hf_constants.HF_HUB_CACHE = str(HF_HUB_CACHE_DIR)
+    except Exception:
+        pass
 
 
 async def dub_video(
@@ -50,6 +83,8 @@ async def dub_video(
         输出视频路径
     """
     import shutil
+
+    _prepare_model_cache_env()
 
     cleanup = work_dir is None
     if work_dir is None:
@@ -179,12 +214,14 @@ async def _separate_vocals(audio_path: Path, output_dir: Path) -> tuple[Path, Pa
     loop = asyncio.get_running_loop()
 
     def _sync_separate():
+        _prepare_model_cache_env()
         from audio_separator.separator import Separator
 
         separator = Separator(
             output_dir=str(output_dir),
             output_format="WAV",
             sample_rate=44100,
+            model_file_dir=str(AUDIO_SEPARATOR_MODEL_DIR),
         )
         separator.load_model(model_filename=SEPARATOR_MODEL)
         output_files = separator.separate(str(audio_path))
@@ -273,7 +310,12 @@ async def _generate_dubbed_segments(
     loop = asyncio.get_running_loop()
 
     def _init_tts():
+        _prepare_model_cache_env()
+        # 先导入 huggingface_hub，使其缓存常量按当前环境变量初始化。
+        import huggingface_hub  # noqa: F401
         from indextts.infer_v2 import IndexTTS2
+        # `infer_v2.py` 导入时会重置 HF_HUB_CACHE，这里再覆盖回项目 .cache。
+        _prepare_model_cache_env()
         return IndexTTS2(
             cfg_path=str(INDEXTTS_CHECKPOINTS / "config.yaml"),
             model_dir=str(INDEXTTS_CHECKPOINTS),
