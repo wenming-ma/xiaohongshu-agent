@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any, List
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.usage import UsageLimits
 
 from ....core.base_agent import BaseAgent, ValidationResult
@@ -100,6 +101,7 @@ class ResearchAgent(BaseAgent):
                 return state.current_result
 
     async def step(self, state: ResearchState, iteration: int) -> None:
+        recent_history = state.get_recent_history(MAX_HISTORY_ROUNDS)
         if iteration == 0:
             platforms_str = ", ".join(p.value for p in state.platforms)
             prompt = research_user_prompt(
@@ -108,14 +110,31 @@ class ResearchAgent(BaseAgent):
                 max_videos=state.max_videos,
             )
             logger.info("AI agent searching...")
-            result = await self.generator.run(prompt, usage_limits=UsageLimits(request_limit=None))
         else:
             logger.info("AI agent continuing with feedback...")
-            recent_history = state.get_recent_history(MAX_HISTORY_ROUNDS)
-            result = await self.generator.run(message_history=recent_history, usage_limits=UsageLimits(request_limit=None))
+            prompt = state.last_feedback or "请基于上轮结果继续扩展并优化搜索结果。"
+
+        try:
+            result = await self.generator.run(
+                prompt,
+                message_history=recent_history,
+                usage_limits=UsageLimits(request_limit=None),
+            )
+        except ModelHTTPError as e:
+            error_text = str(e).lower()
+            if "tool call id is invalid" not in error_text:
+                raise
+            logger.warning(
+                "检测到 tool call id 失效，已清空历史并在当前轮次重试一次。"
+            )
+            state.message_history.clear()
+            result = await self.generator.run(
+                prompt,
+                usage_limits=UsageLimits(request_limit=None),
+            )
 
         state.current_result = result.output
-        state.message_history = list(result.all_messages())
+        state.message_history.extend(result.new_messages())
         logger.info(f"Found {len(state.current_result.sources)} videos")
 
     async def validate(self, output: Any) -> ValidationResult:

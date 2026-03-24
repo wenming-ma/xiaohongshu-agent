@@ -16,10 +16,11 @@ class ResearchState:
 
     message_history: list[ModelMessage] = field(default_factory=list)
     current_result: VideoResearchResult | None = None
+    last_feedback: str | None = None
 
     def inject_feedback(self, feedback: str) -> None:
-        # Enhance feedback with exploration guidance
-        enhanced_feedback = f"""{feedback}
+        # Store revision feedback as prompt text for next iteration.
+        self.last_feedback = f"""{feedback}
 
 ### Next Actions Required
 1. Scroll down MORE on each platform (at least 5 more scrolls)
@@ -32,9 +33,7 @@ class ResearchState:
 
 IMPORTANT: Use natural browsing behavior, not direct search URLs!
 """
-        self.message_history.append(
-            ModelRequest(parts=[UserPromptPart(content=enhanced_feedback)])
-        )
+        self.last_feedback = self.last_feedback.strip()
 
     def get_recent_history(self, max_rounds: int) -> list[ModelMessage]:
         """保留首轮（含 SystemPrompt + 首条用户消息）+ 最近 N-1 轮"""
@@ -54,5 +53,8 @@ IMPORTANT: Use natural browsing behavior, not direct search URLs!
 
         # 首轮结束位置 = 第二轮开始位置
         first_round_end = run_boundaries[1] if len(run_boundaries) > 1 else len(history)
+        if max_rounds <= 1:
+            return history[:first_round_end]
+
         recent_start = run_boundaries[-(max_rounds - 1)]
         return history[:first_round_end] + history[recent_start:]

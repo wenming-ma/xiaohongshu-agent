@@ -8,6 +8,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.exceptions import ModelHTTPError
 
 from src.agents.image_post.content.agent import ContentAgent as ImageContentAgent
 from src.agents.image_post.content.state import ContentState as ImageContentState
@@ -42,15 +43,6 @@ class FakeNewMessagesResult:
         return self._messages
 
 
-class FakeAllMessagesResult:
-    def __init__(self, output, messages):
-        self.output = output
-        self._messages = messages
-
-    def all_messages(self):
-        return self._messages
-
-
 class FakeContentGenerator:
     def __init__(self, output):
         self.output = output
@@ -73,12 +65,52 @@ class FakeVideoResearchGenerator:
         self.output = output
         self.calls: list[dict[str, object]] = []
 
-    async def run(self, *args, **kwargs):
-        self.calls.append({"args": args, "kwargs": kwargs})
-        history = list(kwargs.get("message_history") or [])
-        return FakeAllMessagesResult(
+    async def run(self, prompt, message_history=None, **kwargs):
+        history = list(message_history or [])
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "message_history": history,
+                "kwargs": kwargs,
+            }
+        )
+        return FakeNewMessagesResult(
             self.output,
-            history + [ModelResponse(parts=[TextPart(content="continued search")])],
+            [
+                ModelRequest(parts=[UserPromptPart(content=str(prompt))]),
+                ModelResponse(parts=[TextPart(content="continued search")]),
+            ],
+        )
+
+
+class FakeVideoResearchGeneratorRetryOnce:
+    def __init__(self, output):
+        self.output = output
+        self.calls: list[dict[str, object]] = []
+        self._attempt = 0
+
+    async def run(self, prompt, message_history=None, **kwargs):
+        history = list(message_history or [])
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "message_history": history,
+                "kwargs": kwargs,
+            }
+        )
+        self._attempt += 1
+        if self._attempt == 1:
+            raise ModelHTTPError(
+                status_code=400,
+                model_name="MiniMax-M2.7",
+                body={"error": {"message": "invalid params, tool call id is invalid (2013)"}},
+            )
+        return FakeNewMessagesResult(
+            self.output,
+            [
+                ModelRequest(parts=[UserPromptPart(content=str(prompt))]),
+                ModelResponse(parts=[TextPart(content="continued search")]),
+            ],
         )
 
 
@@ -261,18 +293,19 @@ def test_video_content_step_uses_revision_prompt_without_mutating_history() -> N
     assert len(state.message_history) == 4
 
 
-def test_video_research_step_resumes_with_message_history_only() -> None:
+def test_video_research_step_uses_revision_prompt_without_feedback_message_in_history() -> None:
     state = VideoResearchState(
         topic="city walk",
         platforms=[Platform.X],
         max_videos=3,
         output_dir=None,
     )
-    state.message_history = [
+    initial_history = [
         ModelRequest(parts=[UserPromptPart(content="第一次搜索")]),
         ModelResponse(parts=[ToolCallPart(tool_name="playwright_search", args={}, tool_call_id="call_1")]),
         ModelRequest(parts=[ToolReturnPart(tool_name="playwright_search", content="{}", tool_call_id="call_1")]),
     ]
+    state.message_history = initial_history[:]
     state.inject_feedback("需要更多高质量视频")
 
     agent = VideoResearchAgent.__new__(VideoResearchAgent)
@@ -281,8 +314,34 @@ def test_video_research_step_resumes_with_message_history_only() -> None:
     asyncio.run(agent.step(state, 1))
 
     call = agent.generator.calls[0]
-    assert call["args"] == ()
-    assert call["kwargs"]["message_history"][-1].parts[0].content.startswith("需要更多高质量视频")
+    assert call["message_history"] == initial_history
+    assert "需要更多高质量视频" in str(call["prompt"])
+
+
+def test_video_research_step_retries_with_cleared_history_on_invalid_tool_call_id() -> None:
+    state = VideoResearchState(
+        topic="city walk",
+        platforms=[Platform.X],
+        max_videos=3,
+        output_dir=None,
+    )
+    initial_history = [
+        ModelRequest(parts=[UserPromptPart(content="第一次搜索")]),
+        ModelResponse(parts=[ToolCallPart(tool_name="playwright_search", args={}, tool_call_id="call_1")]),
+        ModelRequest(parts=[ToolReturnPart(tool_name="playwright_search", content="{}", tool_call_id="call_1")]),
+    ]
+    state.message_history = initial_history[:]
+    state.inject_feedback("需要更多高质量视频")
+
+    agent = VideoResearchAgent.__new__(VideoResearchAgent)
+    agent.generator = FakeVideoResearchGeneratorRetryOnce(_build_video_research())
+
+    asyncio.run(agent.step(state, 1))
+
+    assert len(agent.generator.calls) == 2
+    assert agent.generator.calls[0]["message_history"] == initial_history
+    assert agent.generator.calls[1]["message_history"] == []
+    assert "需要更多高质量视频" in str(agent.generator.calls[1]["prompt"])
 
 
 def test_image_grouping_retry_uses_revision_prompt_without_feedback_message_in_history() -> None:

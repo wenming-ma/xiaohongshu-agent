@@ -496,16 +496,27 @@ class DownloadAgent(BaseAgent):
                 return result
 
         # 无 yt-dlp 字幕 → Whisper 转录
-        try:
-            transcriber = WhisperTranscriber()
-            transcription = await transcriber.transcribe(video_path)
-            result.transcription = transcription
-            if transcription.success:
-                logger.info(f"Whisper 转录成功: {len(transcription.transcript)} 字符")
-            else:
-                logger.warning(f"Whisper 转录失败: {transcription.error_message}")
-        except Exception as e:
-            logger.warning(f"转录过程异常（不影响下载结果）: {e}")
+        has_existing_transcript = (
+            result.transcription is not None
+            and result.transcription.success
+            and bool(result.transcription.transcript)
+        )
+        if has_existing_transcript:
+            logger.info(
+                f"复用候选阶段转录结果: {len(result.transcription.transcript)} 字符，"
+                "跳过二次纯文本转录"
+            )
+        else:
+            try:
+                transcriber = WhisperTranscriber()
+                transcription = await transcriber.transcribe(video_path)
+                result.transcription = transcription
+                if transcription.success:
+                    logger.info(f"Whisper 转录成功: {len(transcription.transcript)} 字符")
+                else:
+                    logger.warning(f"Whisper 转录失败: {transcription.error_message}")
+            except Exception as e:
+                logger.warning(f"转录过程异常（不影响下载结果）: {e}")
 
         # Whisper 字幕生成 + 烧录
         try:
