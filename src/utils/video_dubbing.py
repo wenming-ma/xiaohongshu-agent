@@ -191,10 +191,42 @@ async def _separate_vocals(audio_path: Path, output_dir: Path) -> tuple[Path, Pa
         return output_files
 
     output_files = await loop.run_in_executor(None, _sync_separate)
+    if not output_files:
+        raise RuntimeError("人声分离失败: 未返回任何输出文件")
 
-    # output_files: [vocals, instrumental]
-    vocals = Path(output_files[0])
-    instrumental = Path(output_files[1])
+    resolved_files: list[Path] = []
+    for file_path in output_files:
+        path = Path(file_path)
+        if not path.is_absolute():
+            path = output_dir / path
+        resolved_files.append(path)
+
+    vocals: Path | None = None
+    instrumental: Path | None = None
+
+    # 优先根据文件名关键字识别，避免依赖第三方库返回顺序。
+    for path in resolved_files:
+        name = path.name.lower()
+        if vocals is None and ("(vocals)" in name or "vocal" in name):
+            vocals = path
+        elif instrumental is None and ("(instrumental)" in name or "instrumental" in name):
+            instrumental = path
+
+    # 回退到固定顺序（某些版本可能只返回两个无关键词文件名）。
+    if vocals is None and len(resolved_files) >= 1:
+        vocals = resolved_files[0]
+    if instrumental is None and len(resolved_files) >= 2:
+        instrumental = resolved_files[1]
+
+    if vocals is None or not vocals.exists():
+        raise RuntimeError(
+            f"人声分离失败: 未找到人声音轨文件，返回结果={output_files}"
+        )
+    if instrumental is None or not instrumental.exists():
+        raise RuntimeError(
+            f"人声分离失败: 未找到伴奏音轨文件，返回结果={output_files}"
+        )
+
     logger.info(f"分离完成: 人声={vocals.name}, 背景={instrumental.name}")
     return vocals, instrumental
 
