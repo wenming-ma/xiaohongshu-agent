@@ -33,6 +33,17 @@ def _get_env_bool(name: str, default: bool) -> bool:
     return default
 
 
+def _get_env_float(name: str, default: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning(f"{name}={raw!r} 不是有效数字，回退默认值 {default}")
+        return default
+
+
 def _resolve_dub_script() -> Path:
     configured = os.getenv("VIDEO_DUB_RUNNER_SCRIPT", "").strip()
     if configured:
@@ -132,7 +143,13 @@ async def _run_via_audio_env(
         cwd=str(PROJECT_ROOT),
         env=env,
     )
-    code = await proc.wait()
+    timeout_s = _get_env_float("VIDEO_DUB_SUBPROCESS_TIMEOUT_SECONDS", 3600.0)
+    try:
+        code = await asyncio.wait_for(proc.wait(), timeout=timeout_s)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise RuntimeError(f"配音子进程超时（{timeout_s:.0f}s），已强制终止")
     if code != 0:
         raise RuntimeError(f"独立环境配音失败，退出码={code}")
 
