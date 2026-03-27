@@ -377,9 +377,9 @@ class WhisperSubtitleGenerator:
         max_concurrency = 5
         semaphore = asyncio.Semaphore(max_concurrency)
 
-        batches: list[tuple[int, list[SubtitleSegment]]] = []
+        batches: list[list[SubtitleSegment]] = []
         for i in range(0, len(segments), batch_size):
-            batches.append((i, segments[i:i + batch_size]))
+            batches.append(segments[i:i + batch_size])
 
         results_by_index: dict[int, list[SubtitleSegment]] = {}
         done_count = 0
