@@ -55,7 +55,7 @@ class ResearchAgent(BaseAgent):
         )
 
     def init_validators(self) -> None:
-        self.search_validator = VideoSearchValidator(min_videos=15)
+        self.search_validator = VideoSearchValidator(min_videos=5)
         self.quality_filter = VideoListQualityFilter(pass_score=70.0, min_quality_videos=15)
         self.max_iterations = MAX_ITERATIONS
 
