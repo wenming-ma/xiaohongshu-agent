@@ -35,9 +35,11 @@ class CoverAgent(BaseAgent):
             output_type=CoverPromptResult,
             system_prompt=(cover_system_prompt(),),
         )
+        self._use_api = False
+        self._use_web_fallback = False
         provider = APIConfig.GEMINI_IMAGE_PROVIDER
         if provider == "web":
-            self._use_api = False
+            pass
         elif provider == "api":
             self._use_api = True
         else:  # "auto": API 优先，失败回退 Web Agent

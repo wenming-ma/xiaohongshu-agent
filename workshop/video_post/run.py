@@ -313,7 +313,7 @@ def main() -> None:
     args = parse_args()
     code = asyncio.run(run_batch(args))
     import os
-    os._exit(code)
+    os._exit(code)  # skip Python cleanup to avoid CTranslate2 CUDA crash (0xC0000409)
 
 
 if __name__ == "__main__":

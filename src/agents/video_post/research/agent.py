@@ -58,6 +58,8 @@ class ResearchAgent(BaseAgent):
         self.search_validator = VideoSearchValidator(min_videos=5)
         self.quality_filter = VideoListQualityFilter(pass_score=70.0, min_quality_videos=15)
         self.max_iterations = MAX_ITERATIONS
+        self._accumulated_quality_videos: list[VideoSource] = []
+        self._filtered_sources: list[VideoSource] | None = None
 
     async def forward(
         self,
@@ -73,7 +75,7 @@ class ResearchAgent(BaseAgent):
             output_dir=output_dir,
         )
 
-        self._accumulated_quality_videos: list[VideoSource] = []
+        self._accumulated_quality_videos = []
 
         logger.info(f"Starting video search: {topic}")
         logger.info(f"Platforms: {[p.value for p in platforms]}")

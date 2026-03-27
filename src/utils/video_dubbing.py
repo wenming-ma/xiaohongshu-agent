@@ -707,29 +707,6 @@ def _get_voice_ref_paths(voice: str) -> tuple[Path, Path]:
     return wavs[0], txts[0]
 
 
-def select_voice(topic: str, transcript: str = "") -> str:
-    from pydantic_ai import Agent
-    from .providers import get_text_model
-
-    options = "\n".join(f"- {k}: {v['desc']}" for k, v in VOICE_REGISTRY.items())
-    prompt = (
-        f"根据以下视频内容，从可选音色中选择最合适的配音音色。\n\n"
-        f"视频主题: {topic}\n"
-        f"视频内容摘要: {transcript[:300]}\n\n"
-        f"可选音色:\n{options}\n\n"
-        f"只输出音色名称（如 liuyifei），不要任何解释。"
-    )
-    import asyncio
-    agent = Agent(model=get_text_model(), output_type=str)
-    result = asyncio.get_event_loop().run_until_complete(agent.run(prompt))
-    voice = result.output.strip().lower()
-    if voice in VOICE_REGISTRY:
-        logger.info(f"AI 选择配音音色: {voice} ({VOICE_REGISTRY[voice]['desc']})")
-        return voice
-    logger.warning(f"AI 返回未知音色 '{voice}'，使用默认: {DEFAULT_VOICE}")
-    return DEFAULT_VOICE
-
-
 async def select_voice_async(topic: str, transcript: str = "") -> str:
     from pydantic_ai import Agent
     from .providers import get_text_model
