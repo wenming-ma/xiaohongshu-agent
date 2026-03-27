@@ -194,7 +194,7 @@ class DownloadAgent(BaseAgent):
             score += 25
         elif 300 < duration <= 600:
             score += 18
-        elif 30 <= duration < 60 or 600 < duration <= 900:
+        elif 30 <= duration < 60:
             score += 12
         else:
             score += 6
@@ -317,10 +317,8 @@ class DownloadAgent(BaseAgent):
             score += 15  # 5-10 分钟不错
         elif 30 <= duration < 60:
             score += 10  # 30 秒-1 分钟偏短
-        elif 600 < duration <= 900:
-            score += 10  # 10-15 分钟偏长
         else:
-            score += 5  # 太短或太长
+            score += 5  # 太短或太长(>10分钟)
 
         # 文件大小合理性（0-10 分）
         size_mb = result.file_size_bytes / (1024 * 1024)
