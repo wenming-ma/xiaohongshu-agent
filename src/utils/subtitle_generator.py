@@ -464,9 +464,11 @@ class WhisperSubtitleGenerator:
                 env = os.environ.copy()
                 env["FONTCONFIG_FILE"] = str(fonts_conf)
 
+            sub_filter = f"subtitles=sub.srt:force_style='FontName={font_name},FontSize={SUBTITLE_CONFIG['FONT_SIZE']},Bold=1,PrimaryColour={style['PrimaryColour']},OutlineColour={style['OutlineColour']},BackColour=&H80000000,Outline=2,Shadow=1,BorderStyle=1,MarginV=30'"
             cmd = [
-                "ffmpeg", "-i", str(video_path),
-                "-vf", f"subtitles=sub.srt:force_style='FontName={font_name},FontSize={SUBTITLE_CONFIG['FONT_SIZE']},Bold=1,PrimaryColour={style['PrimaryColour']},OutlineColour={style['OutlineColour']},BackColour=&H80000000,Outline=2,Shadow=1,BorderStyle=1,MarginV=30'",
+                "ffmpeg", "-hwaccel", "cuda", "-i", str(video_path),
+                "-vf", sub_filter,
+                "-c:v", "h264_nvenc", "-preset", "p4", "-cq", "20",
                 "-c:a", "copy",
                 "-y", str(output_path),
             ]
