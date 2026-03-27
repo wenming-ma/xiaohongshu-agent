@@ -277,11 +277,12 @@ async def dub_video(
 # ─── SRT 解析 ────────────────────────────────────────────────
 
 class SrtSegment:
-    def __init__(self, index: int, start: float, end: float, text: str):
+    def __init__(self, index: int, start: float, end: float, text: str, speaker_id: int = 0):
         self.index = index
         self.start = start
         self.end = end
         self.text = text
+        self.speaker_id = speaker_id
 
     @property
     def duration(self) -> float:
@@ -316,8 +317,14 @@ def parse_srt(srt_path: Path) -> list[SrtSegment]:
         # 去掉 HTML 标签
         text = re.sub(r"<[^>]+>", "", text)
 
+        speaker_id = 0
+        sp_match = re.match(r'\[S(\d+)\]\s*', text)
+        if sp_match:
+            speaker_id = int(sp_match.group(1))
+            text = text[sp_match.end():]
+
         if text:
-            segments.append(SrtSegment(index, start, end, text))
+            segments.append(SrtSegment(index, start, end, text, speaker_id=speaker_id))
 
     return segments
 
@@ -343,6 +350,7 @@ def _merge_srt_segments(
         start=segments[0].start,
         end=segments[0].end,
         text=segments[0].text,
+        speaker_id=segments[0].speaker_id,
     )
     for seg in segments[1:]:
         gap = seg.start - cur.end
@@ -352,6 +360,7 @@ def _merge_srt_segments(
             gap <= max_gap
             and candidate_duration <= max_duration
             and candidate_chars <= max_chars
+            and seg.speaker_id == cur.speaker_id
         ):
             cur.end = seg.end
             cur.text = f"{cur.text} {seg.text}".strip()
@@ -362,6 +371,7 @@ def _merge_srt_segments(
                 start=seg.start,
                 end=seg.end,
                 text=seg.text,
+                speaker_id=seg.speaker_id,
             )
     merged.append(cur)
     return merged
@@ -729,6 +739,49 @@ async def select_voice_async(topic: str, transcript: str = "") -> str:
     return DEFAULT_VOICE
 
 
+async def assign_voices_to_speakers(
+    topic: str, transcript: str, speaker_ids: list[int],
+) -> dict[int, str]:
+    if len(speaker_ids) <= 1:
+        voice = await select_voice_async(topic, transcript)
+        return {sid: voice for sid in speaker_ids}
+
+    from pydantic_ai import Agent
+    from .providers import get_text_model
+
+    options = "\n".join(f"- {k}: {v['desc']}" for k, v in VOICE_REGISTRY.items())
+    prompt = (
+        f"一个视频中有 {len(speaker_ids)} 个说话人（编号: {speaker_ids}）。\n"
+        f"视频主题: {topic}\n"
+        f"内容摘要: {transcript[:300]}\n\n"
+        f"请为每个说话人选择最合适的配音音色，不同说话人尽量用不同音色。\n\n"
+        f"可选音色:\n{options}\n\n"
+        f"每行输出格式: 说话人编号=音色名称\n"
+        f"示例:\n0=liuyifei\n1=dingzhen\n"
+    )
+    agent = Agent(model=get_text_model(), output_type=str)
+    result = await agent.run(prompt)
+
+    mapping: dict[int, str] = {}
+    for line in result.output.strip().split("\n"):
+        if "=" in line:
+            parts = line.split("=", 1)
+            try:
+                sid = int(parts[0].strip())
+                voice = parts[1].strip().lower()
+                if voice in VOICE_REGISTRY and sid in speaker_ids:
+                    mapping[sid] = voice
+            except ValueError:
+                continue
+
+    for sid in speaker_ids:
+        if sid not in mapping:
+            mapping[sid] = DEFAULT_VOICE
+
+    logger.info(f"说话人音色分配: {mapping}")
+    return mapping
+
+
 def _build_s2cpp_reference_text(segments: list[SrtSegment], voice: str = "") -> str:
     configured = _normalize_tts_text(os.getenv("S2CPP_TTS_REFERENCE_TEXT", ""))
     if configured:
@@ -956,33 +1009,45 @@ async def _generate_dubbed_segments_s2cpp(
         f"segments={len(segments)}->{len(effective_segments)}"
     )
 
-    reference_clip = await _prepare_s2cpp_reference_audio(reference_audio_path, work_dir, voice=voice)
-    reference_text = _build_s2cpp_reference_text(effective_segments, voice=voice)
-    if reference_clip is None:
-        logger.warning("s2.cpp TTS 未配置参考音频，使用无参考音色模式")
+    speaker_ids = sorted(set(seg.speaker_id for seg in effective_segments))
+    if len(speaker_ids) > 1:
+        transcript = " ".join(seg.text[:30] for seg in effective_segments[:10])
+        speaker_voice_map = await assign_voices_to_speakers(
+            topic="", transcript=transcript, speaker_ids=speaker_ids,
+        )
     else:
-        logger.info(f"s2.cpp TTS 参考音频: {reference_clip}")
+        v = voice or DEFAULT_VOICE
+        speaker_voice_map = {sid: v for sid in speaker_ids}
+
+    voice_refs: dict[str, tuple[Path | None, str]] = {}
+    for v_name in set(speaker_voice_map.values()):
+        ref_clip = await _prepare_s2cpp_reference_audio(reference_audio_path, work_dir, voice=v_name)
+        ref_text = _build_s2cpp_reference_text(effective_segments, voice=v_name)
+        voice_refs[v_name] = (ref_clip, ref_text)
+        if ref_clip:
+            logger.info(f"s2.cpp TTS 音色 {v_name} 参考音频: {ref_clip}")
 
     async with httpx.AsyncClient() as client:
         await _check_s2cpp_tts_health(client, base_url, timeout_seconds)
 
-        tasks = [
-            asyncio.create_task(
+        tasks = []
+        for i, seg in enumerate(effective_segments):
+            seg_voice = speaker_voice_map.get(seg.speaker_id, DEFAULT_VOICE)
+            ref_clip, ref_text = voice_refs.get(seg_voice, (None, ""))
+            tasks.append(asyncio.create_task(
                 _synthesize_s2cpp_tts_segment_with_retry(
                     client=client,
                     base_url=base_url,
                     segment=seg,
                     index=i,
                     raw_output=work_dir / f"seg_{i:04d}_raw.wav",
-                    reference_audio_path=reference_clip,
-                    reference_text=reference_text,
+                    reference_audio_path=ref_clip,
+                    reference_text=ref_text,
                     timeout_seconds=timeout_seconds,
                     retries=retries,
                     semaphore=semaphore,
                 )
-            )
-            for i, seg in enumerate(effective_segments)
-        ]
+            ))
 
         success_map: dict[int, Path] = {}
         completed = 0

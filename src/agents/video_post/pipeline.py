@@ -178,12 +178,6 @@ class XHSVideoPostPipeline(BasePipeline[XHSVideoPostInput, XHSVideoPostOutput]):
                 logger.info("")
                 try:
                     from ...utils.video_dubbing_runner import dub_video_with_runner
-                    from ...utils.video_dubbing import select_voice_async
-
-                    transcript = ""
-                    if download_result.transcription and download_result.transcription.transcript:
-                        transcript = download_result.transcription.transcript
-                    voice = await select_voice_async(input_data.topic, transcript)
 
                     video_for_dub = Path(download_result.local_path)
                     dubbed_path = video_for_dub.parent / f"{video_for_dub.stem}_dubbed{video_for_dub.suffix}"
@@ -192,7 +186,6 @@ class XHSVideoPostPipeline(BasePipeline[XHSVideoPostInput, XHSVideoPostOutput]):
                         srt_path=Path(download_result.subtitle.srt_path),
                         output_path=dubbed_path,
                         work_dir=output_dir / "dubbing_work",
-                        voice=voice,
                     )
                     download_result.local_path = str(dubbed_path)
                     logger.info(f"✅ 配音完成: {dubbed_path.name}")

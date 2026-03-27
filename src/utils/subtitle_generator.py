@@ -134,10 +134,11 @@ def pick_subtitle_style(topic: str) -> dict:
 
 
 class SubtitleSegment:
-    def __init__(self, start: float, end: float, text: str):
+    def __init__(self, start: float, end: float, text: str, speaker_id: int = 0):
         self.start = start
         self.end = end
         self.text = text
+        self.speaker_id = speaker_id
 
 
 class SubtitleResult:
@@ -265,6 +266,9 @@ class WhisperSubtitleGenerator:
 
             segments, detected_lang = await self._transcribe_with_whisper(audio_path)
 
+            if segments:
+                segments = await self._assign_speakers(segments, audio_path)
+
             if audio_path.exists():
                 audio_path.unlink(missing_ok=True)
 
@@ -363,6 +367,64 @@ class WhisperSubtitleGenerator:
         logger.info(f"转录完成: {len(segments)} 个字幕片段")
         return segments, detected_lang
 
+    async def _assign_speakers(self, segments: list[SubtitleSegment], audio_path: Path) -> list[SubtitleSegment]:
+        try:
+            from pyannote.audio import Pipeline as PyannotePipeline
+        except ImportError:
+            logger.debug("pyannote-audio 未安装，跳过说话人识别")
+            return segments
+
+        hf_token = os.environ.get("HF_TOKEN", "")
+        if not hf_token:
+            logger.debug("未配置 HF_TOKEN，跳过说话人识别")
+            return segments
+
+        try:
+            loop = asyncio.get_event_loop()
+
+            def _diarize():
+                pipeline = PyannotePipeline.from_pretrained(
+                    "pyannote/speaker-diarization-3.1",
+                    use_auth_token=hf_token,
+                )
+                return pipeline(str(audio_path))
+
+            logger.info("开始说话人识别（pyannote）...")
+            diarization = await loop.run_in_executor(None, _diarize)
+
+            dia_segments = []
+            for turn, _, speaker in diarization.itertracks(yield_label=True):
+                dia_segments.append((turn.start, turn.end, speaker))
+
+            if not dia_segments:
+                return segments
+
+            speaker_labels = sorted(set(s[2] for s in dia_segments))
+            label_to_id = {label: i for i, label in enumerate(speaker_labels)}
+            logger.info(f"识别到 {len(speaker_labels)} 个说话人: {speaker_labels}")
+
+            for seg in segments:
+                seg_mid = (seg.start + seg.end) / 2
+                best_speaker = None
+                best_overlap = 0
+                for ds, de, dl in dia_segments:
+                    overlap = max(0, min(seg.end, de) - max(seg.start, ds))
+                    if overlap > best_overlap:
+                        best_overlap = overlap
+                        best_speaker = dl
+                if best_speaker is None:
+                    for ds, de, dl in dia_segments:
+                        if ds <= seg_mid <= de:
+                            best_speaker = dl
+                            break
+                if best_speaker is not None:
+                    seg.speaker_id = label_to_id[best_speaker]
+
+            return segments
+        except Exception as e:
+            logger.warning(f"说话人识别失败（不影响字幕生成）: {e}")
+            return segments
+
     async def _translate_to_chinese(self, segments: list[SubtitleSegment], source_language: str = "en") -> list[SubtitleSegment]:
         self._init_translation_agent()
 
@@ -384,17 +446,38 @@ class WhisperSubtitleGenerator:
         results_by_index: dict[int, list[SubtitleSegment]] = {}
         done_count = 0
 
+        has_multiple_speakers = len(set(seg.speaker_id for seg in segments)) > 1
+
         async def _translate_batch(batch_idx: int, batch: list[SubtitleSegment]) -> None:
             nonlocal done_count
-            texts = [f"{j+1}. {seg.text}" for j, seg in enumerate(batch)]
+            if has_multiple_speakers:
+                texts = [f"{j+1}. [S{seg.speaker_id}] {seg.text}" for j, seg in enumerate(batch)]
+            else:
+                texts = [f"{j+1}. {seg.text}" for j, seg in enumerate(batch)]
+
+            speaker_instruction = ""
+            if has_multiple_speakers:
+                speaker_instruction = (
+                    "- 每行开头有 [SN] 说话人标记，翻译后必须保留在行首\n"
+                    "- 不同说话人用不同的语气风格\n"
+                )
+
             prompt = (
                 f"将以下{lang_name}字幕翻译成中文。\n\n"
                 "要求：\n"
                 "- 口语化、轻松活泼，像朋友聊天，不要书面语\n"
                 "- 适当加 emoji 增加趣味性（每 3-5 条加一个，别每条都加）\n"
                 "- 语气词可以保留（比如'哇''嘿''嗯'）\n"
-                "- 保持简短，字幕不宜太长\n\n"
-                "只输出翻译后的文本，每行一条，格式为 '序号. 翻译内容'：\n\n"
+                "- 保持简短，字幕不宜太长\n"
+                f"{speaker_instruction}"
+                "- 在翻译文本前添加一个语气/情感标记（用于 TTS 合成），格式为 [英文描述]，例如：\n"
+                "  [excited tone] 哇太好吃了！\n"
+                "  [gentle] 慢慢搅拌均匀\n"
+                "  [laughing] 哈哈哈翻车了\n"
+                "  [serious] 这一步很关键\n"
+                "  [whisper] 偷偷告诉你\n"
+                "  每条都要加语气标记，根据说话内容和语境选择合适的\n\n"
+                "只输出翻译后的文本，每行一条，格式为 '序号. [语气] 翻译内容'：\n\n"
             ) + "\n".join(texts)
 
             async with semaphore:
@@ -407,8 +490,15 @@ class WhisperSubtitleGenerator:
                     translated_text = translated_lines[j]
                     if ". " in translated_text:
                         translated_text = translated_text.split(". ", 1)[1]
+                    speaker_id = seg.speaker_id
+                    text = translated_text.strip()
+                    import re
+                    sp_match = re.match(r'\[S(\d+)\]\s*', text)
+                    if sp_match:
+                        speaker_id = int(sp_match.group(1))
+                        text = text[sp_match.end():]
                     batch_result.append(SubtitleSegment(
-                        start=seg.start, end=seg.end, text=translated_text.strip(),
+                        start=seg.start, end=seg.end, text=text, speaker_id=speaker_id,
                     ))
                 else:
                     batch_result.append(seg)
@@ -425,11 +515,13 @@ class WhisperSubtitleGenerator:
         return translated_segments
 
     def _generate_srt(self, segments: list[SubtitleSegment], output_path: Path) -> None:
+        has_speakers = any(seg.speaker_id != 0 for seg in segments)
         with open(output_path, "w", encoding="utf-8") as f:
             for i, seg in enumerate(segments, 1):
                 start = self._format_timestamp(seg.start)
                 end = self._format_timestamp(seg.end)
-                f.write(f"{i}\n{start} --> {end}\n{seg.text}\n\n")
+                text = f"[S{seg.speaker_id}] {seg.text}" if has_speakers else seg.text
+                f.write(f"{i}\n{start} --> {end}\n{text}\n\n")
 
     def _format_timestamp(self, seconds: float) -> str:
         h = int(seconds // 3600)
