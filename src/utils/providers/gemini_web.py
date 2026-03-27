@@ -398,6 +398,9 @@ class GeminiWebImageClient:
 
     async def _download_image_via_browser(self, page: Page, url: str, max_retries: int = 3) -> bytes:
         """通过 Playwright API 请求上下文下载图片（携带浏览器 cookies）"""
+        if url.startswith("blob:"):
+            return await self._download_blob_image_via_canvas(page)
+
         last_error: Optional[Exception] = None
 
         for attempt in range(max_retries):
@@ -417,6 +420,32 @@ class GeminiWebImageClient:
                     await asyncio.sleep(2)
 
         raise last_error or Exception("[GeminiWeb] 图片下载失败")
+
+    @staticmethod
+    async def _download_blob_image_via_canvas(page: Page) -> bytes:
+        """通过 canvas 提取 blob URL 图片数据（Gemini 新版 UI 使用 blob URL）"""
+        import base64
+        data_url: Optional[str] = await page.evaluate("""() => {
+            const imgs = document.querySelectorAll('img');
+            for (const img of imgs) {
+                if (img.naturalWidth > 200 && img.alt && img.alt.includes('AI generated')) {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.naturalWidth;
+                    canvas.height = img.naturalHeight;
+                    canvas.getContext('2d').drawImage(img, 0, 0);
+                    return canvas.toDataURL('image/png');
+                }
+            }
+            return null;
+        }""")
+        if not data_url:
+            raise ValueError("[GeminiWeb] canvas 提取失败：未找到 AI 生成图片")
+        b64 = data_url.split(",", 1)[1]
+        data = base64.b64decode(b64)
+        if len(data) < 1024:
+            raise ValueError(f"[GeminiWeb] canvas 提取数据过小: {len(data)} bytes")
+        logger.info("[GeminiWeb] blob 图片通过 canvas 提取: %d KB", len(data) // 1024)
+        return data
 
     @staticmethod
     def _cleanup_profile_locks(user_data_dir: str):

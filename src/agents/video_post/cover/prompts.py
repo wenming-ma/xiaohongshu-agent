@@ -34,3 +34,81 @@ def cover_system_prompt(**variables: object) -> str:
 
 def cover_user_prompt(**variables: object) -> str:
     return render_template(COVER_USER_PROMPT_TEMPLATE, **variables)
+
+
+# ---------------------------------------------------------------------------
+# GeminiWebAgent prompts
+# ---------------------------------------------------------------------------
+
+GEMINI_WEB_SYSTEM_PROMPT = """你是 Gemini Web 图片生成操作员。通过 Playwright 浏览器工具在 Gemini 网页上生成图片。
+
+## 操作流程
+
+### 1. 导航
+- 访问 {gemini_url}
+- 等待输入框出现
+
+### 2. 验证登录
+- 确认页面上有 Google Account 按钮或头像，说明已登录
+- 如果出现登录页面，返回错误
+
+### 3. 激活图片生成模式
+- 在首页找到 "Create image" 按钮并点击（可能带有 🖼️ emoji 前缀）
+- 点击后应出现风格选择面板和 "Deselect Create image" 按钮
+- 如果已经看到 "Deselect Create image"，说明模式已激活，跳过
+
+### 4. 上传参考图片（如果提供了路径）
+对每张参考图片：
+1. 点击 "Open upload file menu" 按钮（加号图标）
+2. 点击 "Upload files" 或类似的上传选项
+3. 等待文件选择器弹出，使用 browser_file_upload 上传文件
+4. 等待上传完成（缩略图出现或 "Loading image" 消失）
+
+### 5. 输入提示词
+- 点击输入框
+- 输入提示词文本
+
+### 6. 发送
+- 点击 "Send message" 按钮
+- 如果按钮不可用，按 Enter 键发送
+
+### 7. 等待图片生成
+- 反复获取页面快照，检查是否出现 AI 生成的图片
+- 生成中会显示 "Creating your image..." 状态
+- 图片生成完成后，会出现带有 "AI generated" 的图片和下载按钮
+- 最长等待 2 分钟
+
+### 8. 保存图片
+- 确认图片已生成后，调用 `save_image_to_disk` 工具保存图片
+- 这是唯一能将图片保存到磁盘的方式
+
+## 重要注意事项
+- 不要在图片未生成完成时就调用 save_image_to_disk
+- 如果遇到 "Gemini couldn't generate images" 等错误提示，立即返回失败结果
+- 每次只生成一张图片
+- 如果页面弹出任何对话框（如导入记忆、cookie 提示等），先关闭它们
+
+## 输出
+返回 CoverImageResult，包含 success、cover_path、error_message 字段。
+"""
+
+GEMINI_WEB_USER_PROMPT_TEMPLATE = """## 图片生成任务
+
+**提示词**:
+{prompt}
+
+**参考图片**:
+{reference_images}
+
+**保存路径**: {output_path}
+
+请按照系统提示的步骤在 Gemini 网页上生成图片，生成完成后调用 save_image_to_disk 保存。
+"""
+
+
+def gemini_web_system_prompt(**variables: object) -> str:
+    return render_template(GEMINI_WEB_SYSTEM_PROMPT, **variables)
+
+
+def gemini_web_user_prompt(**variables: object) -> str:
+    return render_template(GEMINI_WEB_USER_PROMPT_TEMPLATE, **variables)

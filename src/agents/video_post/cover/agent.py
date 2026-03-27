@@ -5,10 +5,11 @@ from pydantic_ai import Agent
 
 from ....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import CoverImageResult, XHSVideoContent
-from ....utils.providers import get_text_model, GeminiImageClient, GeminiWebImageClient
+from ....utils.providers import get_text_model, GeminiImageClient
 from ....utils.video_frames import extract_frames
 from ....utils.logger import get_logger
 from ....config.settings import APIConfig
+from .gemini_web_agent import GeminiWebAgent
 from .prompts import cover_system_prompt, cover_user_prompt
 
 logger = get_logger(__name__)
@@ -34,12 +35,15 @@ class CoverAgent(BaseAgent):
         )
         provider = APIConfig.GEMINI_IMAGE_PROVIDER
         if provider == "web":
-            self.image_client = GeminiWebImageClient()
+            self._use_api = False
         elif provider == "api":
+            self._use_api = True
+        else:  # "auto": API 优先，失败回退 Web Agent
+            self._use_api = True
+            self._use_web_fallback = True
+
+        if self._use_api:
             self.image_client = GeminiImageClient(aspect_ratio="3:4")
-        else:  # "auto": API 优先，失败回退 Web
-            self.image_client = GeminiImageClient(aspect_ratio="3:4")
-            self.web_image_client = GeminiWebImageClient()
 
     async def forward(
         self,
@@ -58,26 +62,24 @@ class CoverAgent(BaseAgent):
             prompt = await self._generate_cover_prompt(content, topic)
             logger.info(f"封面 prompt: {prompt[:100]}...")
 
-            # Step 3: Gemini 生成封面图（API 优先，失败回退 Web）
+            # Step 3: Gemini 生成封面图
             cover_path = output_dir / "cover.png"
-            try:
-                await self.image_client.generate_image(
-                    prompt=prompt,
-                    output_path=cover_path,
-                    aspect_ratio="3:4",
-                    reference_images=frames,
-                )
-            except Exception as api_err:
-                if hasattr(self, 'web_image_client'):
-                    logger.warning(f"API 生成失败，降级到 Gemini Web: {api_err}")
-                    await self.web_image_client.generate_image(
+
+            if self._use_api:
+                try:
+                    await self.image_client.generate_image(
                         prompt=prompt,
                         output_path=cover_path,
                         aspect_ratio="3:4",
                         reference_images=frames,
                     )
-                else:
+                except Exception as api_err:
+                    if getattr(self, '_use_web_fallback', False):
+                        logger.warning(f"API 生成失败，降级到 Gemini Web Agent: {api_err}")
+                        return await self._run_web_agent(prompt, cover_path, frames)
                     raise
+            else:
+                return await self._run_web_agent(prompt, cover_path, frames)
 
             if cover_path.exists() and cover_path.stat().st_size > 0:
                 logger.info(f"封面生成成功: {cover_path}")
@@ -100,6 +102,19 @@ class CoverAgent(BaseAgent):
         if isinstance(output, CoverImageResult) and output.success:
             return ValidationResult.success("封面生成成功")
         return ValidationResult.failure("封面生成失败")
+
+    async def _run_web_agent(
+        self,
+        prompt: str,
+        cover_path: Path,
+        reference_images: list[Path],
+    ) -> CoverImageResult:
+        web_agent = GeminiWebAgent(output_dir=cover_path.parent)
+        return await web_agent.forward(
+            prompt=prompt,
+            output_path=cover_path,
+            reference_images=reference_images,
+        )
 
     async def _generate_cover_prompt(
         self,
