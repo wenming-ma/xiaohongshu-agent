@@ -47,7 +47,6 @@ def create_shared_playwright_mcp_server(
         env=build_shared_playwright_mcp_env(headless=headless),
         cwd=str(artifacts_dir),
         tool_prefix=tool_prefix,
-        cache_tools=True,
         max_retries=RetryConfig.MCP_RETRIES,
         timeout=TimeoutConfig.MCP_INIT_TIMEOUT,
     )

@@ -6,6 +6,30 @@ import os
 import logging
 from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
+
+
+def _ensure_legacy_anthropic_user_location() -> None:
+    """
+    兼容 anthropic==0.86.0：
+    该版本缺少 `UserLocation` 导出，pydantic-ai 在导入时会抛 ImportError。
+    这里在导入 pydantic-ai 之前补齐一个占位符，避免运行期崩溃。
+    """
+    try:
+        from anthropic.types.beta import beta_web_search_tool_20250305_param as web_search_param
+    except Exception:
+        return
+
+    if hasattr(web_search_param, "UserLocation"):
+        return
+
+    class UserLocation(dict):  # type: ignore[override]
+        """Backward-compatible placeholder for pydantic-ai type import."""
+
+    web_search_param.UserLocation = UserLocation
+
+
+_ensure_legacy_anthropic_user_location()
+
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.models.anthropic import AnthropicModel
 

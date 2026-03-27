@@ -16,7 +16,8 @@ param(
     [string]$FishReferenceId = "",
     [string]$S2CppUrl = "",
     [string]$S2CppReferenceAudio = "",
-    [string]$S2CppReferenceTextFile = ""
+    [string]$S2CppReferenceTextFile = "",
+    [string]$PythonExe = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -24,8 +25,17 @@ $ErrorActionPreference = "Stop"
 $root = Resolve-Path "$PSScriptRoot\.."
 Push-Location $root
 try {
+    if ($PythonExe -eq "") {
+        $candidate = Join-Path $root ".venv-audio\Scripts\python.exe"
+        if (Test-Path -LiteralPath $candidate) {
+            $PythonExe = $candidate
+        } else {
+            $PythonExe = "python"
+        }
+    }
+
     $cmd = @(
-        "uv", "run", "python", "scripts/dub_video.py",
+        $PythonExe, "scripts/dub_video.py",
         "--video", $Video,
         "--srt", $Srt,
         "--output", $Output,
@@ -55,6 +65,9 @@ try {
 
     Write-Host "Running: $($cmd -join ' ')"
     & $cmd[0] $cmd[1..($cmd.Length - 1)]
+    if ($LASTEXITCODE -ne 0) {
+        throw "配音命令执行失败，退出码: $LASTEXITCODE"
+    }
 }
 finally {
     Pop-Location
