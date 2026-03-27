@@ -142,6 +142,7 @@ class VideoListQualityFilter:
     def __init__(self, pass_score: float = 70.0, min_quality_videos: int = 3):
         self.validator = VideoQualityValidator(pass_score=pass_score)
         self.min_quality_videos = min_quality_videos
+        self._cache: dict[str, tuple[VideoSource, InternalValidationResult]] = {}
 
     async def filter_videos(
         self,
@@ -150,17 +151,34 @@ class VideoListQualityFilter:
         max_videos: int = 5,
     ) -> tuple[List[VideoSource], List[str]]:
         """
-        并行评估视频质量，保留高质量视频
+        并行评估视频质量，保留高质量视频（已评估过的 URL 直接复用缓存）
 
         Returns:
             (high_quality_videos, feedback_messages)
         """
-        logger.info(f"开始并行质量评估: {len(videos)} 个视频")
+        new_videos = [v for v in videos if v.url not in self._cache]
+        cached_count = len(videos) - len(new_videos)
+        if cached_count:
+            logger.info(f"开始并行质量评估: {len(new_videos)} 个新视频（{cached_count} 个复用缓存）")
+        else:
+            logger.info(f"开始并行质量评估: {len(videos)} 个视频")
 
         async def _evaluate(video: VideoSource) -> tuple[VideoSource, InternalValidationResult]:
             return video, await self.validator.validate(video, context={"topic": topic})
 
-        results = await asyncio.gather(*[_evaluate(v) for v in videos], return_exceptions=True)
+        if new_videos:
+            new_results = await asyncio.gather(*[_evaluate(v) for v in new_videos], return_exceptions=True)
+            for item in new_results:
+                if not isinstance(item, Exception):
+                    video, validation = item
+                    self._cache[video.url] = (video, validation)
+
+        results = []
+        for v in videos:
+            if v.url in self._cache:
+                results.append(self._cache[v.url])
+            else:
+                results.append(Exception(f"评估失败: {v.title[:50]}"))
 
         high_quality_videos = []
         feedback_messages = []
