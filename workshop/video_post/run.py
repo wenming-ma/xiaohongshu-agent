@@ -310,10 +310,16 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    args = parse_args()
-    code = asyncio.run(run_batch(args))
     import os
-    os._exit(code)  # skip Python cleanup to avoid CTranslate2 CUDA crash (0xC0000409)
+    args = parse_args()
+    loop = asyncio.new_event_loop()
+    try:
+        code = loop.run_until_complete(run_batch(args))
+    except Exception:
+        code = 2
+    # os._exit immediately — skip event loop cleanup and Python shutdown
+    # to avoid CTranslate2 CUDA crash (0xC0000409) on Windows
+    os._exit(code)
 
 
 if __name__ == "__main__":
