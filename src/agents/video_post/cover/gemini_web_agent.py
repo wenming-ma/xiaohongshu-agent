@@ -44,20 +44,37 @@ _CANVAS_EXTRACT_JS = """async (page) => {
 }"""
 
 
+_gemini_account_index = 0
+
+
+def _pick_gemini_session_dir() -> str:
+    global _gemini_account_index
+    base = Path(PathConfig.BROWSER_SESSION_GEMINI)
+    base.mkdir(parents=True, exist_ok=True)
+    accounts = sorted(d for d in base.iterdir() if d.is_dir() and d.name.startswith("account"))
+    if not accounts:
+        return str(base)
+    chosen = accounts[_gemini_account_index % len(accounts)]
+    _gemini_account_index += 1
+    logger.info("[GeminiWebAgent] 使用账号会话: %s", chosen.name)
+    return str(chosen)
+
+
 def _create_gemini_mcp_server(output_dir: Path) -> MCPServerStdio:
     output_dir.mkdir(parents=True, exist_ok=True)
+    session_dir = _pick_gemini_session_dir()
     server = MCPServerStdio(
         command="npx",
         args=[
             "-y", "@playwright/mcp@latest",
             "--browser", "chrome",
-            "--user-data-dir", str(PathConfig.BROWSER_SESSION_GEMINI),
+            "--user-data-dir", session_dir,
             "--output-dir", str(output_dir),
         ],
         env={
             "HEADLESS": "false",
             "BROWSER_TYPE": "chrome",
-            "USER_DATA_DIR": str(PathConfig.BROWSER_SESSION_GEMINI),
+            "USER_DATA_DIR": session_dir,
         },
         cwd=str(output_dir),
         tool_prefix="playwright",

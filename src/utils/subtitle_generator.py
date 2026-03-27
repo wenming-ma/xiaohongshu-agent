@@ -274,6 +274,15 @@ class WhisperSubtitleGenerator:
                 segments = await self._translate_to_chinese(segments, source_language=detected_lang)
                 translated = True
 
+            if not segments:
+                logger.warning("无字幕片段，跳过烧录")
+                return SubtitleResult(
+                    success=False,
+                    segments=[],
+                    language=detected_lang,
+                    error_message="转录无结果（视频可能无人声）",
+                )
+
             srt_path = output_path.with_suffix(".srt")
             self._generate_srt(segments, srt_path)
             logger.info(f"SRT 文件生成: {srt_path}")
