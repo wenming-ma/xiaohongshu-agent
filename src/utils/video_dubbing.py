@@ -200,6 +200,7 @@ async def dub_video(
     output_path: Path,
     work_dir: Path | None = None,
     bg_volume: float = 0.6,
+    voice: str = "",
 ) -> Path:
     """
     完整视频配音流程
@@ -214,6 +215,9 @@ async def dub_video(
     Returns:
         输出视频路径
     """
+    if not voice:
+        voice = os.getenv("S2CPP_TTS_VOICE", "").strip()
+
     _prepare_model_cache_env()
 
     cleanup = work_dir is None
@@ -238,6 +242,7 @@ async def dub_video(
             segments=segments,
             work_dir=work_dir,
             reference_audio_path=original_audio,
+            voice=voice,
         )
 
         # Step 4: 拼接配音段为完整音轨
@@ -447,6 +452,7 @@ async def _generate_dubbed_segments(
     segments: list[SrtSegment],
     work_dir: Path,
     reference_audio_path: Path,
+    voice: str = "",
 ) -> list[tuple[SrtSegment, Path]]:
     """根据配置选择 TTS 后端，生成逐段配音并匹配字幕时长。"""
     if not segments:
@@ -482,6 +488,7 @@ async def _generate_dubbed_segments(
             segments=segments,
             work_dir=work_dir,
             reference_audio_path=reference_audio_path,
+            voice=voice,
         )
         return await _postprocess_dubbed_segments(
             success_map=success_map,
@@ -510,6 +517,7 @@ async def _generate_dubbed_segments(
                 segments=segments,
                 work_dir=work_dir,
                 reference_audio_path=reference_audio_path,
+                voice=voice,
             )
             return await _postprocess_dubbed_segments(
                 success_map=success_map,
@@ -679,42 +687,101 @@ def _resolve_env_path(raw_path: str) -> Path:
     return path
 
 
-_S2CPP_REF_TEXT_PATH = PROJECT_ROOT / "submodules" / "s2.cpp_check" / "references" / "BV1Lm4y1B7wb_30s.txt"
+_S2CPP_REFERENCES_DIR = PROJECT_ROOT / "submodules" / "s2.cpp_check" / "references"
+
+VOICE_REGISTRY: dict[str, dict] = {
+    "liuyifei": {"desc": "温柔知性女声，适合旅行、生活方式、美妆、文艺类内容"},
+    "dingzhen": {"desc": "纯朴自然男声，适合户外、旅行、自然风光、乡村生活类内容"},
+    "zhoujielun": {"desc": "个性随性男声，适合音乐、潮流、运动、年轻人文化类内容"},
+    "mabaoguo": {"desc": "中年幽默男声，适合搞笑、武术、健身、娱乐吐槽类内容"},
+}
+DEFAULT_VOICE = "liuyifei"
 
 
-def _build_s2cpp_reference_text(segments: list[SrtSegment]) -> str:
+def _get_voice_ref_paths(voice: str) -> tuple[Path, Path]:
+    voice_dir = _S2CPP_REFERENCES_DIR / voice
+    wavs = sorted(voice_dir.glob("*_30s.wav"))
+    txts = sorted(voice_dir.glob("*_30s.txt"))
+    if not wavs or not txts:
+        raise FileNotFoundError(f"音色 {voice} 缺少参考文件: {voice_dir}")
+    return wavs[0], txts[0]
+
+
+def select_voice(topic: str, transcript: str = "") -> str:
+    from pydantic_ai import Agent
+    from .providers import get_text_model
+
+    options = "\n".join(f"- {k}: {v['desc']}" for k, v in VOICE_REGISTRY.items())
+    prompt = (
+        f"根据以下视频内容，从可选音色中选择最合适的配音音色。\n\n"
+        f"视频主题: {topic}\n"
+        f"视频内容摘要: {transcript[:300]}\n\n"
+        f"可选音色:\n{options}\n\n"
+        f"只输出音色名称（如 liuyifei），不要任何解释。"
+    )
+    import asyncio
+    agent = Agent(model=get_text_model(), output_type=str)
+    result = asyncio.get_event_loop().run_until_complete(agent.run(prompt))
+    voice = result.output.strip().lower()
+    if voice in VOICE_REGISTRY:
+        logger.info(f"AI 选择配音音色: {voice} ({VOICE_REGISTRY[voice]['desc']})")
+        return voice
+    logger.warning(f"AI 返回未知音色 '{voice}'，使用默认: {DEFAULT_VOICE}")
+    return DEFAULT_VOICE
+
+
+async def select_voice_async(topic: str, transcript: str = "") -> str:
+    from pydantic_ai import Agent
+    from .providers import get_text_model
+
+    options = "\n".join(f"- {k}: {v['desc']}" for k, v in VOICE_REGISTRY.items())
+    prompt = (
+        f"根据以下视频内容，从可选音色中选择最合适的配音音色。\n\n"
+        f"视频主题: {topic}\n"
+        f"视频内容摘要: {transcript[:300]}\n\n"
+        f"可选音色:\n{options}\n\n"
+        f"只输出音色名称（如 liuyifei），不要任何解释。"
+    )
+    agent = Agent(model=get_text_model(), output_type=str)
+    result = await agent.run(prompt)
+    voice = result.output.strip().lower()
+    if voice in VOICE_REGISTRY:
+        logger.info(f"AI 选择配音音色: {voice} ({VOICE_REGISTRY[voice]['desc']})")
+        return voice
+    logger.warning(f"AI 返回未知音色 '{voice}'，使用默认: {DEFAULT_VOICE}")
+    return DEFAULT_VOICE
+
+
+def _build_s2cpp_reference_text(segments: list[SrtSegment], voice: str = "") -> str:
     configured = _normalize_tts_text(os.getenv("S2CPP_TTS_REFERENCE_TEXT", ""))
     if configured:
         return configured[:1200]
 
-    if _S2CPP_REF_TEXT_PATH.exists():
-        text = _normalize_tts_text(_S2CPP_REF_TEXT_PATH.read_text(encoding="utf-8", errors="ignore"))
+    voice = voice or DEFAULT_VOICE
+    try:
+        _, txt_path = _get_voice_ref_paths(voice)
+        text = _normalize_tts_text(txt_path.read_text(encoding="utf-8", errors="ignore"))
         if text:
             return text[:1200]
-
-    text_file = os.getenv("S2CPP_TTS_REFERENCE_TEXT_FILE", "").strip()
-    if text_file:
-        path = _resolve_env_path(text_file)
-        if path.exists():
-            text = _normalize_tts_text(path.read_text(encoding="utf-8", errors="ignore"))
-            if text:
-                return text[:1200]
-        logger.warning(f"S2CPP_TTS_REFERENCE_TEXT_FILE 不存在或为空: {path}")
+    except FileNotFoundError:
+        pass
 
     fallback = _build_fish_reference_text(segments)
-    logger.warning("未提供 s2.cpp 参考文本，回退使用字幕内容片段作为 reference_text")
+    logger.warning("未找到音色参考文本，回退使用字幕内容片段作为 reference_text")
     return fallback
-
-
-_S2CPP_REF_AUDIO_PATH = PROJECT_ROOT / "submodules" / "s2.cpp_check" / "references" / "BV1Lm4y1B7wb_30s.wav"
 
 
 async def _prepare_s2cpp_reference_audio(
     reference_audio_path: Path,
     work_dir: Path,
+    voice: str = "",
 ) -> Path | None:
-    if _S2CPP_REF_AUDIO_PATH.exists():
-        return _S2CPP_REF_AUDIO_PATH
+    voice = voice or DEFAULT_VOICE
+    try:
+        wav_path, _ = _get_voice_ref_paths(voice)
+        return wav_path
+    except FileNotFoundError:
+        pass
 
     configured = os.getenv("S2CPP_TTS_REFERENCE_AUDIO_PATH", "").strip()
     if configured:
@@ -886,6 +953,7 @@ async def _generate_dubbed_segments_s2cpp(
     segments: list[SrtSegment],
     work_dir: Path,
     reference_audio_path: Path,
+    voice: str = "",
 ) -> tuple[list[SrtSegment], dict[int, Path]]:
     base_url = os.getenv("S2CPP_TTS_BASE_URL", "http://127.0.0.1:3030").strip().rstrip("/")
     retries = max(_get_env_int("S2CPP_TTS_RETRIES", 3), 1)
@@ -911,8 +979,8 @@ async def _generate_dubbed_segments_s2cpp(
         f"segments={len(segments)}->{len(effective_segments)}"
     )
 
-    reference_clip = await _prepare_s2cpp_reference_audio(reference_audio_path, work_dir)
-    reference_text = _build_s2cpp_reference_text(effective_segments)
+    reference_clip = await _prepare_s2cpp_reference_audio(reference_audio_path, work_dir, voice=voice)
+    reference_text = _build_s2cpp_reference_text(effective_segments, voice=voice)
     if reference_clip is None:
         logger.warning("s2.cpp TTS 未配置参考音频，使用无参考音色模式")
     else:

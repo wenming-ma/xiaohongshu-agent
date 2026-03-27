@@ -70,6 +70,7 @@ async def _run_via_audio_env(
     output_path: Path,
     work_dir: Path | None,
     bg_volume: float,
+    voice: str = "",
 ) -> Path:
     dub_script = _resolve_dub_script()
     if not dub_script.exists():
@@ -93,6 +94,7 @@ async def _run_via_audio_env(
             output_path=output_path,
             work_dir=work_dir,
             bg_volume=bg_volume,
+            voice=voice,
         )
 
     cmd = [
@@ -115,6 +117,8 @@ async def _run_via_audio_env(
 
     env = os.environ.copy()
     env.setdefault("PYTHONUTF8", "1")
+    if voice:
+        env["S2CPP_TTS_VOICE"] = voice
     project_root_str = str(PROJECT_ROOT)
     existing_pythonpath = env.get("PYTHONPATH", "")
     if existing_pythonpath:
@@ -143,6 +147,7 @@ async def dub_video_with_runner(
     output_path: Path,
     work_dir: Path | None = None,
     bg_volume: float = 0.6,
+    voice: str = "",
 ) -> Path:
     """
     统一配音入口。
@@ -159,6 +164,7 @@ async def dub_video_with_runner(
             output_path=output_path,
             work_dir=work_dir,
             bg_volume=bg_volume,
+            voice=voice,
         )
 
     logger.warning("VIDEO_DUB_USE_SEPARATE_ENV=0，配音将使用当前环境执行")
@@ -170,4 +176,5 @@ async def dub_video_with_runner(
         output_path=output_path,
         work_dir=work_dir,
         bg_volume=bg_volume,
+        voice=voice,
     )
