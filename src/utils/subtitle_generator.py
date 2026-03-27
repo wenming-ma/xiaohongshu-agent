@@ -374,10 +374,18 @@ class WhisperSubtitleGenerator:
         lang_name = LANG_NAMES.get(source_language, f"{source_language} 语言")
 
         batch_size = 15
-        translated_segments = []
+        max_concurrency = 5
+        semaphore = asyncio.Semaphore(max_concurrency)
 
+        batches: list[tuple[int, list[SubtitleSegment]]] = []
         for i in range(0, len(segments), batch_size):
-            batch = segments[i:i + batch_size]
+            batches.append((i, segments[i:i + batch_size]))
+
+        results_by_index: dict[int, list[SubtitleSegment]] = {}
+        done_count = 0
+
+        async def _translate_batch(batch_idx: int, batch: list[SubtitleSegment]) -> None:
+            nonlocal done_count
             texts = [f"{j+1}. {seg.text}" for j, seg in enumerate(batch)]
             prompt = (
                 f"将以下{lang_name}字幕翻译成中文。\n\n"
@@ -389,23 +397,30 @@ class WhisperSubtitleGenerator:
                 "只输出翻译后的文本，每行一条，格式为 '序号. 翻译内容'：\n\n"
             ) + "\n".join(texts)
 
-            result = await self.translation_agent.run(prompt)
-            translated_lines = result.output.strip().split("\n")
+            async with semaphore:
+                result = await self.translation_agent.run(prompt)
 
+            translated_lines = result.output.strip().split("\n")
+            batch_result = []
             for j, seg in enumerate(batch):
                 if j < len(translated_lines):
                     translated_text = translated_lines[j]
                     if ". " in translated_text:
                         translated_text = translated_text.split(". ", 1)[1]
-                    translated_segments.append(SubtitleSegment(
-                        start=seg.start,
-                        end=seg.end,
-                        text=translated_text.strip(),
+                    batch_result.append(SubtitleSegment(
+                        start=seg.start, end=seg.end, text=translated_text.strip(),
                     ))
                 else:
-                    translated_segments.append(seg)
+                    batch_result.append(seg)
+            results_by_index[batch_idx] = batch_result
+            done_count += 1
+            logger.info(f"翻译进度: {done_count}/{len(batches)} 批 ({min((done_count) * batch_size, len(segments))}/{len(segments)})")
 
-            logger.info(f"翻译进度: {min(i + batch_size, len(segments))}/{len(segments)}")
+        await asyncio.gather(*[_translate_batch(idx, batch) for idx, batch in enumerate(batches)])
+
+        translated_segments = []
+        for idx in range(len(batches)):
+            translated_segments.extend(results_by_index[idx])
 
         return translated_segments
 
