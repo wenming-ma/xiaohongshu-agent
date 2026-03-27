@@ -45,7 +45,7 @@ class CoverAgent(BaseAgent):
             self._use_web_fallback = True
 
         if self._use_api:
-            self.image_client = GeminiImageClient(aspect_ratio="3:4")
+            self.image_client = GeminiImageClient(aspect_ratio="16:9")
 
     async def forward(
         self,
@@ -72,7 +72,7 @@ class CoverAgent(BaseAgent):
                     await self.image_client.generate_image(
                         prompt=prompt,
                         output_path=cover_path,
-                        aspect_ratio="3:4",
+                        aspect_ratio="16:9",
                         reference_images=frames,
                     )
                 except Exception as api_err:

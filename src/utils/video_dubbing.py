@@ -679,10 +679,18 @@ def _resolve_env_path(raw_path: str) -> Path:
     return path
 
 
+_S2CPP_REF_TEXT_PATH = PROJECT_ROOT / "submodules" / "s2.cpp_check" / "references" / "BV1Lm4y1B7wb_30s.txt"
+
+
 def _build_s2cpp_reference_text(segments: list[SrtSegment]) -> str:
     configured = _normalize_tts_text(os.getenv("S2CPP_TTS_REFERENCE_TEXT", ""))
     if configured:
         return configured[:1200]
+
+    if _S2CPP_REF_TEXT_PATH.exists():
+        text = _normalize_tts_text(_S2CPP_REF_TEXT_PATH.read_text(encoding="utf-8", errors="ignore"))
+        if text:
+            return text[:1200]
 
     text_file = os.getenv("S2CPP_TTS_REFERENCE_TEXT_FILE", "").strip()
     if text_file:
@@ -693,16 +701,21 @@ def _build_s2cpp_reference_text(segments: list[SrtSegment]) -> str:
                 return text[:1200]
         logger.warning(f"S2CPP_TTS_REFERENCE_TEXT_FILE 不存在或为空: {path}")
 
-    # 回退：使用当前字幕前几句作为参考文本（非最佳，但可避免请求失败）
     fallback = _build_fish_reference_text(segments)
     logger.warning("未提供 s2.cpp 参考文本，回退使用字幕内容片段作为 reference_text")
     return fallback
+
+
+_S2CPP_REF_AUDIO_PATH = PROJECT_ROOT / "submodules" / "s2.cpp_check" / "references" / "BV1Lm4y1B7wb_30s.wav"
 
 
 async def _prepare_s2cpp_reference_audio(
     reference_audio_path: Path,
     work_dir: Path,
 ) -> Path | None:
+    if _S2CPP_REF_AUDIO_PATH.exists():
+        return _S2CPP_REF_AUDIO_PATH
+
     configured = os.getenv("S2CPP_TTS_REFERENCE_AUDIO_PATH", "").strip()
     if configured:
         path = _resolve_env_path(configured)
