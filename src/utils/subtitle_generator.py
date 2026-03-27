@@ -451,14 +451,14 @@ class WhisperSubtitleGenerator:
         async def _translate_batch(batch_idx: int, batch: list[SubtitleSegment]) -> None:
             nonlocal done_count
             if has_multiple_speakers:
-                texts = [f"{j+1}. [S{seg.speaker_id}] {seg.text}" for j, seg in enumerate(batch)]
+                texts = [f"{j+1}. [说话人{seg.speaker_id}] {seg.text}" for j, seg in enumerate(batch)]
             else:
                 texts = [f"{j+1}. {seg.text}" for j, seg in enumerate(batch)]
 
             speaker_instruction = ""
             if has_multiple_speakers:
                 speaker_instruction = (
-                    "- 每行开头有 [SN] 说话人标记，翻译后必须保留在行首\n"
+                    "- 每行开头有 [说话人N] 标记，这是上下文信息，翻译时不要输出这个标记\n"
                     "- 不同说话人用不同的语气风格\n"
                 )
 
@@ -490,15 +490,10 @@ class WhisperSubtitleGenerator:
                     translated_text = translated_lines[j]
                     if ". " in translated_text:
                         translated_text = translated_text.split(". ", 1)[1]
-                    speaker_id = seg.speaker_id
-                    text = translated_text.strip()
-                    import re
-                    sp_match = re.match(r'\[S(\d+)\]\s*', text)
-                    if sp_match:
-                        speaker_id = int(sp_match.group(1))
-                        text = text[sp_match.end():]
                     batch_result.append(SubtitleSegment(
-                        start=seg.start, end=seg.end, text=text, speaker_id=speaker_id,
+                        start=seg.start, end=seg.end,
+                        text=translated_text.strip(),
+                        speaker_id=seg.speaker_id,
                     ))
                 else:
                     batch_result.append(seg)
