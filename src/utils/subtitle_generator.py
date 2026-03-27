@@ -108,8 +108,18 @@ def _get_shared_whisper_model() -> WhisperModel:
 
 
 def release_whisper_model() -> None:
+    import gc
     global _shared_whisper_model
-    _shared_whisper_model = None
+    if _shared_whisper_model is not None:
+        del _shared_whisper_model
+        _shared_whisper_model = None
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
 
 
 def pick_subtitle_style(topic: str) -> dict:
