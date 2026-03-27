@@ -7,7 +7,7 @@ from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.usage import UsageLimits
 
 from ....core.base_agent import BaseAgent, ValidationResult
-from ..schemas import VideoResearchResult, Platform
+from ..schemas import VideoResearchResult, VideoSource, Platform
 from ....utils.providers import get_text_model
 from ....utils.logger import get_logger
 from ....config.settings import RetryConfig, PathConfig
@@ -55,8 +55,8 @@ class ResearchAgent(BaseAgent):
         )
 
     def init_validators(self) -> None:
-        self.search_validator = VideoSearchValidator(min_videos=10)
-        self.quality_filter = VideoListQualityFilter(pass_score=70.0, min_quality_videos=10)
+        self.search_validator = VideoSearchValidator(min_videos=15)
+        self.quality_filter = VideoListQualityFilter(pass_score=70.0, min_quality_videos=15)
         self.max_iterations = MAX_ITERATIONS
 
     async def forward(
@@ -72,6 +72,8 @@ class ResearchAgent(BaseAgent):
             max_videos=max_videos,
             output_dir=output_dir,
         )
+
+        self._accumulated_quality_videos: list[VideoSource] = []
 
         logger.info(f"Starting video search: {topic}")
         logger.info(f"Platforms: {[p.value for p in platforms]}")
@@ -144,7 +146,7 @@ class ResearchAgent(BaseAgent):
         if not output.sources:
             return ValidationResult.failure("未找到任何视频源")
 
-        # 基础验证：数量和URL
+        # 基础验证：数量和URL（仅对当前轮）
         validator_result = await self.search_validator.validate(
             output, {"min_videos": self.search_validator.min_videos}
         )
@@ -161,17 +163,27 @@ class ResearchAgent(BaseAgent):
             max_videos=len(output.sources),
         )
 
-        if len(quality_videos) >= self.quality_filter.min_quality_videos:
-            self._filtered_sources = quality_videos
-            logger.info(f"质量审核通过: {len(quality_videos)} 个高质量视频")
-            return ValidationResult.success(f"找到 {len(quality_videos)} 个高质量视频")
+        # 合并本轮通过的视频到累积池（按 URL 去重）
+        seen_urls = {v.url for v in self._accumulated_quality_videos}
+        for v in quality_videos:
+            if v.url not in seen_urls:
+                self._accumulated_quality_videos.append(v)
+                seen_urls.add(v.url)
+
+        total_quality = len(self._accumulated_quality_videos)
+        logger.info(f"累计高质量视频: {total_quality} 个（本轮新增 {len(quality_videos)} 个）")
+
+        if total_quality >= self.quality_filter.min_quality_videos:
+            self._filtered_sources = self._accumulated_quality_videos
+            logger.info(f"质量审核通过: {total_quality} 个高质量视频")
+            return ValidationResult.success(f"找到 {total_quality} 个高质量视频")
         else:
             quality_feedback = (
-                f"质量审核未通过: 仅 {len(quality_videos)} 个视频通过质量检测，"
+                f"质量审核未通过: 累计 {total_quality} 个视频通过质量检测，"
                 f"需要至少 {self.quality_filter.min_quality_videos} 个。\n\n"
                 f"建议:\n"
-                f"1. 搜索更多视频（目标: 有完整故事、有深度的内容）\n"
-                f"2. 避免随意拍摄的 TikTok 娱乐片段\n"
+                f"1. 搜索更多不同的视频（避免重复已搜索过的）\n"
+                f"2. 尝试不同的搜索关键词\n"
                 f"3. 寻找教程、经验分享、深度探店类视频\n\n"
                 f"过滤原因:\n" + "\n".join(feedback_msgs)
             )
