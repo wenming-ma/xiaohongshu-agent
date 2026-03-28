@@ -17,6 +17,8 @@ class ClusterConfig:
     session_id: str = ""
     # Backward-compatible: `model` is the controller model.
     model: str = "openai:gpt-5.4"
+    controller_max_retries: int = 20
+    controller_timeout_seconds: int = 300
     worker_model: str = "MiniMax-M2.7"
     worker_base_url: str = "https://api.minimaxi.com/v1"
     target_command: str = ""
@@ -112,4 +114,21 @@ class ClusterConfig:
             model=self.worker_model,
             api_key=api_key,
             base_url=self.worker_base_url,
+        )
+
+    def build_controller_model(self) -> ChatOpenAI:
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            msg = "OPENAI_API_KEY is not set"
+            raise RuntimeError(msg)
+        model_name = self.model.split(":", 1)[1] if self.model.startswith("openai:") else self.model
+        base_url = os.environ.get("OPENAI_BASE_URL")
+        return ChatOpenAI(
+            model=model_name,
+            api_key=api_key,
+            base_url=base_url,
+            timeout=self.controller_timeout_seconds,
+            max_retries=self.controller_max_retries,
+            use_responses_api=False,
+            output_version="v0",
         )

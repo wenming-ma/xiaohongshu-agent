@@ -7,7 +7,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
-from typing import Literal
+from typing import Any, Literal
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
@@ -29,6 +29,14 @@ WEB_SNIPPET_CHARS = 12000
 CONTROLLER_MEMORY_SUMMARY_CHARS = 360
 CONTROLLER_MEMORY_SHORT_CHARS = 160
 CONTROLLER_MEMORY_MEDIUM_CHARS = 220
+AGENT_LABELS = ("controller", "explore", "task", "fixer", "validator")
+TOOL_AGENT_HINTS = {
+    "request_done": "controller",
+    "request_rollback": "controller",
+    "record_controller_memory": "controller",
+    "run_validation_command": "validator",
+    "record_validator_memory": "validator",
+}
 
 
 class ValidationToolResult(BaseModel):
@@ -105,6 +113,96 @@ class RollbackRequest(BaseModel):
 
 class DoneRequest(BaseModel):
     reason: str
+
+
+def _clip_log_value(value: str, limit: int = 120) -> str:
+    cleaned = re.sub(r"\s+", " ", value.strip())
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 3] + "..."
+
+
+def _agent_label_from_name(name: str | None) -> str | None:
+    if not name:
+        return None
+    lowered = name.lower()
+    for agent in AGENT_LABELS:
+        if agent in lowered:
+            return agent
+    return None
+
+
+def _remember_stream_name(event: dict[str, Any], run_names: dict[str, str]) -> None:
+    run_id = event.get("run_id")
+    name = event.get("name")
+    if isinstance(run_id, str) and isinstance(name, str) and name:
+        run_names[run_id] = name
+
+
+def _infer_agent_label(event: dict[str, Any], run_names: dict[str, str]) -> str:
+    hinted = TOOL_AGENT_HINTS.get(str(event.get("name", "")))
+    if hinted:
+        return hinted
+    direct = _agent_label_from_name(event.get("name") if isinstance(event.get("name"), str) else None)
+    if direct:
+        return direct
+    metadata = event.get("metadata")
+    if isinstance(metadata, dict):
+        for value in metadata.values():
+            if isinstance(value, str):
+                candidate = _agent_label_from_name(value)
+                if candidate:
+                    return candidate
+    for parent_id in reversed(event.get("parent_ids") or []):
+        if not isinstance(parent_id, str):
+            continue
+        candidate = _agent_label_from_name(run_names.get(parent_id))
+        if candidate:
+            return candidate
+    return "controller"
+
+
+def _tool_log_detail(event: dict[str, Any]) -> str:
+    data = event.get("data")
+    if not isinstance(data, dict):
+        return ""
+    payload = data.get("input")
+    if not isinstance(payload, dict):
+        return ""
+    if isinstance(payload.get("subagent_type"), str):
+        return payload["subagent_type"]
+    for key in ("command", "query", "url", "file_path", "path", "label"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return _clip_log_value(value)
+    return ""
+
+
+def _log_stream_event(event: dict[str, Any], run_names: dict[str, str]) -> None:
+    _remember_stream_name(event, run_names)
+    if event.get("event") != "on_tool_start":
+        return
+    tool_name = str(event.get("name", "") or "tool")
+    detail = _tool_log_detail(event)
+    if tool_name == "task" and detail:
+        logger.info("[controller] delegating to %s", detail)
+        return
+    agent = _infer_agent_label(event, run_names)
+    if detail and detail != tool_name:
+        logger.info("[%s] tool start: %s | %s", agent, tool_name, detail)
+        return
+    logger.info("[%s] tool start: %s", agent, tool_name)
+
+
+def _extract_stream_result(event: dict[str, Any], root_name: str) -> Any | None:
+    if event.get("event") != "on_chain_end":
+        return None
+    if event.get("name") != root_name:
+        return None
+    data = event.get("data")
+    if not isinstance(data, dict) or "output" not in data:
+        return None
+    return data["output"]
 
 
 class ReadOnlyFilesystemBackend(FilesystemBackend):
@@ -221,6 +319,19 @@ class ValidationCommandRunner:
 
 def _analysis_root(config: ClusterConfig) -> Path:
     return config.cache_root / "analysis" / config.session_id
+
+
+def _virtual_memory_source(source: Path, root_dir: Path, staged_name: str | None = None) -> str:
+    source = source.resolve()
+    root_dir = root_dir.resolve()
+    try:
+        return source.relative_to(root_dir).as_posix()
+    except ValueError:
+        target_name = staged_name or source.name
+        staged_path = root_dir / ".ci_agent" / target_name
+        staged_path.parent.mkdir(parents=True, exist_ok=True)
+        staged_path.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+        return staged_path.relative_to(root_dir).as_posix()
 
 
 def _strip_html_tags(text: str) -> str:
@@ -891,6 +1002,12 @@ class DeepAgentRuntime:
         runner = ValidationCommandRunner(self.config)
         analysis_root = _analysis_root(self.config)
         analysis_root.mkdir(parents=True, exist_ok=True)
+        project_runbook_memory = _virtual_memory_source(self.config.runbook_file, self.config.project_root)
+        controller_memory_source = _virtual_memory_source(self.config.controller_memory_file, self.config.project_root)
+        validator_memory_source = _virtual_memory_source(self.config.validator_memory_file, self.config.project_root)
+        task_runbook_memory = _virtual_memory_source(self.config.runbook_file, analysis_root, "AGENTS.md")
+        fixer_runbook_memory = _virtual_memory_source(self.config.runbook_file, self.config.worktree_root, "AGENTS.md")
+        controller_model = self.config.build_controller_model()
         worker_model = self.config.build_worker_model()
         rollback_request: RollbackRequest | None = None
         done_request: DoneRequest | None = None
@@ -1034,7 +1151,7 @@ class DeepAgentRuntime:
                 virtual_mode=True,
             ),
             tools=[search_web, fetch_web_page],
-            memory=[str(self.config.runbook_file)],
+            memory=[project_runbook_memory],
             name="ci-agent-explore",
         )
         task = create_deep_agent(
@@ -1047,7 +1164,7 @@ class DeepAgentRuntime:
                 env=self.config.build_env(),
             ),
             tools=[search_web, fetch_web_page],
-            memory=[str(self.config.runbook_file)],
+            memory=[task_runbook_memory],
             name="ci-agent-task",
         )
         fixer = create_deep_agent(
@@ -1059,7 +1176,7 @@ class DeepAgentRuntime:
                 inherit_env=True,
                 env=self.config.build_env(),
             ),
-            memory=[str(self.config.runbook_file)],
+            memory=[fixer_runbook_memory],
             name="ci-agent-fixer",
         )
         validator = create_deep_agent(
@@ -1070,11 +1187,11 @@ class DeepAgentRuntime:
                 virtual_mode=True,
             ),
             tools=[run_validation_command, record_validator_memory],
-            memory=[str(self.config.runbook_file), str(self.config.validator_memory_file)],
+            memory=[project_runbook_memory, validator_memory_source],
             name="ci-agent-validator",
         )
         controller = create_deep_agent(
-            model=self.config.model,
+            model=controller_model,
             system_prompt=CONTROLLER_ROLE,
             backend=ReadOnlyFilesystemBackend(
                 root_dir=self.config.project_root,
@@ -1108,19 +1225,34 @@ class DeepAgentRuntime:
                 ),
             ],
             memory=[
-                str(self.config.runbook_file),
-                str(self.config.controller_memory_file),
-                str(self.config.validator_memory_file),
+                project_runbook_memory,
+                controller_memory_source,
+                validator_memory_source,
             ],
             tools=[request_rollback, request_done, record_controller_memory],
             response_format=ToolStrategy(schema=ControllerDecision),
             name="ci-agent-controller",
         )
 
-        result = await controller.ainvoke(
+        run_config = {"recursion_limit": max(80, self.config.max_worker_turns * 6)}
+        result: Any | None = None
+        stream_run_names: dict[str, str] = {}
+        async for event in controller.astream_events(
             {"messages": [("user", prompt)]},
-            config={"recursion_limit": max(80, self.config.max_worker_turns * 6)},
-        )
+            config=run_config,
+            version="v2",
+        ):
+            _log_stream_event(event, stream_run_names)
+            streamed_output = _extract_stream_result(event, "ci-agent-controller")
+            if streamed_output is not None:
+                result = streamed_output
+
+        if result is None:
+            logger.warning("Controller stream returned no final output; falling back to ainvoke without event logging")
+            result = await controller.ainvoke(
+                {"messages": [("user", prompt)]},
+                config=run_config,
+            )
 
         workers = _extract_workers(prompt, result)
         structured = _parse_structured_response(result, ControllerDecision)

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +12,8 @@ from scripts.ci_agent.agent_runtime import (
     ValidationCommandRunner,
     ValidationRunReport,
     ValidatorRecord,
+    _extract_stream_result,
+    _log_stream_event,
     _resolve_cycle_action,
 )
 from scripts.ci_agent.config import ClusterConfig
@@ -116,6 +119,8 @@ def test_cluster_config_defaults_to_session_scoped_cache_paths(tmp_path: Path) -
     )
 
     assert config.model == "openai:gpt-5.4"
+    assert config.controller_max_retries == 20
+    assert config.controller_timeout_seconds == 300
     assert config.worker_model == "MiniMax-M2.7"
     assert config.worker_base_url == "https://api.minimaxi.com/v1"
     assert config.min_attempts_before_finish == 10
@@ -125,6 +130,32 @@ def test_cluster_config_defaults_to_session_scoped_cache_paths(tmp_path: Path) -
     assert config.controller_memory_file == repo / ".cache" / "ci_agent" / "memory" / "session123" / "controller.md"
     assert config.validator_memory_file == repo / ".cache" / "ci_agent" / "memory" / "session123" / "validator.md"
     assert config.git_branch == "ci-agent/session123"
+
+
+def test_build_controller_model_uses_chat_completions_settings(tmp_path: Path, monkeypatch) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".env").write_text(
+        "OPENAI_API_KEY=test-openai-key\n"
+        "OPENAI_BASE_URL=https://sub2api.wenming-dev.org/v1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+    config = ClusterConfig.from_env(
+        project_root=repo,
+        cache_root=repo / ".cache" / "ci_agent",
+        session_id="session123",
+    )
+
+    model = config.build_controller_model()
+
+    assert model.model_name == "gpt-5.4"
+    assert str(model.openai_api_base) == "https://sub2api.wenming-dev.org/v1"
+    assert model.use_responses_api is False
+    assert model.output_version == "v0"
+    assert model.max_retries == 20
 
 
 def test_cluster_config_prefers_minimax_openai_base_url(tmp_path: Path, monkeypatch) -> None:
@@ -229,6 +260,49 @@ def test_rollback_action_requires_explicit_request() -> None:
         )
         == "ROLLBACK"
     )
+
+
+def test_stream_event_logging_reports_controller_delegation(caplog) -> None:
+    run_names: dict[str, str] = {}
+    event = {
+        "event": "on_tool_start",
+        "name": "task",
+        "run_id": "run-task",
+        "parent_ids": [],
+        "data": {"input": {"subagent_type": "validator"}},
+    }
+
+    with caplog.at_level(logging.INFO):
+        _log_stream_event(event, run_names)
+
+    assert "delegating to validator" in caplog.text
+
+
+def test_stream_event_logging_inferrs_agent_from_parent_chain(caplog) -> None:
+    run_names = {"validator-run": "ci-agent-validator"}
+    event = {
+        "event": "on_tool_start",
+        "name": "run_validation_command",
+        "run_id": "tool-run",
+        "parent_ids": ["validator-run"],
+        "data": {"input": {"label": "post-fix-validation"}},
+    }
+
+    with caplog.at_level(logging.INFO):
+        _log_stream_event(event, run_names)
+
+    assert "[validator] tool start: run_validation_command | post-fix-validation" in caplog.text
+
+
+def test_extract_stream_result_reads_root_chain_output() -> None:
+    output = {"messages": ["done"]}
+    event = {
+        "event": "on_chain_end",
+        "name": "ci-agent-controller",
+        "data": {"output": output},
+    }
+
+    assert _extract_stream_result(event, "ci-agent-controller") == output
 
 
 class RollbackRuntime:
