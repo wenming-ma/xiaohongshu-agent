@@ -32,7 +32,6 @@ class ClusterConfig:
         "VIDEO_DUB_USE_SEPARATE_ENV": "1",
         "VIDEO_DUB_REQUIRE_AUDIO_ENV": "1",
         "S2CPP_TTS_BASE_URL": "http://127.0.0.1:3030",
-        "S2CPP_TTS_REFERENCE_AUDIO_PATH": "submodules/s2.cpp_check/references/BV1Lm4y1B7wb_30s.wav",
         "S2CPP_TTS_CONCURRENCY": "1",
         "S2CPP_TTS_TIMEOUT_SECONDS": "240",
         "S2CPP_TTS_MERGE_SEGMENTS": "1",

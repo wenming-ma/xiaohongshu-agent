@@ -9,7 +9,6 @@ from pathlib import Path
 from claude_agent_sdk import (
     query,
     ClaudeAgentOptions,
-    AgentDefinition,
     AssistantMessage,
     ResultMessage,
     TextBlock,
@@ -20,72 +19,57 @@ from .state import AttemptRecord, ClusterState
 
 logger = logging.getLogger(__name__)
 
-TAIL_CHARS = 3000
+TAIL_CHARS = 4000
+ALL_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
 
-ERROR_ANALYZER_PROMPT = """\
-You are an expert Python debugger analyzing errors from a Xiaohongshu video post pipeline.
-
+FIXER_PROMPT = """\
+You are an autonomous CI agent for a Xiaohongshu video post pipeline.
 The pipeline phases: research -> download -> dub -> content -> cover -> publish.
-Tech stack: pydantic-ai, Playwright MCP, yt-dlp, Whisper, FFmpeg, various TTS providers.
+Tech stack: pydantic-ai, Playwright MCP, yt-dlp, Whisper, FFmpeg, TTS providers, uv.
 
-Your task:
-1. Read the error output carefully
-2. Use tools to read relevant source files and trace the root cause
-3. Classify the error and output in this EXACT format:
-
-CATEGORY: <CODE_ERROR|DEPENDENCY_ERROR|CONFIG_ERROR|RUNTIME_ERROR|UNKNOWN>
-FILE: <file path>
-LINE: <line number or "unknown">
-ROOT_CAUSE: <one paragraph>
-FIX_PLAN: <concrete steps>
-
-Do NOT suggest fixes that have already been tried and rolled back.\
-"""
-
-CODE_FIXER_PROMPT = """\
-You are an expert Python developer fixing bugs in a Xiaohongshu video post pipeline.
-Tech stack: pydantic-ai, Playwright MCP, yt-dlp, FFmpeg, TTS providers, uv package manager.
+A script run has failed. Your job:
+1. Analyze the error output and read relevant source files to understand the root cause
+2. Fix the issue - modify code, config, or dependencies as needed
+3. Use git to commit your changes (stage specific files, write a descriptive message)
 
 Rules:
 - Make the SMALLEST change that fixes the issue
 - Do NOT refactor or improve unrelated code
-- Verify your fix by reading the file back after editing
-- Do NOT repeat fixes from the attempt history that were already tried and rolled back\
+- After editing, read the file back to verify
+- For dependency issues, use uv (uv add, uv sync), not pip
+- For git: never use "git add ." - stage specific files only
+- Commit message format: "fix(<scope>): <description>"
+
+You have full tool access: Read, Write, Edit, Bash, Glob, Grep.
+Use Bash for git commands, uv commands, and any other shell operations.\
 """
 
-DEPENDENCY_FIXER_PROMPT = """\
-You are an expert Python developer fixing dependency issues.
-The project uses uv for package management with pyproject.toml.
+VALIDATOR_PROMPT = """\
+You are a senior engineer evaluating whether a code fix was effective.
 
-Rules:
-- Use uv commands (uv add, uv sync, uv pip install) not pip directly
-- After pyproject.toml changes, run "uv sync"
-- Verify the fix with "uv pip show <package>"
-- Do NOT repeat fixes from the attempt history\
-"""
+You will receive stderr output from before and after a fix attempt.
+You may also read source files to better understand the situation.
 
-GIT_MANAGER_PROMPT = """\
-You are a git operations specialist.
+Output in this EXACT format:
 
-For COMMIT: stage only the specified files, use message format "fix(<scope>): <description>"
-For ROLLBACK: verify the commit exists, then reset --hard to the target.
+VERDICT: <SAME_ERROR|PROGRESS>
+REASON: <one paragraph explanation>
 
-Never use "git add ." or "git add -A".\
+Guidelines:
+- SAME_ERROR: The root cause is identical, the fix had no real effect. Should rollback.
+- PROGRESS: The error changed, disappeared, or moved to a different phase. Keep the fix.\
 """
 
 
-def _build_worker_options(config: ClusterConfig, system_prompt: str, tools: list[str]) -> ClaudeAgentOptions:
-    return ClaudeAgentOptions(
+async def _run_agent(prompt: str, config: ClusterConfig, system_prompt: str, tools: list[str] | None = None) -> str:
+    options = ClaudeAgentOptions(
         system_prompt=system_prompt,
-        allowed_tools=tools,
+        allowed_tools=tools or ALL_TOOLS,
         permission_mode="bypassPermissions",
         max_turns=config.max_worker_turns,
         model=config.model,
         cwd=str(config.project_root),
     )
-
-
-async def _run_worker(prompt: str, options: ClaudeAgentOptions) -> str:
     result_text = ""
     try:
         async for msg in query(prompt=prompt, options=options):
@@ -97,10 +81,10 @@ async def _run_worker(prompt: str, options: ClaudeAgentOptions) -> str:
                 if msg.result:
                     result_text = msg.result
                 if msg.is_error:
-                    logger.warning("Worker returned error: %s", msg.errors)
+                    logger.warning("Agent error: %s", msg.errors)
     except Exception as e:
-        logger.error("Worker failed: %s", e)
-        result_text = f"Worker error: {e}"
+        logger.error("Agent failed: %s", e)
+        result_text = f"Agent error: {e}"
     return result_text
 
 
@@ -129,7 +113,6 @@ class Orchestrator:
             record.stdout_tail = stdout[-TAIL_CHARS:]
             record.stderr_tail = stderr[-TAIL_CHARS:]
 
-            # Step 2: Success?
             if exit_code == 0:
                 logger.info("SUCCESS on attempt #%d", attempt_num)
                 self.state.status = "success"
@@ -139,82 +122,20 @@ class Orchestrator:
 
             logger.warning("Script failed with exit code %d", exit_code)
 
-            # Step 3: Collect logs
-            log_content = self._collect_logs()
+            # Step 2: Agent analyzes, fixes, and commits
             history = self.state.format_attempt_history()
-
-            # Step 4: Error Analysis
-            analysis_prompt = (
-                f"The video post pipeline script exited with code {exit_code}.\n\n"
-                f"=== STDOUT (last {TAIL_CHARS} chars) ===\n{stdout[-TAIL_CHARS:]}\n\n"
-                f"=== STDERR (last {TAIL_CHARS} chars) ===\n{stderr[-TAIL_CHARS:]}\n\n"
-                f"=== Log Files ===\n{log_content}\n\n"
-                f"=== Previous Attempts (DO NOT repeat) ===\n{history}\n\n"
-                "Diagnose the root cause following your output format."
+            fixer_prompt = (
+                f"The script failed with exit code {exit_code}.\n\n"
+                f"=== STDOUT (tail) ===\n{stdout[-TAIL_CHARS:]}\n\n"
+                f"=== STDERR (tail) ===\n{stderr[-TAIL_CHARS:]}\n\n"
+                f"=== Previous attempts (DO NOT repeat failed fixes) ===\n{history}\n\n"
+                "Analyze the error, fix it, and commit your changes."
             )
-            analysis_options = _build_worker_options(
-                self.config, ERROR_ANALYZER_PROMPT,
-                ["Read", "Glob", "Grep", "Bash"],
-            )
-            logger.info("Running ErrorAnalyzer...")
-            diagnosis = await _run_worker(analysis_prompt, analysis_options)
-            record.diagnosis = diagnosis
-
-            # Step 5: Parse category
-            category = self._parse_category(diagnosis)
-            record.diagnosis_category = category
-            logger.info("Diagnosis category: %s", category)
-
-            if category == "RUNTIME_ERROR":
-                logger.info("Runtime error -- sleeping before retry")
-                time.sleep(self.config.sleep_between_attempts * 6)
-                self.state.attempts.append(record)
-                self.state.save(self.config.state_file)
-                continue
-
-            # Step 6: Apply fix
-            fix_prompt = (
-                f"Diagnosis:\n{diagnosis}\n\n"
-                "Apply the fix described above. After making changes, read the modified "
-                "file(s) back to verify correctness.\n\n"
-                f"Previous failed fixes (DO NOT repeat):\n{history}"
-            )
-            if category == "DEPENDENCY_ERROR":
-                fix_options = _build_worker_options(
-                    self.config, DEPENDENCY_FIXER_PROMPT,
-                    ["Read", "Bash", "Edit", "Write", "Glob", "Grep"],
-                )
-            else:
-                fix_options = _build_worker_options(
-                    self.config, CODE_FIXER_PROMPT,
-                    ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
-                )
-            logger.info("Running %s...", "DependencyFixer" if category == "DEPENDENCY_ERROR" else "CodeFixer")
-            fix_result = await _run_worker(fix_prompt, fix_options)
+            logger.info("Running Fixer agent...")
+            fix_result = await _run_agent(fixer_prompt, self.config, FIXER_PROMPT)
             record.fix_description = fix_result
 
-            # Step 7: Check what changed and commit
-            diff_output = self._git_diff()
-            if diff_output.strip():
-                modified = self._get_modified_files()
-                record.files_modified = modified
-                commit_msg = self._build_commit_message(category, fix_result)
-                commit_prompt = (
-                    f"Commit these modified files with message: {commit_msg}\n"
-                    f"Files: {modified}"
-                )
-                git_options = _build_worker_options(
-                    self.config, GIT_MANAGER_PROMPT,
-                    ["Bash"],
-                )
-                logger.info("Running GitManager to commit...")
-                git_result = await _run_worker(commit_prompt, git_options)
-                record.committed = True
-                record.commit_hash = self._extract_commit_hash(git_result)
-            else:
-                logger.warning("No file changes detected after fix")
-
-            # Step 8: Quick validation
+            # Step 3: Validate - run script again
             logger.info("Running validation...")
             exit_code_2, stdout_2, stderr_2 = self._run_target()
 
@@ -225,21 +146,33 @@ class Orchestrator:
                 self.state.save(self.config.state_file)
                 return True
 
-            # Step 9: Same error? Rollback
-            if self._is_same_error(record.stderr_tail, stderr_2[-TAIL_CHARS:]):
-                logger.warning("Same error after fix -- rolling back")
-                if record.committed and record.commit_hash:
-                    self._rollback_last_commit()
-                    record.rolled_back = True
-                    consecutive_rollbacks += 1
+            # Step 4: Agent judges whether fix helped
+            validator_prompt = (
+                f"=== STDERR BEFORE FIX ===\n{stderr[-TAIL_CHARS:]}\n\n"
+                f"=== STDERR AFTER FIX ===\n{stderr_2[-TAIL_CHARS:]}\n\n"
+                f"=== FIX APPLIED ===\n{fix_result[:1000]}\n\n"
+                "Judge whether the fix was effective."
+            )
+            logger.info("Running Validator agent...")
+            verdict_text = await _run_agent(
+                validator_prompt, self.config, VALIDATOR_PROMPT, ["Read", "Grep"],
+            )
+            verdict = self._parse_verdict(verdict_text)
+            logger.info("Verdict: %s", verdict)
+
+            if verdict == "SAME_ERROR":
+                logger.warning("Agent says SAME_ERROR -- rolling back")
+                self._rollback_last_commit()
+                record.rolled_back = True
+                consecutive_rollbacks += 1
                 if consecutive_rollbacks >= self.config.max_consecutive_rollbacks:
-                    logger.error("Max consecutive rollbacks reached -- stopping")
+                    logger.error("Max consecutive rollbacks (%d) -- stopping", self.config.max_consecutive_rollbacks)
                     self.state.status = "stuck"
                     self.state.attempts.append(record)
                     self.state.save(self.config.state_file)
                     return False
             else:
-                logger.info("Different error -- progress made, continuing")
+                logger.info("Agent says PROGRESS -- keeping fix")
                 consecutive_rollbacks = 0
 
             self.state.attempts.append(record)
@@ -253,7 +186,7 @@ class Orchestrator:
         self.state.save(self.config.state_file)
         return False
 
-    # --- Helpers ---
+    # --- Minimal helpers (only things an agent can't do) ---
 
     def _run_target(self) -> tuple[int, str, str]:
         logger.info("Running: %s", self.config.target_command)
@@ -286,54 +219,9 @@ class Orchestrator:
                        cwd=str(self.config.project_root), capture_output=True, text=True)
         self.state.current_branch = name
 
-    def _collect_logs(self) -> str:
-        workshop = self.config.project_root / "workshop" / "video_post"
-        patterns = ["video_post_crash_*.json", "video_post_failed_*.json",
-                     "video_post_failures_*.jsonl", "video_post_summary_*.json"]
-        parts = []
-        for pat in patterns:
-            for p in sorted(workshop.glob(pat), key=lambda x: x.stat().st_mtime, reverse=True)[:1]:
-                try:
-                    parts.append(f"=== {p.name} ===\n{p.read_text(encoding='utf-8', errors='replace')[:3000]}")
-                except Exception:
-                    pass
-        return "\n\n".join(parts) if parts else "(no log files found)"
-
-    def _parse_category(self, text: str) -> str:
-        m = re.search(r"CATEGORY:\s*(CODE_ERROR|DEPENDENCY_ERROR|CONFIG_ERROR|RUNTIME_ERROR|UNKNOWN)", text)
-        return m.group(1) if m else "UNKNOWN"
-
-    def _git_diff(self) -> str:
-        r = subprocess.run(["git", "diff", "--stat"], cwd=str(self.config.project_root),
-                           capture_output=True, text=True)
-        return r.stdout
-
-    def _get_modified_files(self) -> list[str]:
-        r = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.config.project_root),
-                           capture_output=True, text=True)
-        files = []
-        for line in r.stdout.splitlines():
-            if line.strip():
-                files.append(line[3:].strip())
-        return files
-
-    def _build_commit_message(self, category: str, fix_desc: str) -> str:
-        scope = {"CODE_ERROR": "code", "DEPENDENCY_ERROR": "deps", "CONFIG_ERROR": "config"}.get(category, "fix")
-        summary = fix_desc[:100].replace("\n", " ").strip()
-        return f"fix({scope}): {summary}"
-
-    def _extract_commit_hash(self, text: str) -> str:
-        m = re.search(r"[a-f0-9]{7,40}", text)
-        return m.group(0) if m else ""
-
-    def _is_same_error(self, old: str, new: str) -> bool:
-        if not old or not new:
-            return False
-        old_lines = set(l.strip() for l in old.splitlines() if re.search(r"Error:|Exception:|Traceback", l))
-        new_lines = set(l.strip() for l in new.splitlines() if re.search(r"Error:|Exception:|Traceback", l))
-        if not old_lines or not new_lines:
-            return old[-500:] == new[-500:]
-        return len(old_lines & new_lines) / max(len(old_lines), 1) > 0.5
+    def _parse_verdict(self, text: str) -> str:
+        m = re.search(r"VERDICT:\s*(SAME_ERROR|PROGRESS)", text)
+        return m.group(1) if m else "PROGRESS"
 
     def _rollback_last_commit(self) -> None:
         r = subprocess.run(["git", "log", "--oneline", "-5"],

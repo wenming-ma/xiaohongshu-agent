@@ -1,0 +1,26 @@
+{
+  "session_id": "63061d08f1fd",
+  "started_at": "2026-03-27T21:54:00.017839+00:00",
+  "target_command": "uv run python workshop/video_post/run.py --topics-file workshop/video_post/topics.json --limit 1 --no-publish --no-feishu",
+  "attempts": [
+    {
+      "attempt_number": 1,
+      "timestamp": "2026-03-27T21:54:00.041453+00:00",
+      "exit_code": -1,
+      "stdout_tail": "",
+      "stderr_tail": "TIMEOUT after 300s",
+      "log_files_read": [],
+      "diagnosis": "",
+      "diagnosis_category": "",
+      "fix_description": "**Root cause & fix summary:**\n\n**Root cause:** `_run_via_audio_env()` in `src/utils/video_dubbing_runner.py` called `await proc.wait()` with **no timeout**. When the S2CPP TTS server stalls (e.g. slow inference, server crash), the dubbing subprocess blocks indefinitely. The CI agent's 300 s watchdog then kills the whole pipeline — discarding all stdout/stderr output, which is why the captured logs were empty.\n\n**Fix (committed `bc2ba24`):**\n- Added `_get_env_float()` helper (mirrors the existing `_get_env_bool`)\n- Wrapped `proc.wait()` in `asyncio.wait_for(..., timeout=timeout_s)` where `timeout_s` defaults to 3600 s and is overridable via `VIDEO_DUB_SUBPROCESS_TIMEOUT_SECONDS`\n- On timeout: the subprocess is killed (`proc.kill()`) and a clear `RuntimeError` is raised with the elapsed limit, so the pipeline fails fast with an actionable message instead of being silently slain by the CI watchdog",
+      "files_modified": [],
+      "committed": false,
+      "commit_hash": "",
+      "rolled_back": false,
+      "workers": []
+    }
+  ],
+  "current_branch": "main",
+  "original_branch": "main",
+  "status": "running"
+}
