@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent, Tool, BinaryContent
 
 from ..schemas import ImageReadResult
-from ....utils.image_compression import compress_image_for_review
+from ...shared.utils.image_compression import compress_image_for_review
 from ....utils.logger import get_logger
 from ....config.settings import RetryConfig, APIConfig
 from ....utils.providers import get_text_model, get_google_model

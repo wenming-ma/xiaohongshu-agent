@@ -1,4 +1,4 @@
-from src.utils.playwright_artifacts import sanitize_playwright_filename
+from src.agents.shared.utils.playwright_artifacts import sanitize_playwright_filename
 
 
 def test_sanitize_playwright_filename_strips_directory_segments() -> None:

@@ -2,7 +2,7 @@ import asyncio
 import subprocess
 from pathlib import Path
 
-from .logger import get_logger
+from ....utils.logger import get_logger
 
 logger = get_logger(__name__)
 

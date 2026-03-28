@@ -13,7 +13,7 @@ from pydantic_ai.mcp import MCPServerStdio
 
 from ....config.settings import PathConfig
 from ....utils.logger import get_logger
-from ....utils.subtitle_generator import WhisperTranscriber
+from ..utils.transcription import AudioTranscriber
 from .extract.agent import ExtractAgent
 from .schemas import VideoReadResult
 
@@ -25,7 +25,7 @@ class XHSVideoExtractTool:
 
     def __init__(self, mcp_server: MCPServerStdio):
         self._extract_agent = ExtractAgent(mcp_server)
-        self._transcriber = WhisperTranscriber()
+        self._transcriber = AudioTranscriber()
 
     async def extract_xhs_video_url(self, page_url: str = "") -> str:
         result = await self._extract_agent.forward(page_url=page_url)

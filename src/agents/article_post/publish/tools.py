@@ -13,7 +13,7 @@ from pydantic_ai.mcp import MCPServerStdio
 
 from ....utils.logger import get_logger
 from ..schemas import XHSArticleContent
-from .utils import (
+from ..utils.publish import (
     build_click_image_button_script,
     build_click_slot_script,
     build_editor_script,

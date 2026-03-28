@@ -22,7 +22,14 @@ from ..schemas import ArticleResearchResult, ArticleSource, ArticleSourceType, A
 from .prompts import ITERATION_PLANNER_SYSTEM_PROMPT, SOURCE_DIGEST_SYSTEM_PROMPT, SYNTHESIS_SYSTEM_PROMPT, TASK_NOTE_SYSTEM_PROMPT, iteration_planner_prompt, source_digest_prompt, synthesis_user_prompt, task_note_prompt
 from .state import CompressedResearchNote, IterationExecution, IterationPlan, QueryCandidate, ResearchState, ResearchTask, ResearchTaskResult, TaskAssessment, build_progress_snapshot
 from .tools import ARTICLE_MEDIA_DOMAINS, VIDEO_MEDIA_DOMAINS, ArticlePageReader, CollectedSource, CollectedSourceCandidate, DomainSearchClient, GenericVideoTranscriber, LocalEvidenceStore, ReadPageResult, SearchResult, build_site_queries, is_article_media_domain, is_video_candidate, score_candidate, select_best_video_url
-from .utils import SourceChunker, clean_list, json_dumps, save_iteration_result, save_latest_snapshot, unique_keep_order
+from ..utils.research import (
+    SourceChunker,
+    clean_list,
+    json_dumps,
+    save_iteration_result,
+    save_latest_snapshot,
+    unique_keep_order,
+)
 from .validator import ResearchReviewValidator, ResearchRulesValidator
 
 logger = get_logger(__name__)

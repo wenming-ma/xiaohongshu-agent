@@ -9,8 +9,8 @@ from typing import Optional
 
 from PIL import Image
 
-from ..config.settings import ImageConfig
-from .logger import get_logger
+from ....config.settings import ImageConfig
+from ....utils.logger import get_logger
 
 logger = get_logger(__name__)
 

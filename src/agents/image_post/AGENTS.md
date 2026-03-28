@@ -19,16 +19,26 @@ pipeline.py (XHSImagePostPipeline.execute)
 
 ## 各 Agent 文件结构
 
-每个 Agent 目录遵循统一结构：
+`image_post` 的 phase 目录遵循统一结构，helper 统一收口到 pipeline 根下 `utils/`：
 
 | 文件 | 职责 |
 |------|------|
 | `agent.py` | Agent 主类 |
 | `prompts.py` | 提示词模板 |
 | `state.py` | 状态管理（如有） |
-| `utils.py` | 工具函数（如有） |
 | `validator.py` | 验证器（如有） |
 | `tools.py` | 子工具（如有） |
+
+`src/agents/image_post/utils/`：
+- `research.py`：research 结果持久化与合并
+- `content.py`：content phase 的反馈构建 helper
+- `image.py`：图片分组和图片规格转换 helper
+
+## 代码规范
+
+- `image_post` 专用 helper 一律放 `src/agents/image_post/utils/`，不在 phase 目录新增 `utils.py`
+- 跨 pipeline 复用但仍然带业务语义的 helper 放 `src/agents/shared/utils/`
+- `src/utils` 只保留 providers、日志、prompting、重试、文件操作等 infra 代码
 
 ## 调用方式
 

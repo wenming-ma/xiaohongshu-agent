@@ -25,7 +25,7 @@ from ....config.settings import (
 from ....utils.providers import get_text_model
 from ....utils.feishu_notifier import get_feishu_notifier
 from ....utils.logger import get_logger
-from ....utils.playwright_artifacts import install_playwright_artifact_guard
+from ..utils.playwright_artifacts import install_playwright_artifact_guard
 
 logger = get_logger(__name__)
 

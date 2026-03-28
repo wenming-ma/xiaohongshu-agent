@@ -7,7 +7,7 @@ from pathlib import Path
 from pydantic_ai.mcp import MCPServerStdio
 
 from ...config.settings import PathConfig, RetryConfig, TimeoutConfig
-from ...utils.playwright_artifacts import install_playwright_artifact_guard
+from .utils.playwright_artifacts import install_playwright_artifact_guard
 
 
 def build_shared_playwright_mcp_args(output_dir: Path | None = None) -> list[str]:

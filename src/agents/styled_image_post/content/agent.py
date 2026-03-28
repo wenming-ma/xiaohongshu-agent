@@ -33,7 +33,7 @@ from .prompts import (
     content_review_user_prompt,
 )
 from .state import ContentState, simplify_content_history
-from .utils import build_review_feedback
+from ..utils.content import build_review_feedback
 
 logger = get_logger(__name__)
 

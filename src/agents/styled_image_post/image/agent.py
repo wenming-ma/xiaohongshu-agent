@@ -15,6 +15,7 @@ from typing import Optional, Any
 from pydantic_ai import Agent, RunContext
 
 from ....core.base_agent import BaseAgent, ValidationResult
+from ...shared.utils.image_postprocess import finalize_generated_image
 from ..schemas import (
     ImageResult,
     GeneratedImage,
@@ -39,7 +40,7 @@ from .prompts import (
     REFERENCE_IMAGE_INSTRUCTION,
     REFERENCE_IMAGE_SYSTEM_ADDENDUM,
 )
-from .utils import (
+from ..utils.image import (
     build_compact_items,
     calculate_grouping_params,
     groups_to_image_specs,
@@ -473,6 +474,7 @@ class ImageAgent(BaseAgent):
                         )
                     else:
                         raise
+                image_path = await finalize_generated_image(image_path)
 
                 # 3. 质量验证（可选，如果验证器可用）
                 try:

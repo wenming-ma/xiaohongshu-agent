@@ -2,12 +2,12 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
-from src.utils.subtitle_generator import (
+from src.agents.video_post.download.subtitle import (
     SubtitleSegment,
+    SubtitleGenerator,
     SubtitleTranslationReview,
     TranslationBatch,
     TranslationLine,
-    WhisperSubtitleGenerator,
 )
 
 
@@ -32,7 +32,7 @@ def _batch(*texts: str) -> TranslationBatch:
 
 
 def test_translate_segments_retries_with_review_feedback() -> None:
-    generator = WhisperSubtitleGenerator()
+    generator = SubtitleGenerator()
     generator.translation_agent = _FakeAgent(
         [
             _batch("keep stirring"),
@@ -66,7 +66,7 @@ def test_translate_segments_retries_with_review_feedback() -> None:
 
 
 def test_translate_segments_reviews_zh_detected_input_and_revises() -> None:
-    generator = WhisperSubtitleGenerator()
+    generator = SubtitleGenerator()
     generator.translation_agent = _FakeAgent([_batch("大家慢慢搅拌均匀")])
     generator.translation_reviewer = _FakeAgent(
         [
@@ -94,7 +94,7 @@ def test_translate_segments_reviews_zh_detected_input_and_revises() -> None:
 
 
 def test_translate_review_accepts_natural_mixed_chinese_and_english_terms() -> None:
-    generator = WhisperSubtitleGenerator()
+    generator = SubtitleGenerator()
     generator.translation_agent = _FakeAgent([])
     generator.translation_reviewer = _FakeAgent(
         [SubtitleTranslationReview(passed=True, summary="中英混用自然，可通过")]
@@ -116,7 +116,7 @@ def test_translate_review_accepts_natural_mixed_chinese_and_english_terms() -> N
 
 
 def test_generate_and_burn_always_writes_dedicated_tts_srt(tmp_path: Path) -> None:
-    generator = WhisperSubtitleGenerator()
+    generator = SubtitleGenerator()
     generator.translation_agent = _FakeAgent(
         [_batch("现在开始慢慢搅拌均匀然后继续搅拌到完全顺滑最后再把表面的小气泡轻轻整理掉")]
     )
@@ -140,7 +140,7 @@ def test_generate_and_burn_always_writes_dedicated_tts_srt(tmp_path: Path) -> No
         return None
 
     generator._extract_audio = _fake_extract_audio  # type: ignore[method-assign]
-    generator._transcribe_with_whisper = _fake_transcribe  # type: ignore[method-assign]
+    generator._transcribe_audio = _fake_transcribe  # type: ignore[method-assign]
     generator._assign_speakers = _fake_assign_speakers  # type: ignore[method-assign]
     generator._burn_subtitles = _fake_burn_subtitles  # type: ignore[method-assign]
 

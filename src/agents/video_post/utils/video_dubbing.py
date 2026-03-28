@@ -25,7 +25,7 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 
-from .logger import get_logger
+from ....utils.logger import get_logger
 from .tts_tags import (
     DEFAULT_TONE_TAG,
     normalize_tone_tag,
@@ -766,7 +766,7 @@ def _get_voice_ref_paths(voice: str) -> tuple[Path, Path]:
 
 async def select_voice_async(topic: str, transcript: str = "") -> str:
     from pydantic_ai import Agent
-    from .providers import get_text_model
+    from ....utils.providers import get_text_model
 
     options = "\n".join(f"- {k}: {v['desc']}" for k, v in VOICE_REGISTRY.items())
     prompt = (
@@ -794,7 +794,7 @@ async def assign_voices_to_speakers(
         return {sid: voice for sid in speaker_ids}
 
     from pydantic_ai import Agent
-    from .providers import get_text_model
+    from ....utils.providers import get_text_model
 
     options = "\n".join(f"- {k}: {v['desc']}" for k, v in VOICE_REGISTRY.items())
     prompt = (

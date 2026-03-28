@@ -8,12 +8,15 @@ to stay small, composable, and focused on a single responsibility.
 - **Platform pipelines**: Each capability lives in `src/agents/<content_type>/` with a
   `pipeline.py`, `schemas.py`, and optional phase directories such as `research/`, `content/`,
   `image/`, `publish/`, and `login/`.
+- **Pipeline-local utils**: Each top-level agent package owns a `utils/` package for helpers that
+  belong to that pipeline. Do not add new business helpers under phase directories as `utils.py`.
 - **Pipeline vs agent**: `pipeline.py` owns end-to-end orchestration, persistence, and phase-level
   logging. `agent.py` should execute one phase inside a pipeline.
 - **Async only**: Pipeline execution and agent entrypoints must be awaitable.
 - **Prompts in code**: Prompts live beside the phase agent in `prompts.py` (no YAML).
 - **Local-first organization**: Keep code inside the pipeline directory unless it is reused across
-  multiple pipelines. Shared abstractions belong in `src/core/`, `src/config/`, or `src/utils/`.
+  multiple pipelines. Cross-pipeline business helpers belong in `src/agents/shared/utils/`.
+  Infra-only shared abstractions belong in `src/core/`, `src/config/`, or `src/utils/`.
 - **No legacy layout**: Do not add new code under the retired `src/slices/`, `src/infra/`, or
   `src/workflows/` structure.
 
@@ -29,12 +32,16 @@ to stay small, composable, and focused on a single responsibility.
   log and continue when safe.
 - **Minimize cross-pipeline imports**: Reuse shared modules only after a pattern is proven in more than
   one pipeline.
+- **Keep `src/utils` infra-only**: `src/utils/` is reserved for providers, logging, prompting,
+  file/retry helpers, and notifier integrations. Business helpers must not be added there.
 
 ## Where to Wire Things
 
 - **New platform pipeline**: `src/agents/<content_type>/`
 - **Pipeline entrypoint**: `pipeline.py` implements `BasePipeline.execute`
 - **Phase agent**: `src/agents/<content_type>/<phase>/agent.py`
+- **Pipeline helpers**: `src/agents/<content_type>/utils/`
+- **Shared business helpers**: `src/agents/shared/utils/`
 - **Top-level routing**: `src/master/agent.py`
 - **CLI entrypoint**: `src/main.py`
 
@@ -50,8 +57,9 @@ to stay small, composable, and focused on a single responsibility.
 1. Create `src/agents/<content_type>/` with `pipeline.py` and `schemas.py`.
 2. Add phase directories such as `research/`, `content/`, `image/`, `publish/`, or `login/` as
    needed.
-3. Register the pipeline in `PipelineRegistry` and export it from the package `__init__.py`.
-4. Update `README.md` and any local `AGENTS.md` files if the pipeline is user-visible.
+3. Add `utils/` only when the pipeline needs local helpers; do not add phase-local `utils.py`.
+4. Register the pipeline in `PipelineRegistry` and export it from the package `__init__.py`.
+5. Update `README.md` and any local `AGENTS.md` files if the pipeline is user-visible.
 
 ---
 

@@ -4,7 +4,7 @@ from typing import Any
 from pydantic_ai import Agent, BinaryContent
 from ....core.base_validator import ExternalValidator
 from ..schemas import ImageQualityReview
-from ....utils.image_compression import compress_image_for_review
+from ...shared.utils.image_compression import compress_image_for_review
 from ....utils.providers import get_google_model
 from ....utils.logger import get_logger
 from ....config.settings import APIConfig

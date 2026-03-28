@@ -15,12 +15,12 @@ from ..schemas import (
 )
 from ....config.settings import ImageConfig
 from ....utils.logger import get_logger
-from .prompts import (
+from ..image.prompts import (
     image_grouping_revision_user_prompt,
     image_grouping_review_user_prompt,
     image_grouping_user_prompt,
 )
-from .state import MessageHistoryManager
+from ..image.state import MessageHistoryManager
 
 if TYPE_CHECKING:
     from pydantic_ai import Agent

@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
-from ..config.settings import PathConfig
-from .logger import get_logger
+from ....config.settings import PathConfig
+from ....utils.logger import get_logger
 
 if TYPE_CHECKING:
     from pydantic_ai.mcp import MCPServerStdio

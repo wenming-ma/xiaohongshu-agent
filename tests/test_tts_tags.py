@@ -1,13 +1,13 @@
 import tempfile
 from pathlib import Path
 
-from src.utils.subtitle_generator import SubtitleSegment, WhisperSubtitleGenerator
-from src.utils.tts_tags import (
+from src.agents.video_post.download.subtitle import SubtitleGenerator, SubtitleSegment
+from src.agents.video_post.utils.tts_tags import (
     DEFAULT_TONE_TAG,
     normalize_tone_tag,
     prepare_provider_tts_text,
 )
-from src.utils.video_dubbing import parse_srt
+from src.agents.video_post.utils.video_dubbing import parse_srt
 
 
 def test_normalize_tone_tag_accepts_short_english_phrase() -> None:
@@ -26,7 +26,7 @@ def test_prepare_provider_tts_text_strips_tag_for_google() -> None:
 
 
 def test_generate_srt_writes_display_and_tts_tracks() -> None:
-    generator = WhisperSubtitleGenerator()
+    generator = SubtitleGenerator()
     segments = [
         SubtitleSegment(start=0.0, end=1.5, text="慢慢搅拌均匀", tone_tag="gentle"),
         SubtitleSegment(start=1.5, end=3.0, text="这一步很关键", tone_tag="serious"),

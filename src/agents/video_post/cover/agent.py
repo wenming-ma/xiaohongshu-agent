@@ -5,8 +5,9 @@ from pydantic_ai import Agent
 
 from ....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import CoverImageResult, XHSVideoContent
+from ...shared.utils.image_postprocess import finalize_generated_image
 from ....utils.providers import get_text_model, GeminiImageClient
-from ....utils.video_frames import extract_frames
+from ..utils.video_frames import extract_frames
 from ....utils.logger import get_logger
 from ....config.settings import APIConfig
 from .gemini_web_agent import GeminiWebAgent
@@ -75,6 +76,7 @@ class CoverAgent(BaseAgent):
                         aspect_ratio="16:9",
                         reference_images=frames,
                     )
+                    cover_path = await finalize_generated_image(cover_path)
                 except Exception as api_err:
                     if getattr(self, '_use_web_fallback', False):
                         logger.warning(f"API 生成失败，降级到 Gemini Web Agent: {api_err}")

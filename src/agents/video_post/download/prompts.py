@@ -72,6 +72,71 @@ DOWNLOAD_SUBTITLE_TRANSLATION_SYSTEM_PROMPT = """你是小红书风格的字幕�
 DOWNLOAD_SUBTITLE_REVIEW_SYSTEM_PROMPT = """你是视频字幕翻译审核专家。你的职责是审核字幕是否已经被完整修订为自然、可朗读的中文。允许少量已经融入中文日常表达的英文单词，例如 app、API、Wi-Fi、iPhone、CPU、OK。但如果保留了完整外语短句、大段外语片段，或整体上不像自然中文口播，就必须判定不通过。反馈必须具体、可执行，尽量指出具体行号。"""
 
 
+DOWNLOAD_SUBTITLE_TRANSLATION_USER_PROMPT_TEMPLATE = """将以下{lang_name}字幕翻译成中文。
+
+要求：
+- 口语化、轻松活泼，像朋友聊天，不要书面语
+- 适当保留语气词，保持简短，适合视频字幕阅读
+- 输出必须以中文为主
+- 可以保留少量已经融入中文表达的常见英文单词，如 app、API、Wi-Fi、iPhone、OK
+- 不要保留原语言整句或大段外语片段
+{speaker_instruction}- 为每条字幕单独给一个语气 tag，供 Fish/S2 TTS 使用
+- tag 只允许简短英文短语：1 到 3 个单词，只能包含英文字母和空格
+- tag 要能直接放进 [tag] 形式里，例如 neutral, friendly, excited, serious, whisper
+- 不要输出方括号，不要输出中文 tag，不要输出长句 tag
+- 如果语气不明显，用 neutral
+- 按结构化结果输出，每条包含 index、tone_tag、text
+
+{source_lines}
+"""
+
+
+DOWNLOAD_SUBTITLE_REVISION_USER_PROMPT_TEMPLATE = """请基于原始{lang_name}字幕、当前中文字幕和审核反馈，输出一版修订后的完整中文字幕。
+
+审核反馈：
+{feedback}
+
+原始字幕：
+{source_lines}
+
+当前中文字幕：
+{current_lines}
+
+修订要求：
+- 必须逐条输出完整结果，不能只输出修改建议
+- 每一条都必须是自然、简短、适合中文 TTS 朗读的中文
+- 可以保留少量已经融入中文表达的常见英文单词，如 app、API、Wi-Fi、iPhone、OK
+- 不要保留完整外语短句、大段外语片段或明显不自然的混写
+- 尽量保留当前版本已经正确的内容，只修复审核指出的问题
+- 不要输出 emoji、括号说明或解释性文字
+{speaker_instruction}- 为每条字幕单独给一个语气 tag，供 Fish/S2 TTS 使用
+- tag 只允许简短英文短语：1 到 3 个单词，只能包含英文字母和空格
+- tag 要能直接放进 [tag] 形式里，例如 neutral, friendly, excited, serious, whisper
+- 不要输出方括号，不要输出中文 tag，不要输出长句 tag
+- 如果语气不明显，用 neutral
+- 按结构化结果输出，每条包含 index、tone_tag、text
+"""
+
+
+DOWNLOAD_SUBTITLE_REVIEW_USER_PROMPT_TEMPLATE = """请审核以下{lang_name}转中文后的字幕结果。
+
+审核标准：
+- 每一行都必须是自然、完整、可直接朗读的中文
+- 允许少量已经融入中文表达的英文单词，如 app、API、Wi-Fi、iPhone、OK
+- 不能残留完整外语短句、大段外语片段、或明显破坏中文口播自然度的混写
+- 不能出现明显不适合中文 TTS 的表达
+- 语义应尽量忠实原文，不要漏译关键信息
+- 只有全部通过时，`passed` 才能为 true
+- 如果不通过，issues 必须给出可执行反馈，并尽量指出具体行号
+
+原始字幕：
+{source_lines}
+
+当前中文字幕：
+{translated_lines}
+"""
+
+
 def download_pick_system_prompt(**variables: object) -> str:
     return render_template(DOWNLOAD_PICK_SYSTEM_PROMPT, **variables)
 
@@ -94,3 +159,15 @@ def download_subtitle_translation_system_prompt(**variables: object) -> str:
 
 def download_subtitle_review_system_prompt(**variables: object) -> str:
     return render_template(DOWNLOAD_SUBTITLE_REVIEW_SYSTEM_PROMPT, **variables)
+
+
+def download_subtitle_translation_user_prompt(**variables: object) -> str:
+    return render_template(DOWNLOAD_SUBTITLE_TRANSLATION_USER_PROMPT_TEMPLATE, **variables)
+
+
+def download_subtitle_revision_user_prompt(**variables: object) -> str:
+    return render_template(DOWNLOAD_SUBTITLE_REVISION_USER_PROMPT_TEMPLATE, **variables)
+
+
+def download_subtitle_review_user_prompt(**variables: object) -> str:
+    return render_template(DOWNLOAD_SUBTITLE_REVIEW_USER_PROMPT_TEMPLATE, **variables)

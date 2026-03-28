@@ -20,7 +20,7 @@ from pydantic_ai import Tool
 
 from ....config.settings import PathConfig
 from ....utils.logger import get_logger
-from ....utils.subtitle_generator import WhisperTranscriber
+from ...shared.utils.transcription import AudioTranscriber
 from ..schemas import SavedSourceIndex, SourceChunk, SourceDigest, SourceExcerpt
 
 logger = get_logger(__name__)
@@ -364,7 +364,7 @@ class ArticlePageReader:
 
 class GenericVideoTranscriber:
     def __init__(self):
-        self._transcriber = WhisperTranscriber()
+        self._transcriber = AudioTranscriber()
 
     async def transcribe(self, url: str) -> TranscriptResult:
         temp_dir = Path(tempfile.mkdtemp(prefix="article-video-", dir=PathConfig.DOWNLOADS_DIR))

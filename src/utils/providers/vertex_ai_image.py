@@ -12,10 +12,8 @@ import httpx
 from google import genai
 from google.genai import types
 
-from ...config.settings import APIConfig, RetryConfig, SanitizerConfig, TimeoutConfig
-from ..image_sanitizer import sanitize_image
+from ...config.settings import APIConfig, TimeoutConfig
 from ..logger import get_logger
-from ..watermark_remover import remove_gemini_watermark
 
 logger = get_logger(__name__)
 
@@ -139,20 +137,6 @@ class VertexAIImageClient:
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 output_path.write_bytes(image_data)
                 logger.info("图片已保存: %s (%d KB)", output_path, len(image_data) // 1024)
-
-                # 去除可见水印
-                try:
-                    remove_gemini_watermark(output_path)
-                    logger.debug("可见水印已去除: %s", output_path.name)
-                except Exception as e:
-                    logger.warning("去可见水印失败，继续处理: %s", e)
-
-                # AI 检测标记后处理
-                if SanitizerConfig.ENABLED:
-                    try:
-                        output_path = await sanitize_image(output_path)
-                    except Exception as e:
-                        logger.warning("图片后处理失败，使用原始文件: %s", e)
 
                 return output_path
 

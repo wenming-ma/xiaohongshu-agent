@@ -10,6 +10,7 @@ from typing import Any
 from pydantic_ai import Agent
 
 from ....core.base_agent import BaseAgent, ValidationResult
+from ...shared.utils.image_postprocess import finalize_generated_image
 from ....utils.logger import get_logger
 from ....utils.providers import GeminiImageClient, GeminiWebImageClient, get_text_model
 from ....config.settings import APIConfig
@@ -122,6 +123,7 @@ class ImageAgent(BaseAgent):
                 image_path = await self.web_image_client.generate_image(prompt.output, output_path)
             else:
                 raise
+        image_path = await finalize_generated_image(image_path)
         return GeneratedArticleImage(
             image_key=image_spec.image_key,
             image_path=str(image_path),

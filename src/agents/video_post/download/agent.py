@@ -12,12 +12,14 @@ from ....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import VideoSource, DownloadResult, Platform
 from ....utils.logger import get_logger
 from ....utils.providers import get_text_model
-from ....utils.subtitle_generator import (
+from ...shared.utils.transcription import (
+    AudioTranscriber,
+    release_transcription_model,
+)
+from .subtitle import (
     SubtitleTranslationReview,
+    SubtitleGenerator,
     TranslationBatch,
-    WhisperSubtitleGenerator,
-    WhisperTranscriber,
-    release_whisper_model,
 )
 from .prompts import (
     download_font_selector_system_prompt,
@@ -161,7 +163,7 @@ class DownloadAgent(BaseAgent):
     role = "视频下载专员"
     goal = "使用 yt-dlp 从多平台下载视频"
     DUBBING_SOFT_BONUS = 8.0
-    KEEP_WHISPER_LOADED_BY_DEFAULT = True
+    KEEP_TRANSCRIPTION_MODEL_LOADED_BY_DEFAULT = True
 
     def init_tools(self) -> None:
         pass
@@ -252,16 +254,18 @@ class DownloadAgent(BaseAgent):
 
             return best
         finally:
-            keep_loaded_raw = os.getenv("VIDEO_POST_KEEP_WHISPER_LOADED", "").strip().lower()
+            keep_loaded_raw = os.getenv("VIDEO_POST_KEEP_TRANSCRIPTION_MODEL_LOADED", "").strip().lower()
+            if not keep_loaded_raw:
+                keep_loaded_raw = os.getenv("VIDEO_POST_KEEP_WHISPER_LOADED", "").strip().lower()
             if keep_loaded_raw:
                 keep_loaded = keep_loaded_raw in {"1", "true", "yes", "y", "on"}
             else:
-                keep_loaded = self.KEEP_WHISPER_LOADED_BY_DEFAULT
+                keep_loaded = self.KEEP_TRANSCRIPTION_MODEL_LOADED_BY_DEFAULT
 
             if keep_loaded:
-                logger.info("Whisper 模型保持常驻（CUDA），跳过释放")
+                logger.info("转录模型保持常驻（CUDA），跳过释放")
             else:
-                release_whisper_model()
+                release_transcription_model()
 
     async def _download_candidates(
         self,
@@ -392,11 +396,11 @@ class DownloadAgent(BaseAgent):
         video_path = Path(result.local_path)
 
         try:
-            transcriber = WhisperTranscriber()
+            transcriber = AudioTranscriber()
             transcription = await transcriber.transcribe(video_path)
             result.transcription = transcription
             if transcription.success:
-                logger.info(f"Whisper 转录: {len(transcription.transcript)} 字符, 语言: {transcription.language}")
+                logger.info(f"音频转录: {len(transcription.transcript)} 字符, 语言: {transcription.language}")
         except Exception as e:
             logger.warning(f"转录失败: {e}")
 
@@ -593,7 +597,7 @@ class DownloadAgent(BaseAgent):
         output_dir = video_path.parent
         subtitled_path = output_dir / f"{video_path.stem}_subtitled{video_path.suffix}"
 
-        # 无 yt-dlp 字幕 → Whisper 转录
+        # 无 yt-dlp 字幕 -> 音频转录
         has_existing_transcript = (
             result.transcription is not None
             and result.transcription.success
@@ -606,19 +610,19 @@ class DownloadAgent(BaseAgent):
             )
         else:
             try:
-                transcriber = WhisperTranscriber()
+                transcriber = AudioTranscriber()
                 transcription = await transcriber.transcribe(video_path)
                 result.transcription = transcription
                 if transcription.success:
-                    logger.info(f"Whisper 转录成功: {len(transcription.transcript)} 字符")
+                    logger.info(f"转录成功: {len(transcription.transcript)} 字符")
                 else:
-                    logger.warning(f"Whisper 转录失败: {transcription.error_message}")
+                    logger.warning(f"转录失败: {transcription.error_message}")
             except Exception as e:
                 logger.warning(f"转录过程异常（不影响下载结果）: {e}")
 
-        # Whisper 字幕生成 + 烧录
+        # 字幕生成 + 烧录
         try:
-            subtitle_gen = WhisperSubtitleGenerator(
+            subtitle_gen = SubtitleGenerator(
                 translation_agent=self.subtitle_translation_agent,
                 translation_reviewer=self.subtitle_translation_reviewer,
             )
@@ -654,7 +658,7 @@ class DownloadAgent(BaseAgent):
 
             if subtitle_result_obj.success:
                 result.local_path = subtitle_result_obj.video_with_subs
-                logger.info(f"Whisper 字幕生成并烧录成功: {subtitled_path}")
+                logger.info(f"字幕生成并烧录成功: {subtitled_path}")
             else:
                 logger.warning(f"字幕生成失败: {subtitle_result_obj.error_message}")
         except Exception as e:

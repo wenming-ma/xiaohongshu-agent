@@ -10,10 +10,8 @@ from typing import Optional
 
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext
 
-from ...config.settings import APIConfig, PathConfig, SanitizerConfig, TimeoutConfig
-from ..image_sanitizer import sanitize_image
+from ...config.settings import APIConfig, PathConfig, TimeoutConfig
 from ..logger import get_logger
-from ..watermark_remover import remove_gemini_watermark
 
 logger = get_logger(__name__)
 
@@ -290,19 +288,6 @@ class GeminiWebImageClient:
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 output_path.write_bytes(image_data)
                 logger.info("[GeminiWeb] 图片已保存: %s (%d KB)", output_path, len(image_data) // 1024)
-
-                # 8. 后处理：去水印 + 反 AI 检测
-                try:
-                    remove_gemini_watermark(output_path)
-                    logger.debug("[GeminiWeb] 可见水印已去除: %s", output_path.name)
-                except Exception as e:
-                    logger.warning("[GeminiWeb] 去可见水印失败，继续处理: %s", e)
-
-                if SanitizerConfig.ENABLED:
-                    try:
-                        output_path = await sanitize_image(output_path)
-                    except Exception as e:
-                        logger.warning("[GeminiWeb] 图片后处理失败，使用原始文件: %s", e)
 
                 # 成功后关闭浏览器并轮换到下一个账号
                 await self.close()

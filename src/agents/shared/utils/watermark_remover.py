@@ -15,7 +15,7 @@ from typing import Optional
 import numpy as np
 from PIL import Image
 
-from .logger import get_logger
+from ....utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -25,7 +25,7 @@ MAX_ALPHA = 0.99         # 避免除以接近零的值
 LOGO_VALUE = 255         # 白色水印的颜色值
 
 # 资源路径
-ASSETS_DIR = Path(__file__).parent.parent / "assets"
+ASSETS_DIR = Path(__file__).resolve().parents[3] / "assets"
 BG_48_PATH = ASSETS_DIR / "bg_48.png"
 BG_96_PATH = ASSETS_DIR / "bg_96.png"
 

@@ -182,7 +182,7 @@ class XHSVideoPostPipeline(BasePipeline[XHSVideoPostInput, XHSVideoPostOutput]):
                 logger.info("=" * 60)
                 logger.info("")
                 try:
-                    from ...utils.video_dubbing_runner import dub_video_with_runner
+                    from .utils.video_dubbing_runner import dub_video_with_runner
 
                     video_for_dub = Path(download_result.local_path)
                     dubbed_path = video_for_dub.parent / f"{video_for_dub.stem}_dubbed{video_for_dub.suffix}"

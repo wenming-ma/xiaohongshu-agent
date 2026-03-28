@@ -84,7 +84,7 @@ def test_transcribe_text_only_ignores_existing_sidecar_subtitles(monkeypatch, tm
         async def transcribe(self, _video_path: Path) -> TranscriptionResult:
             return TranscriptionResult(success=True, transcript="whisper transcript", language="en")
 
-    monkeypatch.setattr(download_agent_module, "WhisperTranscriber", lambda: _FakeTranscriber())
+    monkeypatch.setattr(download_agent_module, "AudioTranscriber", lambda: _FakeTranscriber())
 
     agent = DownloadAgent()
     result = _build_download_result(video_path)
@@ -95,7 +95,7 @@ def test_transcribe_text_only_ignores_existing_sidecar_subtitles(monkeypatch, tm
     assert transcribed.transcription.language == "en"
 
 
-def test_transcribe_uses_whisper_subtitle_generator_even_when_sidecar_exists(monkeypatch, tmp_path: Path) -> None:
+def test_transcribe_uses_subtitle_generator_even_when_sidecar_exists(monkeypatch, tmp_path: Path) -> None:
     video_path = tmp_path / "sample.mp4"
     video_path.write_bytes(b"video")
     (tmp_path / "sample.zh.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\n旧字幕\n", encoding="utf-8")
@@ -124,7 +124,7 @@ def test_transcribe_uses_whisper_subtitle_generator_even_when_sidecar_exists(mon
 
     monkeypatch.setattr(
         download_agent_module,
-        "WhisperSubtitleGenerator",
+        "SubtitleGenerator",
         lambda *args, **kwargs: _FakeSubtitleGenerator(**kwargs),
     )
 

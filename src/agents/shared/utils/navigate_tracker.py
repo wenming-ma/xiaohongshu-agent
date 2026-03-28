@@ -6,7 +6,7 @@ import re
 from urllib.parse import urlsplit, urlunsplit
 from typing import Any, List, Callable
 from pydantic_ai import RunContext, WrapperToolset, ToolsetTool
-from .logger import get_logger
+from ....utils.logger import get_logger
 
 logger = get_logger(__name__)
 

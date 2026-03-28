@@ -1,28 +1,29 @@
 # Utils 目录
 
-通用工具函数和 Provider。
+这里只放基础共享 infra，不放业务 helper。
 
-## 文件说明
+## 允许放在这里的模块
 
-| 文件 | 职责 |
+| 文件 / 目录 | 职责 |
 |------|------|
-| `anthropic_provider.py` | Claude API 客户端封装 |
-| `minimax_provider.py` | MiniMax API 客户端封装 |
-| `gemini_provider.py` | Gemini 图片生成客户端 |
-| `prompting.py` | 提示词模板渲染（`render_template`） |
+| `providers/` | 模型与图片生成 provider 封装；只负责基础调用，不做业务后处理 |
+| `prompting.py` | 提示词模板渲染 |
 | `logger.py` | 日志配置 |
-| `file_ops.py` | 文件操作工具 |
-| `image_compression.py` | 图片压缩（用于 API 上传） |
-| `telegram_notifier.py` | Telegram 通知（登录交互） |
-| `retry_handler.py` | 重试装饰器 |
-| `navigate_tracker.py` | MCP 导航追踪 |
+| `file_ops.py` | 通用文件读写辅助 |
+| `retry_handler.py` | 重试装饰器与重试策略 |
+| `telegram_notifier.py` / `feishu_notifier.py` / `logfire_telegram_handler.py` | 通知与告警集成 |
+
+## 不应该放在这里的代码
+
+- 某个 pipeline 专用的 helper：放到 `src/agents/<pipeline>/utils/`
+- 跨多个 pipeline 复用但仍属于业务语义的 helper：放到 `src/agents/shared/utils/`
+- phase 目录下零散的 `utils.py`：统一收口到 pipeline 根下的 `utils/`
 
 ## Provider 使用
 
 ```python
-from src.utils.anthropic_provider import get_anthropic_model
-from src.utils.gemini_provider import GeminiImageClient
+from src.utils.providers import GeminiImageClient, get_text_model
 
-model = get_anthropic_model()
+model = get_text_model()
 client = GeminiImageClient()
 ```

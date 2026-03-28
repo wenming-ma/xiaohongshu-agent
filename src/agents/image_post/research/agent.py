@@ -23,7 +23,7 @@ from pydantic_ai.usage import UsageLimits
 from ....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import ResearchResult
 from ....utils.providers import get_text_model
-from ....utils.navigate_tracker import NavigateTracker
+from ...shared.utils.navigate_tracker import NavigateTracker
 from ....utils.logger import get_logger
 from ....config.settings import RetryConfig, ResearchConfig, PathConfig
 from ...shared import create_shared_playwright_mcp_server
@@ -38,7 +38,7 @@ from .state import (
     build_progress_snapshot,
     combine_feedback,
 )
-from .utils import save_iteration_result, merge_results as _merge_results
+from ..utils.research import save_iteration_result, merge_results as _merge_results
 
 logger = get_logger(__name__)
 

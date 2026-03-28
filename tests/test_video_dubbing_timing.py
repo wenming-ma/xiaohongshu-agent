@@ -1,4 +1,4 @@
-from src.utils.video_dubbing import (
+from src.agents.video_post.utils.video_dubbing import (
     MAX_NATURAL_ATEMPO,
     MIN_NATURAL_ATEMPO,
     SrtSegment,

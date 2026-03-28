@@ -17,10 +17,10 @@ from pydantic_ai.usage import UsageLimits
 
 from ....core.base_agent import BaseAgent, ValidationResult
 from ....config.settings import APIConfig, PathConfig, RetryConfig, TimeoutConfig
-from ....utils.image_sanitizer import sanitize_image
+from ...shared.utils.image_sanitizer import sanitize_image
 from ....utils.providers import get_text_model
-from ....utils.playwright_artifacts import install_playwright_artifact_guard
-from ....utils.watermark_remover import remove_gemini_watermark
+from ...shared.utils.playwright_artifacts import install_playwright_artifact_guard
+from ...shared.utils.watermark_remover import remove_gemini_watermark
 from ....utils.logger import get_logger
 from ..schemas import CoverImageResult
 from .prompts import gemini_web_system_prompt, gemini_web_user_prompt
