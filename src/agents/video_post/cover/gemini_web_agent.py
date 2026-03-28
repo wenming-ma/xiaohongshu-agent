@@ -25,7 +25,7 @@ from .prompts import gemini_web_system_prompt, gemini_web_user_prompt
 
 logger = get_logger(__name__)
 
-_CANVAS_EXTRACT_JS = """async (page) => {
+_CANVAS_EXTRACT_JS = """() => {
   const imgs = document.querySelectorAll('img');
   let target = null;
   for (const img of imgs) {
@@ -105,8 +105,8 @@ class SaveImageTool:
 
         try:
             payload = await self._mcp.direct_call_tool(
-                name="browser_run_code",
-                args={"code": _CANVAS_EXTRACT_JS},
+                name="browser_evaluate",
+                args={"function": _CANVAS_EXTRACT_JS},
             )
             text = self._extract_text(payload)
             result = json.loads(text)

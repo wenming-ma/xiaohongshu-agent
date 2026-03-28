@@ -853,12 +853,68 @@ async def _prepare_s2cpp_reference_audio(
     return clip
 
 
+_s2cpp_server_proc: subprocess.Popen | None = None
+
+_S2CPP_EXE = PROJECT_ROOT / "submodules" / "s2.cpp_check" / "build-cuda" / "Release" / "s2.exe"
+_S2CPP_DLL_DIR = PROJECT_ROOT / "submodules" / "s2.cpp_check" / "build-cuda" / "bin" / "Release"
+_S2CPP_MODEL = PROJECT_ROOT / "submodules" / "s2.cpp_check" / "models" / "s2-pro-q8_0.gguf"
+_S2CPP_TOKENIZER = PROJECT_ROOT / "submodules" / "s2.cpp_check" / "models" / "tokenizer.json"
+
+
+async def _ensure_s2cpp_server(base_url: str, timeout_s: float = 180.0) -> None:
+    global _s2cpp_server_proc
+
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(base_url, timeout=5.0)
+            if r.status_code < 500:
+                return
+    except Exception:
+        pass
+
+    if not _S2CPP_EXE.exists():
+        raise FileNotFoundError(f"s2.exe 不存在: {_S2CPP_EXE}")
+
+    parsed = base_url.rstrip("/").rsplit(":", 1)
+    port = int(parsed[-1]) if len(parsed) > 1 and parsed[-1].isdigit() else 3030
+    host = "127.0.0.1"
+
+    cuda_device = int(os.getenv("S2CPP_CUDA_DEVICE", "0"))
+    env = os.environ.copy()
+    env["PATH"] = f"{_S2CPP_DLL_DIR}{os.pathsep}{env.get('PATH', '')}"
+
+    cmd = [
+        str(_S2CPP_EXE), "-m", str(_S2CPP_MODEL), "-t", str(_S2CPP_TOKENIZER),
+        "-c", str(cuda_device), "--server", "-H", host, "-P", str(port),
+    ]
+    logger.info(f"自动启动 s2.cpp server (port={port}, cuda={cuda_device})...")
+    _s2cpp_server_proc = subprocess.Popen(
+        cmd, cwd=str(PROJECT_ROOT / "submodules" / "s2.cpp_check"),
+        env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        try:
+            async with httpx.AsyncClient() as client:
+                r = await client.get(base_url, timeout=3.0)
+                if r.status_code < 500:
+                    logger.info("s2.cpp server 已就绪")
+                    return
+        except Exception:
+            pass
+        if _s2cpp_server_proc.poll() is not None:
+            raise RuntimeError(f"s2.cpp server 启动失败 (exit={_s2cpp_server_proc.returncode})")
+        await asyncio.sleep(1.0)
+    raise RuntimeError(f"s2.cpp server 启动超时 ({timeout_s}s)")
+
+
 async def _check_s2cpp_tts_health(
     client: httpx.AsyncClient,
     base_url: str,
     timeout_seconds: float,
 ) -> None:
-    # s2.cpp server 默认只暴露 /generate，根路径可能返回 404/405。
+    await _ensure_s2cpp_server(base_url)
     response = await client.get(base_url, timeout=timeout_seconds)
     if response.status_code >= 500:
         detail = _extract_http_detail(response)

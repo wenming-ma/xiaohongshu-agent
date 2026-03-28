@@ -156,6 +156,7 @@ class DownloadAgent(BaseAgent):
 
             # 转录（获取字幕文本用于细评分）
             result = await self._transcribe_text_only(result)
+            release_whisper_model()
             candidates.append(result)
 
         return candidates
