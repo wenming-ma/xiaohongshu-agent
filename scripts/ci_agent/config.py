@@ -34,6 +34,7 @@ class ClusterConfig:
     state_file: Path = CACHE_ROOT / "sessions" / "default" / "state.json"
     log_dir: Path = CACHE_ROOT / "logs" / "default"
     worktree_root: Path = CACHE_ROOT / "worktrees" / "default"
+    controller_memory_file: Path = CACHE_ROOT / "memory" / "default" / "controller.md"
     validator_memory_file: Path = CACHE_ROOT / "memory" / "default" / "validator.md"
     git_branch: str = "ci-agent/default"
     runbook_file: Path = RUNBOOK_FILE
@@ -75,6 +76,7 @@ class ClusterConfig:
             "state_file": cache_root / "sessions" / session_id / "state.json",
             "log_dir": cache_root / "logs" / session_id,
             "worktree_root": cache_root / "worktrees" / session_id,
+            "controller_memory_file": cache_root / "memory" / session_id / "controller.md",
             "validator_memory_file": cache_root / "memory" / session_id / "validator.md",
             "git_branch": f"ci-agent/{session_id}",
             "runbook_file": project_root / "scripts" / "ci_agent" / "AGENTS.md",

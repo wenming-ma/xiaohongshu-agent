@@ -26,6 +26,9 @@ from .state import ToolCallRecord, WorkerInvocation
 logger = logging.getLogger(__name__)
 TAIL_CHARS = 4000
 WEB_SNIPPET_CHARS = 12000
+CONTROLLER_MEMORY_SUMMARY_CHARS = 360
+CONTROLLER_MEMORY_SHORT_CHARS = 160
+CONTROLLER_MEMORY_MEDIUM_CHARS = 220
 
 
 class ValidationToolResult(BaseModel):
@@ -74,7 +77,6 @@ class ValidatorRecord(BaseModel):
 
 
 class ControllerDecision(BaseModel):
-    action: Literal["CONTINUE", "DONE", "ROLLBACK"]
     objective_stage: Literal["PASS", "SPEED", "QUALITY"]
     objective: str
     reason: str
@@ -90,6 +92,15 @@ class ControllerCycleOutcome(BaseModel):
     fix_summary: str = ""
     latest_validator_record: ValidatorRecord
     workers: list[WorkerInvocation] = Field(default_factory=list)
+
+
+class RollbackRequest(BaseModel):
+    head: str
+    reason: str
+
+
+class DoneRequest(BaseModel):
+    reason: str
 
 
 class ReadOnlyFilesystemBackend(FilesystemBackend):
@@ -246,6 +257,16 @@ def _parse_search_results(markup: str, max_results: int) -> str:
     return f"No structured search results parsed.\nRaw excerpt:\n{fallback}"
 
 
+def _compact_memory_text(text: str, limit: int) -> str:
+    cleaned = text.replace("\r\n", "\n")
+    cleaned = re.sub(r"[ \t]+", " ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    compact = cleaned[: max(limit - 3, 0)].rstrip()
+    return compact + "..."
+
+
 class ValidatorMemoryStore:
     def __init__(self, path: Path, worktree_root: Path):
         self.path = path
@@ -388,6 +409,168 @@ class ValidatorMemoryStore:
             return "unknown"
 
 
+class ControllerMemoryStore:
+    def __init__(self, path: Path, worktree_root: Path):
+        self.path = path
+        self.worktree_root = worktree_root
+
+    def ensure_exists(self) -> None:
+        if self.path.exists():
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(self._render_document(current_state=self._render_empty_state(), history=""), encoding="utf-8")
+
+    def record_strategy(
+        self,
+        *,
+        attempt_number: int,
+        objective_stage: str,
+        objective: str,
+        summary: str,
+        next_focus: str,
+        discarded_options: str,
+        evidence: str,
+    ) -> str:
+        self.ensure_exists()
+        compact_summary = _compact_memory_text(summary, CONTROLLER_MEMORY_SUMMARY_CHARS)
+        compact_next_focus = _compact_memory_text(next_focus, CONTROLLER_MEMORY_SHORT_CHARS)
+        compact_discarded = _compact_memory_text(discarded_options, CONTROLLER_MEMORY_MEDIUM_CHARS)
+        compact_evidence = _compact_memory_text(evidence, CONTROLLER_MEMORY_MEDIUM_CHARS)
+        history = self._extract_history()
+        current_state = self._render_current_state(
+            attempt_number=attempt_number,
+            objective_stage=objective_stage,
+            objective=objective,
+            summary=compact_summary,
+            next_focus=compact_next_focus,
+            discarded_options=compact_discarded,
+            evidence=compact_evidence,
+        )
+        entry = self._render_history_entry(
+            attempt_number=attempt_number,
+            objective_stage=objective_stage,
+            objective=objective,
+            summary=compact_summary,
+            next_focus=compact_next_focus,
+            discarded_options=compact_discarded,
+            evidence=compact_evidence,
+        )
+        updated_history = self._append_history(history, entry)
+        self.path.write_text(self._render_document(current_state=current_state, history=updated_history), encoding="utf-8")
+        return str(self.path)
+
+    def note_rollback(self, *, attempt_number: int, rollback_to: str, reason: str) -> None:
+        self.ensure_exists()
+        history = self._extract_history()
+        entry = (
+            f"### Rollback After Attempt {attempt_number}\n"
+            f"- Head restored: `{rollback_to or 'unknown'}`\n"
+            f"- Reason: {reason or 'The controller discarded the attempt.'}\n"
+            "- Required follow-up: re-evaluate strategy against the restored worktree head before committing to a path.\n"
+        )
+        current_state = (
+            f"- Synced worktree head: `{rollback_to or 'unknown'}`\n"
+            "- Strategy status: needs re-evaluation\n"
+            f"- Note: Attempt {attempt_number} was rolled back. Treat any strategy tied to the discarded diff as stale until reconfirmed.\n"
+        )
+        updated_history = self._append_history(history, entry)
+        self.path.write_text(self._render_document(current_state=current_state, history=updated_history), encoding="utf-8")
+
+    def _extract_history(self) -> str:
+        if not self.path.exists():
+            return ""
+        text = self.path.read_text(encoding="utf-8")
+        marker = "## Decision History"
+        if marker not in text:
+            return ""
+        return text.split(marker, 1)[1].strip()
+
+    def _render_document(self, *, current_state: str, history: str) -> str:
+        history_block = history.strip()
+        return (
+            "# Controller Memory\n\n"
+            "## Current Strategic State\n"
+            f"{current_state.strip()}\n\n"
+            "## Decision History\n"
+            f"{history_block}\n"
+        )
+
+    @staticmethod
+    def _append_history(history: str, entry: str) -> str:
+        history = history.strip()
+        entry = entry.strip()
+        if not history:
+            return entry
+        return f"{history}\n\n{entry}"
+
+    @staticmethod
+    def _render_empty_state() -> str:
+        return (
+            "- Synced worktree head: `unknown`\n"
+            "- Strategy status: unset\n"
+            "- Note: No controller strategy snapshot has been recorded yet.\n"
+        )
+
+    def _render_current_state(
+        self,
+        *,
+        attempt_number: int,
+        objective_stage: str,
+        objective: str,
+        summary: str,
+        next_focus: str,
+        discarded_options: str,
+        evidence: str,
+    ) -> str:
+        return (
+            f"- Synced worktree head: `{self._current_head()}`\n"
+            f"- Attempt: {attempt_number}\n"
+            f"- Objective stage: {objective_stage}\n"
+            f"- Objective: {objective}\n"
+            f"- Strategy summary: {summary}\n"
+            f"- Next focus: {next_focus or 'n/a'}\n"
+            f"- Discarded options: {discarded_options or 'n/a'}\n"
+            f"- Evidence anchors: {evidence or 'n/a'}\n"
+        )
+
+    def _render_history_entry(
+        self,
+        *,
+        attempt_number: int,
+        objective_stage: str,
+        objective: str,
+        summary: str,
+        next_focus: str,
+        discarded_options: str,
+        evidence: str,
+    ) -> str:
+        return (
+            f"### Attempt {attempt_number}\n"
+            f"- Head: `{self._current_head()}`\n"
+            f"- Objective stage: {objective_stage}\n"
+            f"- Objective: {objective}\n"
+            f"- Strategy summary: {summary}\n"
+            f"- Next focus: {next_focus or 'n/a'}\n"
+            f"- Discarded options: {discarded_options or 'n/a'}\n"
+            f"- Evidence anchors: {evidence or 'n/a'}\n"
+        )
+
+    def _current_head(self) -> str:
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=str(self.worktree_root),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=True,
+            )
+            return result.stdout.strip()
+        except Exception:  # pragma: no cover - defensive path
+            return "unknown"
+
+
 CONTROLLER_ROLE = """\
 You are the controller for a controller-led multi-agent CI improvement loop.
 
@@ -397,6 +580,13 @@ Your priority order is:
 2. SPEED: once it passes, improve runtime without breaking behavior.
 3. QUALITY: once it passes and speed gains are small, improve maintainability without regressions.
 
+You are allowed to pursue improvements at multiple levels:
+- local code fixes
+- pipeline or architecture changes
+- dependency changes
+- model/provider changes, including audio-related models and services
+- caching, batching, concurrency, and execution-strategy changes
+
 Hard rules:
 - You never modify code directly.
 - You never run the target command directly.
@@ -404,19 +594,29 @@ Hard rules:
 - Use the `task` subagent for broader multi-step exploration that may need shell commands, external references, or chained investigation.
 - Delegate all code changes to the `fixer` subagent.
 - Delegate all target-command execution to the `validator` subagent.
+- Controller memory is your durable strategy ledger for objective framing, discarded paths, and next-step criteria.
 - The validator memory is the durable record of the last validated repo state.
+- When you learn something that should survive long-running exploration, write controller memory before moving on.
+- Before a long exploratory branch, before calling `request_done`, and before calling `request_rollback`, update controller memory.
+- Keep controller memory terse. Write only durable facts, decisions, discarded paths, and next-step criteria. Do not dump long narratives, logs, or transcripts into memory.
 - If validator memory is stale, missing, or synced to a different HEAD than the current worktree HEAD, call `validator` first.
 - After any fixer delegation, call `validator` again before you return.
 - Explore boldly, verify carefully, and do not lock onto a direction without evidence.
 - Use only the `explore`, `task`, `fixer`, and `validator` subagents.
 - Do not use the default `general-purpose` subagent; use `task` or `explore` explicitly instead.
+- Do not be artificially conservative. If a dependency, architecture, or model-level change is the best path, pursue it.
+- Prefer the smallest sufficient change, not the smallest possible diff.
+- Controller memory entries should be compact: short bullets or short paragraphs, focused on what must survive context compression.
+- If the current attempt should be discarded, you must call the `request_rollback` tool. Do not encode rollback only in structured output.
+- If the current validated state is good enough to stop, you must call the `request_done` tool. Do not encode done only in structured output.
 
 Decision rules:
-- Return `action=ROLLBACK` when the latest validator result shows the same root cause or a regression that should be discarded.
-- Return `action=DONE` only when the current repo state is good enough to stop improving for now.
-- Return `action=CONTINUE` when the current changes should be kept and another outer attempt is worthwhile.
+- Call `request_rollback` when the latest validator result shows the same root cause or a regression that should be discarded.
+- Call `request_done` only when the current repo state is good enough to stop improving for now.
+- If neither request is made, Python will treat the attempt as `CONTINUE`.
 
 Your final structured response must include the latest validator record from the current repo state.
+Your structured response must not contain an action field. Done and rollback are requested via tools.
 """
 
 
@@ -447,6 +647,9 @@ Your job is to handle broader, multi-step exploratory work before code is change
 
 You may:
 - analyze feasibility and compare approaches
+- compare architecture options
+- evaluate dependency replacements
+- evaluate model/provider changes, especially audio-related ones
 - search the web
 - fetch remote pages
 - execute shell commands for exploration, including cloning reference repositories into the dedicated analysis workspace
@@ -468,7 +671,8 @@ Your job is to make coherent code changes that advance the controller's objectiv
 
 Rules:
 - You are the only agent allowed to modify repository files.
-- Prefer the smallest change set that clearly advances the current objective.
+- Prefer the smallest sufficient change set that clearly advances the current objective.
+- If the root cause or optimization opportunity is architectural, dependency-related, or model/provider-related, you may make structural changes instead of forcing a narrow patch.
 - Read relevant files before editing them.
 - Re-read changed files after editing.
 - Use uv for dependency changes.
@@ -629,16 +833,32 @@ def _default_validator_record(report: ValidationToolResult | None) -> ValidatorR
     )
 
 
+def _resolve_cycle_action(
+    rollback_request: RollbackRequest | None,
+    done_request: DoneRequest | None,
+) -> Literal["CONTINUE", "DONE", "ROLLBACK"]:
+    if rollback_request is not None:
+        return "ROLLBACK"
+    if done_request is not None:
+        return "DONE"
+    return "CONTINUE"
+
+
 class DeepAgentRuntime:
     def __init__(self, config: ClusterConfig):
         self.config = config
-        self._memory_store = ValidatorMemoryStore(config.validator_memory_file, config.worktree_root)
+        self._validator_memory_store = ValidatorMemoryStore(config.validator_memory_file, config.worktree_root)
+        self._controller_memory_store = ControllerMemoryStore(config.controller_memory_file, config.worktree_root)
 
     async def run_controller_cycle(self, prompt: str, *, attempt_number: int) -> ControllerCycleOutcome:
-        self._memory_store.ensure_exists()
+        self._validator_memory_store.ensure_exists()
+        self._controller_memory_store.ensure_exists()
         runner = ValidationCommandRunner(self.config)
         analysis_root = _analysis_root(self.config)
         analysis_root.mkdir(parents=True, exist_ok=True)
+        worker_model = self.config.build_worker_model()
+        rollback_request: RollbackRequest | None = None
+        done_request: DoneRequest | None = None
 
         @tool(parse_docstring=True)
         def search_web(query: str, max_results: int = 5) -> str:
@@ -707,7 +927,7 @@ class DeepAgentRuntime:
             """
 
             record = ValidatorRecord.model_validate_json(record_json)
-            path = self._memory_store.record_validation(
+            path = self._validator_memory_store.record_validation(
                 attempt_number=attempt_number,
                 objective_stage=objective_stage,
                 objective=objective,
@@ -715,8 +935,64 @@ class DeepAgentRuntime:
             )
             return f"Validator memory updated at {path}"
 
+        @tool(parse_docstring=True)
+        def record_controller_memory(
+            objective_stage: str,
+            objective: str,
+            summary: str,
+            next_focus: str = "",
+            discarded_options: str = "",
+            evidence: str = "",
+        ) -> str:
+            """Persist concise controller strategy notes into session-scoped controller memory.
+
+            Args:
+                objective_stage: Current objective stage such as PASS, SPEED, or QUALITY.
+                objective: Current optimization objective.
+                summary: Short durable summary of the current strategy and reasoning.
+                next_focus: Short next focus or decision criterion.
+                discarded_options: Short note on options ruled out and why.
+                evidence: Key evidence anchors, file paths, or external references.
+            """
+
+            path = self._controller_memory_store.record_strategy(
+                attempt_number=attempt_number,
+                objective_stage=objective_stage,
+                objective=objective,
+                summary=summary.strip(),
+                next_focus=next_focus.strip(),
+                discarded_options=discarded_options.strip(),
+                evidence=evidence.strip(),
+            )
+            return f"Controller memory updated at {path}"
+
+        @tool(parse_docstring=True)
+        def request_rollback(head: str, reason: str) -> str:
+            """Request that Python safely roll back the current attempt to a known worktree head.
+
+            Args:
+                head: The worktree HEAD to restore, typically the head recorded at the start of the attempt.
+                reason: Why the current attempt should be discarded.
+            """
+
+            nonlocal rollback_request
+            rollback_request = RollbackRequest(head=head.strip(), reason=reason.strip())
+            return f"Recorded rollback request for head {rollback_request.head or 'unknown'}"
+
+        @tool(parse_docstring=True)
+        def request_done(reason: str) -> str:
+            """Request that Python finish the session with the current validated state.
+
+            Args:
+                reason: Why the controller believes the current validated state is sufficient to stop.
+            """
+
+            nonlocal done_request
+            done_request = DoneRequest(reason=reason.strip())
+            return "Recorded done request"
+
         explore = create_deep_agent(
-            model=self.config.model,
+            model=worker_model,
             system_prompt=EXPLORE_ROLE,
             backend=ReadOnlyFilesystemBackend(
                 root_dir=self.config.project_root,
@@ -727,7 +1003,7 @@ class DeepAgentRuntime:
             name="ci-agent-explore",
         )
         task = create_deep_agent(
-            model=self.config.model,
+            model=worker_model,
             system_prompt=TASK_ROLE,
             backend=ReadOnlyShellBackend(
                 root_dir=analysis_root,
@@ -740,7 +1016,7 @@ class DeepAgentRuntime:
             name="ci-agent-task",
         )
         fixer = create_deep_agent(
-            model=self.config.model,
+            model=worker_model,
             system_prompt=FIXER_ROLE,
             backend=LocalShellBackend(
                 root_dir=self.config.worktree_root,
@@ -752,7 +1028,7 @@ class DeepAgentRuntime:
             name="ci-agent-fixer",
         )
         validator = create_deep_agent(
-            model=self.config.model,
+            model=worker_model,
             system_prompt=VALIDATOR_ROLE,
             backend=ReadOnlyFilesystemBackend(
                 root_dir=self.config.project_root,
@@ -796,7 +1072,12 @@ class DeepAgentRuntime:
                     runnable=validator,
                 ),
             ],
-            memory=[str(self.config.runbook_file), str(self.config.validator_memory_file)],
+            memory=[
+                str(self.config.runbook_file),
+                str(self.config.controller_memory_file),
+                str(self.config.validator_memory_file),
+            ],
+            tools=[request_rollback, request_done, record_controller_memory],
             response_format=ToolStrategy(schema=ControllerDecision),
             name="ci-agent-controller",
         )
@@ -810,11 +1091,18 @@ class DeepAgentRuntime:
         structured = _parse_structured_response(result, ControllerDecision)
         if isinstance(structured, ControllerDecision):
             latest_record = structured.latest_validator_record
+            resolved_action = _resolve_cycle_action(rollback_request, done_request)
+            if rollback_request is not None and rollback_request.reason:
+                resolved_reason = rollback_request.reason
+            elif done_request is not None and done_request.reason:
+                resolved_reason = done_request.reason
+            else:
+                resolved_reason = structured.reason
             outcome = ControllerCycleOutcome(
-                action=structured.action,
+                action=resolved_action,
                 objective_stage=structured.objective_stage,
                 objective=structured.objective,
-                reason=structured.reason,
+                reason=resolved_reason,
                 fix_summary=structured.fix_summary,
                 latest_validator_record=latest_record,
                 workers=workers,
@@ -822,11 +1110,17 @@ class DeepAgentRuntime:
         else:
             logger.warning("Controller returned no structured response, defaulting to rollback")
             latest_record = _default_validator_record(runner.latest_result)
+            resolved_action = "ROLLBACK"
+            resolved_reason = (
+                rollback_request.reason
+                if rollback_request is not None and rollback_request.reason
+                else "Controller response was not structured."
+            )
             outcome = ControllerCycleOutcome(
-                action="ROLLBACK",
+                action=resolved_action,
                 objective_stage="PASS",
                 objective="Re-establish a trustworthy validated state.",
-                reason="Controller response was not structured.",
+                reason=resolved_reason,
                 fix_summary="",
                 latest_validator_record=latest_record,
                 workers=workers,
@@ -839,4 +1133,5 @@ class DeepAgentRuntime:
         return outcome
 
     def note_rollback(self, *, attempt_number: int, rollback_to: str, reason: str) -> None:
-        self._memory_store.note_rollback(attempt_number=attempt_number, rollback_to=rollback_to, reason=reason)
+        self._validator_memory_store.note_rollback(attempt_number=attempt_number, rollback_to=rollback_to, reason=reason)
+        self._controller_memory_store.note_rollback(attempt_number=attempt_number, rollback_to=rollback_to, reason=reason)

@@ -20,6 +20,7 @@ class Orchestrator:
             target_command=config.target_command,
             source_repo_root=str(config.project_root),
             worktree_root=str(config.worktree_root),
+            controller_memory_file=str(config.controller_memory_file),
             validator_memory_file=str(config.validator_memory_file),
         )
         self._agent_runtime = agent_runtime
@@ -110,6 +111,7 @@ class Orchestrator:
             controller_action=outcome.action,
             controller_reason=outcome.reason,
             fix_description=outcome.fix_summary,
+            controller_memory_path=str(self.config.controller_memory_file),
             validator_memory_path=str(self.config.validator_memory_file),
             workers=outcome.workers,
         )
@@ -134,6 +136,7 @@ class Orchestrator:
         self.state.current_objective_stage = outcome.objective_stage
         self.state.current_objective = outcome.objective
         self.state.current_controller_reason = outcome.reason
+        self.state.controller_memory_file = str(self.config.controller_memory_file)
         self.state.validator_memory_file = str(self.config.validator_memory_file)
         self.state.current_branch = self.config.git_branch
         self.state.target_command = self.config.target_command
@@ -155,6 +158,8 @@ class Orchestrator:
             f"Target command: {self.config.target_command}\n"
             f"Current worktree branch: {self.config.git_branch}\n"
             f"Current worktree HEAD: {head_before}\n"
+            f"Rollback target for this attempt: {head_before}\n"
+            f"Controller memory file: {self.config.controller_memory_file}\n"
             f"Validator memory file: {self.config.validator_memory_file}\n"
             f"Current objective stage: {self.state.current_objective_stage}\n"
             f"Current objective: {self.state.current_objective}\n"
@@ -162,7 +167,9 @@ class Orchestrator:
             f"Previous attempts:\n{self.state.format_attempt_history()}\n\n"
             "Drive the next improvement cycle autonomously. "
             "Use validator memory as the durable record of validated state. "
-            "If that memory is stale or not synced to the current HEAD, send validator first."
+            "If that memory is stale or not synced to the current HEAD, send validator first. "
+            "If this attempt should be discarded, call the rollback request tool with the rollback target above. "
+            "If the current validated state is sufficient to stop, call the done request tool."
         )
 
     def _finish_with_status(self, status: str, record: AttemptRecord) -> None:
@@ -173,6 +180,7 @@ class Orchestrator:
     def _ensure_runtime_paths(self) -> None:
         self.config.state_file.parent.mkdir(parents=True, exist_ok=True)
         self.config.log_dir.mkdir(parents=True, exist_ok=True)
+        self.config.controller_memory_file.parent.mkdir(parents=True, exist_ok=True)
         self.config.validator_memory_file.parent.mkdir(parents=True, exist_ok=True)
 
     def _capture_git_effects(self, record: AttemptRecord) -> None:

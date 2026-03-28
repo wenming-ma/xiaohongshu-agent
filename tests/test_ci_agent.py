@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from scripts.ci_agent.agent_runtime import (
+    ControllerMemoryStore,
     ControllerCycleOutcome,
     DoneRequest,
     RollbackRequest,
@@ -120,6 +121,7 @@ def test_cluster_config_defaults_to_session_scoped_cache_paths(tmp_path: Path) -
     assert config.state_file == repo / ".cache" / "ci_agent" / "sessions" / "session123" / "state.json"
     assert config.log_dir == repo / ".cache" / "ci_agent" / "logs" / "session123"
     assert config.worktree_root == repo / ".cache" / "ci_agent" / "worktrees" / "session123"
+    assert config.controller_memory_file == repo / ".cache" / "ci_agent" / "memory" / "session123" / "controller.md"
     assert config.validator_memory_file == repo / ".cache" / "ci_agent" / "memory" / "session123" / "validator.md"
     assert config.git_branch == "ci-agent/session123"
 
@@ -186,6 +188,33 @@ def test_validation_command_runner_writes_logs_and_duration(tmp_path: Path) -> N
     assert Path(report.stderr_log_path).exists()
     assert Path(report.stdout_log_path).read_text(encoding="utf-8") == report.stdout
     assert Path(report.stderr_log_path).read_text(encoding="utf-8") == report.stderr
+
+
+def test_controller_memory_store_keeps_notes_short_and_marks_rollbacks(tmp_path: Path) -> None:
+    repo = _create_repo(tmp_path)
+    store = ControllerMemoryStore(tmp_path / "controller.md", repo)
+    store.ensure_exists()
+
+    long_text = "alpha " * 200
+    path = store.record_strategy(
+        attempt_number=1,
+        objective_stage="PASS",
+        objective="Make the target command pass.",
+        summary=long_text,
+        next_focus=long_text,
+        discarded_options=long_text,
+        evidence=long_text,
+    )
+
+    text = Path(path).read_text(encoding="utf-8")
+    assert "# Controller Memory" in text
+    assert "Attempt: 1" in text
+    assert len(text) < 3000
+
+    store.note_rollback(attempt_number=1, rollback_to="abc123", reason="same root cause")
+    rolled_back = Path(path).read_text(encoding="utf-8")
+    assert "needs re-evaluation" in rolled_back
+    assert "Rollback After Attempt 1" in rolled_back
 
 
 def test_rollback_action_requires_explicit_request() -> None:

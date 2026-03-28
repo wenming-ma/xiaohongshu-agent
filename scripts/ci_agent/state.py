@@ -42,6 +42,7 @@ class AttemptRecord(BaseModel):
     validator_reason: str = ""
     validator_execution_record: str = ""
     validator_next_focus: str = ""
+    controller_memory_path: str = ""
     validator_memory_path: str = ""
     files_modified: list[str] = Field(default_factory=list)
     committed: bool = False
@@ -66,6 +67,7 @@ class ClusterState(BaseModel):
     original_branch: str = ""
     source_repo_root: str = ""
     worktree_root: str = ""
+    controller_memory_file: str = ""
     validator_memory_file: str = ""
     source_head: str = ""
     source_dirty: bool = False
