@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import json
 import uuid
 from datetime import datetime, timezone
@@ -27,21 +28,21 @@ class AttemptRecord(BaseModel):
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     objective_stage: str = "PASS"
     objective_summary: str = ""
+    controller_action: str = ""
     controller_reason: str = ""
-    fixer_directive: str = ""
-    validator_directive: str = ""
+    fix_description: str = ""
     exit_code: int | None = None
     duration_seconds: float | None = None
     stdout_tail: str = ""
     stderr_tail: str = ""
-    validation_exit_code: int | None = None
-    validation_duration_seconds: float | None = None
-    validation_stdout_tail: str = ""
-    validation_stderr_tail: str = ""
-    log_files_read: list[str] = Field(default_factory=list)
-    diagnosis: str = ""
-    diagnosis_category: str = ""
-    fix_description: str = ""
+    stdout_log_path: str = ""
+    stderr_log_path: str = ""
+    validation_label: str = ""
+    validator_verdict: str = ""
+    validator_reason: str = ""
+    validator_execution_record: str = ""
+    validator_next_focus: str = ""
+    validator_memory_path: str = ""
     files_modified: list[str] = Field(default_factory=list)
     committed: bool = False
     commit_hash: str = ""
@@ -49,8 +50,6 @@ class AttemptRecord(BaseModel):
     head_after: str = ""
     rollback_to: str = ""
     rolled_back: bool = False
-    validator_verdict: str = ""
-    validator_reason: str = ""
     workers: list[WorkerInvocation] = Field(default_factory=list)
 
 
@@ -62,13 +61,12 @@ class ClusterState(BaseModel):
     current_objective_stage: str = "PASS"
     current_objective: str = "Make the target command pass."
     current_controller_reason: str = ""
-    current_fixer_directive: str = ""
-    current_validator_directive: str = ""
     best_success_duration_seconds: float | None = None
     current_branch: str = ""
     original_branch: str = ""
     source_repo_root: str = ""
     worktree_root: str = ""
+    validator_memory_file: str = ""
     source_head: str = ""
     source_dirty: bool = False
     status: str = "running"
@@ -85,20 +83,18 @@ class ClusterState(BaseModel):
     def format_attempt_history(self, max_entries: int = 10) -> str:
         if not self.attempts:
             return "No previous attempts."
-        recent = self.attempts[-max_entries:]
-        lines = []
-        for a in recent:
-            status = "ROLLED_BACK" if a.rolled_back else ("COMMITTED" if a.committed else "NO_CHANGE")
+
+        lines: list[str] = []
+        for attempt in self.attempts[-max_entries:]:
+            status = "ROLLED_BACK" if attempt.rolled_back else ("COMMITTED" if attempt.committed else "NO_CHANGE")
             lines.append(
-                f"Attempt #{a.attempt_number} [{status}] exit={a.exit_code}\n"
-                f"  Objective: {a.objective_stage} - {a.objective_summary[:120]}\n"
-                f"  Controller: {a.controller_reason[:160]}\n"
-                f"  Duration: target={_format_duration(a.duration_seconds)}, validation={_format_duration(a.validation_duration_seconds)}\n"
-                f"  Category: {a.diagnosis_category}\n"
-                f"  Diagnosis: {a.diagnosis[:300]}\n"
-                f"  Fix: {a.fix_description[:200]}\n"
-                f"  Verdict: {a.validator_verdict or 'N/A'}\n"
-                f"  Files: {', '.join(a.files_modified) or 'none'}"
+                f"Attempt #{attempt.attempt_number} [{status}] action={attempt.controller_action or 'n/a'}\n"
+                f"  Objective: {attempt.objective_stage} - {attempt.objective_summary[:120]}\n"
+                f"  Controller: {attempt.controller_reason[:160]}\n"
+                f"  Result: exit={_format_exit_code(attempt.exit_code)}, duration={_format_duration(attempt.duration_seconds)}, verdict={attempt.validator_verdict or 'n/a'}\n"
+                f"  Validator: {attempt.validator_reason[:180]}\n"
+                f"  Fix: {attempt.fix_description[:200]}\n"
+                f"  Files: {', '.join(attempt.files_modified) or 'none'}"
             )
         return "\n\n".join(lines)
 
@@ -107,3 +103,9 @@ def _format_duration(value: float | None) -> str:
     if value is None:
         return "n/a"
     return f"{value:.2f}s"
+
+
+def _format_exit_code(value: int | None) -> str:
+    if value is None:
+        return "n/a"
+    return str(value)

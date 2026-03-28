@@ -3,16 +3,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import subprocess
-from time import perf_counter
 from pathlib import Path
 
-from .agent_runtime import ControllerOutcome, DeepAgentRuntime, ValidationOutcome
+from .agent_runtime import ControllerCycleOutcome, DeepAgentRuntime, ValidatorRecord
 from .config import ClusterConfig
-from .state import AttemptRecord, ClusterState, WorkerInvocation
+from .state import AttemptRecord, ClusterState
 
 logger = logging.getLogger(__name__)
-
-TAIL_CHARS = 4000
 
 
 class Orchestrator:
@@ -23,115 +20,52 @@ class Orchestrator:
             target_command=config.target_command,
             source_repo_root=str(config.project_root),
             worktree_root=str(config.worktree_root),
+            validator_memory_file=str(config.validator_memory_file),
         )
         self._agent_runtime = agent_runtime
 
     async def run(self) -> bool:
         self._init_source_git_state()
         self._ensure_isolated_worktree()
+        self._ensure_runtime_paths()
 
         if self._agent_runtime is None:
             self._agent_runtime = DeepAgentRuntime(self.config)
 
         consecutive_rollbacks = 0
+        start_attempt = len(self.state.attempts) + 1
 
-        for attempt_num in range(1, self.config.max_attempts + 1):
+        for attempt_num in range(start_attempt, self.config.max_attempts + 1):
             logger.info("=" * 60)
             logger.info("ATTEMPT #%d / %d", attempt_num, self.config.max_attempts)
             logger.info("=" * 60)
 
-            record = AttemptRecord(
+            head_before = self._rev_parse(self.config.worktree_root, "HEAD")
+            outcome = await self._agent_runtime.run_controller_cycle(
+                self._build_controller_prompt(attempt_num, head_before),
                 attempt_number=attempt_num,
-                head_before=self._rev_parse(self.config.worktree_root, "HEAD"),
             )
-
-            exit_code, stdout, stderr, duration = self._run_target()
-            record.exit_code = exit_code
-            record.duration_seconds = duration
-            record.stdout_tail = stdout[-TAIL_CHARS:]
-            record.stderr_tail = stderr[-TAIL_CHARS:]
-            if exit_code == 0:
-                self._update_best_success_duration(duration)
-
-            controller = await self._run_controller(attempt_num, record)
-            self._apply_controller_decision(record, controller)
-
-            if exit_code == 0 and record.objective_stage == "DONE":
-                logger.info("SUCCESS on attempt #%d", attempt_num)
-                self._finish_with_status("success", record)
-                return True
-
-            if exit_code == 0:
-                logger.info(
-                    "Target command already passes; pursuing %s objective next",
-                    record.objective_stage,
-                )
-            else:
-                logger.warning("Script failed with exit code %d", exit_code)
-
-            history = self.state.format_attempt_history()
-            fixer_prompt = self._build_fixer_prompt(record, history)
-            logger.info("Running fixer agent...")
-            fixer_worker = await self._agent_runtime.run_fixer(
-                fixer_prompt,
-                system_overlay=record.fixer_directive,
-            )
-            record.fix_description = fixer_worker.final_text
-            record.workers.append(fixer_worker)
+            record = self._record_attempt(attempt_num, head_before, outcome)
             self._capture_git_effects(record)
+            self._apply_state_from_outcome(outcome, record)
 
-            logger.info("Running validation target...")
-            exit_code_2, stdout_2, stderr_2, duration_2 = self._run_target()
-            record.validation_exit_code = exit_code_2
-            record.validation_duration_seconds = duration_2
-            record.validation_stdout_tail = stdout_2[-TAIL_CHARS:]
-            record.validation_stderr_tail = stderr_2[-TAIL_CHARS:]
+            if record.exit_code == 0:
+                self._update_best_success_duration(record.duration_seconds)
 
-            if exit_code_2 == 0:
-                self._update_best_success_duration(duration_2)
-                if record.objective_stage == "PASS":
-                    logger.info("Target command now passes; controller can choose higher-order work next")
-                    record.validator_verdict = "PROGRESS"
-                    record.validator_reason = "The target command passed after the fix."
-                    if attempt_num >= self.config.max_attempts:
-                        self._finish_with_status("success", record)
-                        return True
-                    consecutive_rollbacks = 0
-                    self.state.attempts.append(record)
-                    self.state.save(self.config.state_file)
-                    if self.config.sleep_between_attempts > 0:
-                        await asyncio.sleep(self.config.sleep_between_attempts)
-                    continue
-
-            if exit_code_2 != 0 and record.objective_stage in {"SPEED", "QUALITY"}:
-                validation = ValidationOutcome(
-                    verdict="SAME_ERROR",
-                    reason=f"{record.objective_stage} optimization broke the target command.",
-                    worker=self._synthetic_worker(
-                        worker_type="validator",
-                        prompt_summary="Automatic rollback because a higher-order optimization regressed the target command.",
-                        final_text=f"{record.objective_stage} changes regressed the green baseline.",
-                    ),
-                )
-            else:
-                validator_prompt = self._build_validator_prompt(record)
-                logger.info("Running validator agent...")
-                validation = await self._agent_runtime.run_validator(
-                    validator_prompt,
-                    system_overlay=record.validator_directive,
-                )
-            self._record_validation(record, validation)
-            logger.info("Verdict: %s", validation.verdict)
-
-            if validation.verdict == "SAME_ERROR":
-                logger.warning("Validator says SAME_ERROR; discarding worktree changes")
-                if not self._rollback_to(record.head_before):
-                    logger.error("Could not roll back isolated worktree to %s", record.head_before)
+            if outcome.action == "ROLLBACK":
+                logger.warning("Controller requested rollback for attempt #%d", attempt_num)
+                if not self._rollback_to(head_before):
+                    logger.error("Could not roll back isolated worktree to %s", head_before)
                     self._finish_with_status("stuck", record)
                     return False
                 record.rolled_back = True
-                record.rollback_to = record.head_before
+                record.rollback_to = head_before
                 consecutive_rollbacks += 1
+                self._agent_runtime.note_rollback(
+                    attempt_number=attempt_num,
+                    rollback_to=head_before,
+                    reason=record.validator_reason or record.controller_reason,
+                )
                 if consecutive_rollbacks >= self.config.max_consecutive_rollbacks:
                     logger.error(
                         "Max consecutive rollbacks (%d) reached",
@@ -141,9 +75,15 @@ class Orchestrator:
                     return False
             else:
                 consecutive_rollbacks = 0
-                if exit_code_2 == 0 and attempt_num >= self.config.max_attempts:
+
+            if outcome.action == "DONE":
+                if record.exit_code == 0:
+                    logger.info("Controller ended the loop with a passing validated state")
                     self._finish_with_status("success", record)
                     return True
+                logger.error("Controller stopped but the latest validated state is not passing")
+                self._finish_with_status("stuck", record)
+                return False
 
             self.state.attempts.append(record)
             self.state.save(self.config.state_file)
@@ -156,57 +96,84 @@ class Orchestrator:
         self.state.save(self.config.state_file)
         return False
 
+    def _record_attempt(
+        self,
+        attempt_num: int,
+        head_before: str,
+        outcome: ControllerCycleOutcome,
+    ) -> AttemptRecord:
+        record = AttemptRecord(
+            attempt_number=attempt_num,
+            head_before=head_before,
+            objective_stage=outcome.objective_stage,
+            objective_summary=outcome.objective,
+            controller_action=outcome.action,
+            controller_reason=outcome.reason,
+            fix_description=outcome.fix_summary,
+            validator_memory_path=str(self.config.validator_memory_file),
+            workers=outcome.workers,
+        )
+        self._record_validator_details(record, outcome.latest_validator_record)
+        return record
+
+    def _record_validator_details(self, record: AttemptRecord, validator_record: ValidatorRecord) -> None:
+        run = validator_record.latest_validation
+        record.exit_code = run.exit_code
+        record.duration_seconds = run.duration_seconds
+        record.stdout_tail = run.stdout_excerpt
+        record.stderr_tail = run.stderr_excerpt
+        record.stdout_log_path = run.stdout_log_path
+        record.stderr_log_path = run.stderr_log_path
+        record.validation_label = run.label
+        record.validator_verdict = validator_record.verdict
+        record.validator_reason = validator_record.reason
+        record.validator_execution_record = validator_record.execution_record
+        record.validator_next_focus = validator_record.next_focus
+
+    def _apply_state_from_outcome(self, outcome: ControllerCycleOutcome, record: AttemptRecord) -> None:
+        self.state.current_objective_stage = outcome.objective_stage
+        self.state.current_objective = outcome.objective
+        self.state.current_controller_reason = outcome.reason
+        self.state.validator_memory_file = str(self.config.validator_memory_file)
+        self.state.current_branch = self.config.git_branch
+        self.state.target_command = self.config.target_command
+        if self.state.source_repo_root == "":
+            self.state.source_repo_root = str(self.config.project_root)
+        if self.state.worktree_root == "":
+            self.state.worktree_root = str(self.config.worktree_root)
+        logger.info(
+            "Controller decision: action=%s stage=%s objective=%s",
+            record.controller_action,
+            record.objective_stage,
+            record.objective_summary,
+        )
+
+    def _build_controller_prompt(self, attempt_num: int, head_before: str) -> str:
+        return (
+            f"Session: {self.state.session_id}\n"
+            f"Attempt: {attempt_num} / {self.config.max_attempts}\n"
+            f"Target command: {self.config.target_command}\n"
+            f"Current worktree branch: {self.config.git_branch}\n"
+            f"Current worktree HEAD: {head_before}\n"
+            f"Validator memory file: {self.config.validator_memory_file}\n"
+            f"Current objective stage: {self.state.current_objective_stage}\n"
+            f"Current objective: {self.state.current_objective}\n"
+            f"Best successful duration seconds so far: {self._format_duration(self.state.best_success_duration_seconds)}\n\n"
+            f"Previous attempts:\n{self.state.format_attempt_history()}\n\n"
+            "Drive the next improvement cycle autonomously. "
+            "Use validator memory as the durable record of validated state. "
+            "If that memory is stale or not synced to the current HEAD, send validator first."
+        )
+
     def _finish_with_status(self, status: str, record: AttemptRecord) -> None:
         self.state.status = status
         self.state.attempts.append(record)
         self.state.save(self.config.state_file)
 
-    async def _run_controller(self, attempt_num: int, record: AttemptRecord) -> ControllerOutcome:
-        logger.info("Running controller agent...")
-        prompt = (
-            f"Attempt number: {attempt_num} / {self.config.max_attempts}\n"
-            f"Current controller stage: {self.state.current_objective_stage}\n"
-            f"Current controller objective: {self.state.current_objective}\n"
-            f"Latest target exit code: {record.exit_code}\n"
-            f"Latest target duration seconds: {self._format_duration(record.duration_seconds)}\n"
-            f"Best successful duration seconds so far: {self._format_duration(self.state.best_success_duration_seconds)}\n\n"
-            f"=== STDOUT (tail) ===\n{record.stdout_tail}\n\n"
-            f"=== STDERR (tail) ===\n{record.stderr_tail}\n\n"
-            f"=== Previous attempts ===\n{self.state.format_attempt_history()}\n\n"
-            "Choose the single next objective stage and describe the concrete objective for one fixer attempt."
-        )
-        return await self._agent_runtime.run_controller(prompt)
-
-    def _apply_controller_decision(self, record: AttemptRecord, controller: ControllerOutcome) -> None:
-        stage = controller.stage
-        objective = controller.objective.strip() or "Make the target command pass."
-        reason = controller.reason.strip()
-
-        if record.exit_code != 0 and stage != "PASS":
-            logger.info("Overriding controller stage %s to PASS because the target command is failing", stage)
-            stage = "PASS"
-            objective = "Make the target command pass before attempting speed or quality work."
-            reason = (
-                f"Controller requested {controller.stage}, but the latest target run failed, so the stage was forced to PASS."
-            )
-
-        record.objective_stage = stage
-        record.objective_summary = objective
-        record.controller_reason = reason
-        record.fixer_directive = controller.fixer_system_overlay.strip()
-        record.validator_directive = controller.validator_system_overlay.strip()
-        controller.worker.final_text = f"{objective}\nReason: {reason}".strip()
-        record.workers.append(controller.worker)
-        self.state.current_objective_stage = stage
-        self.state.current_objective = objective
-        self.state.current_controller_reason = reason
-        self.state.current_fixer_directive = record.fixer_directive
-        self.state.current_validator_directive = record.validator_directive
-
-    def _record_validation(self, record: AttemptRecord, validation: ValidationOutcome) -> None:
-        record.validator_verdict = validation.verdict
-        record.validator_reason = validation.reason
-        record.workers.append(validation.worker)
+    def _ensure_runtime_paths(self) -> None:
+        self.config.state_file.parent.mkdir(parents=True, exist_ok=True)
+        self.config.log_dir.mkdir(parents=True, exist_ok=True)
+        self.config.validator_memory_file.parent.mkdir(parents=True, exist_ok=True)
 
     def _capture_git_effects(self, record: AttemptRecord) -> None:
         record.head_after = self._rev_parse(self.config.worktree_root, "HEAD")
@@ -223,61 +190,6 @@ class Orchestrator:
         files.update(self._git_lines(self.config.worktree_root, "diff", "--cached", "--name-only"))
         files.update(self._git_lines(self.config.worktree_root, "ls-files", "--others", "--exclude-standard"))
         return sorted(file_name for file_name in files if file_name)
-
-    def _build_fixer_prompt(self, record: AttemptRecord, history: str) -> str:
-        baseline_status = "passed" if record.exit_code == 0 else f"failed with exit code {record.exit_code}"
-        return (
-            f"The latest target command {baseline_status}.\n"
-            f"Current objective stage: {record.objective_stage}\n"
-            f"Current objective: {record.objective_summary}\n"
-            f"Best successful duration so far: {self._format_duration(self.state.best_success_duration_seconds)}\n\n"
-            f"=== STDOUT (tail) ===\n{record.stdout_tail}\n\n"
-            f"=== STDERR (tail) ===\n{record.stderr_tail}\n\n"
-            f"=== Previous attempts (DO NOT repeat failed fixes) ===\n{history}\n\n"
-            f"=== Git branch ===\n{self.config.git_branch}\n\n"
-            "Make one coherent change set that advances the current objective without regressing the target command."
-        )
-
-    def _build_validator_prompt(self, record: AttemptRecord) -> str:
-        return (
-            f"Objective stage: {record.objective_stage}\n"
-            f"Objective: {record.objective_summary}\n"
-            f"Target duration before fix: {self._format_duration(record.duration_seconds)}\n"
-            f"Target duration after fix: {self._format_duration(record.validation_duration_seconds)}\n"
-            f"Files modified: {', '.join(record.files_modified) or 'none'}\n\n"
-            f"=== STDERR BEFORE FIX ===\n{record.stderr_tail}\n\n"
-            f"=== STDERR AFTER FIX ===\n{record.validation_stderr_tail}\n\n"
-            f"=== FIX SUMMARY ===\n{record.fix_description[:1000]}\n\n"
-            "Decide whether this attempt made meaningful progress toward the stated objective."
-        )
-
-    def _synthetic_worker(self, worker_type: str, prompt_summary: str, final_text: str):
-        return WorkerInvocation(
-            worker_type=worker_type,
-            prompt_summary=prompt_summary,
-            final_text=final_text,
-        )
-
-    def _run_target(self) -> tuple[int, str, str, float]:
-        logger.info("Running in %s: %s", self.config.worktree_root, self.config.target_command)
-        started = perf_counter()
-        try:
-            result = subprocess.run(
-                self.config.target_command,
-                shell=True,
-                cwd=str(self.config.worktree_root),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=self.config.target_timeout,
-                env=self.config.build_env(),
-            )
-            return result.returncode, result.stdout or "", result.stderr or "", perf_counter() - started
-        except subprocess.TimeoutExpired:
-            return -1, "", f"TIMEOUT after {self.config.target_timeout}s", perf_counter() - started
-        except Exception as exc:
-            return -1, "", str(exc), perf_counter() - started
 
     def _init_source_git_state(self) -> None:
         self.state.original_branch = self._git(self.config.project_root, "branch", "--show-current").strip()

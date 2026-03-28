@@ -28,8 +28,9 @@ class ClusterConfig:
     project_root: Path = PROJECT_ROOT
     cache_root: Path = CACHE_ROOT
     state_file: Path = CACHE_ROOT / "sessions" / "default" / "state.json"
-    log_dir: Path = CACHE_ROOT / "logs"
+    log_dir: Path = CACHE_ROOT / "logs" / "default"
     worktree_root: Path = CACHE_ROOT / "worktrees" / "default"
+    validator_memory_file: Path = CACHE_ROOT / "memory" / "default" / "validator.md"
     git_branch: str = "ci-agent/default"
     runbook_file: Path = RUNBOOK_FILE
 
@@ -63,8 +64,9 @@ class ClusterConfig:
             "project_root": project_root,
             "cache_root": cache_root,
             "state_file": cache_root / "sessions" / session_id / "state.json",
-            "log_dir": cache_root / "logs",
+            "log_dir": cache_root / "logs" / session_id,
             "worktree_root": cache_root / "worktrees" / session_id,
+            "validator_memory_file": cache_root / "memory" / session_id / "validator.md",
             "git_branch": f"ci-agent/{session_id}",
             "runbook_file": project_root / "scripts" / "ci_agent" / "AGENTS.md",
             "target_command": default_target,
@@ -86,4 +88,5 @@ class ClusterConfig:
         env.setdefault("CI_AGENT_SESSION_ID", self.session_id)
         env.setdefault("CI_AGENT_SOURCE_ROOT", str(self.project_root))
         env.setdefault("CI_AGENT_WORKTREE_ROOT", str(self.worktree_root))
+        env.setdefault("CI_AGENT_ANALYSIS_ROOT", str(self.cache_root / "analysis" / self.session_id))
         return env
