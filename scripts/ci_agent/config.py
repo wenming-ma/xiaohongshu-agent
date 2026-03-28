@@ -62,7 +62,7 @@ class ClusterConfig:
         default_target = (
             "uv run python workshop/video_post/run.py"
             " --topics-file workshop/video_post/topics.json"
-            " --limit 1 --no-publish --no-feishu"
+            " --limit 1 --no-publish"
         )
         load_dotenv(project_root / ".env")
         kwargs: dict = {

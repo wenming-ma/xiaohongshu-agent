@@ -1,8 +1,13 @@
 import asyncio
 
 from pydantic_ai.messages import (
+    BaseToolCallPart,
+    BaseToolReturnPart,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     ModelRequest,
     ModelResponse,
+    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -180,9 +185,11 @@ def _collect_tool_call_ids(messages: list[object]) -> tuple[set[str], set[str]]:
     tool_return_ids: set[str] = set()
     for message in messages:
         for part in message.parts:
-            if isinstance(part, ToolCallPart):
+            if isinstance(part, BaseToolCallPart):
                 tool_call_ids.add(part.tool_call_id)
-            elif isinstance(part, ToolReturnPart):
+            elif isinstance(part, BaseToolReturnPart):
+                tool_return_ids.add(part.tool_call_id)
+            elif isinstance(part, RetryPromptPart) and part.tool_name:
                 tool_return_ids.add(part.tool_call_id)
     return tool_call_ids, tool_return_ids
 
@@ -378,6 +385,37 @@ def test_video_research_step_retries_with_cleared_history_on_invalid_tool_call_i
     assert "需要更多高质量视频" in str(agent.generator.calls[1]["prompt"])
 
 
+class FakeVideoResearchGeneratorRetryOnToolResultNotFound:
+    def __init__(self, output):
+        self.output = output
+        self.calls: list[dict[str, object]] = []
+        self._attempt = 0
+
+    async def run(self, prompt, message_history=None, **kwargs):
+        history = list(message_history or [])
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "message_history": history,
+                "kwargs": kwargs,
+            }
+        )
+        self._attempt += 1
+        if self._attempt == 1:
+            raise ModelHTTPError(
+                status_code=400,
+                model_name="MiniMax-M2.7",
+                body={"error": {"message": "invalid params, tool result's tool id(call_function_x) not found (2013)"}},
+            )
+        return FakeNewMessagesResult(
+            self.output,
+            [
+                ModelRequest(parts=[UserPromptPart(content=str(prompt))]),
+                ModelResponse(parts=[TextPart(content="continued search")]),
+            ],
+        )
+
+
 def test_video_research_state_drops_unmatched_tool_return_from_retained_history() -> None:
     state = VideoResearchState(
         topic="city walk",
@@ -401,6 +439,110 @@ def test_video_research_state_drops_unmatched_tool_return_from_retained_history(
         state.message_history[1],
         state.message_history[2],
         state.message_history[4],
+    ]
+    assert tool_call_ids == set()
+    assert tool_return_ids == set()
+
+
+def test_video_research_step_retries_with_cleared_history_on_tool_result_id_not_found() -> None:
+    state = VideoResearchState(
+        topic="city walk",
+        platforms=[Platform.X],
+        max_videos=3,
+        output_dir=None,
+    )
+    initial_history = [
+        ModelRequest(parts=[UserPromptPart(content="第一次搜索")]),
+        ModelResponse(parts=[ToolCallPart(tool_name="playwright_search", args={}, tool_call_id="call_1")]),
+        ModelRequest(parts=[ToolReturnPart(tool_name="playwright_search", content="{}", tool_call_id="call_1")]),
+    ]
+    state.message_history = initial_history[:]
+    state.inject_feedback("需要更多高质量视频")
+
+    agent = VideoResearchAgent.__new__(VideoResearchAgent)
+    agent.generator = FakeVideoResearchGeneratorRetryOnToolResultNotFound(_build_video_research())
+
+    asyncio.run(agent.step(state, 1))
+
+    assert len(agent.generator.calls) == 2
+    assert agent.generator.calls[0]["message_history"] == initial_history
+    assert agent.generator.calls[1]["message_history"] == []
+    assert "需要更多高质量视频" in str(agent.generator.calls[1]["prompt"])
+
+
+def test_video_research_state_drops_out_of_order_tool_result_even_if_id_matches_later_call() -> None:
+    state = VideoResearchState(
+        topic="city walk",
+        platforms=[Platform.X],
+        max_videos=3,
+        output_dir=None,
+    )
+    state.message_history = [
+        ModelRequest(parts=[UserPromptPart(content="第一次搜索")]),
+        ModelResponse(parts=[TextPart(content="首轮完成")]),
+        ModelRequest(
+            parts=[
+                UserPromptPart(content="第二次搜索"),
+                ToolReturnPart(tool_name="playwright_search", content="{}", tool_call_id="call_bad"),
+            ]
+        ),
+        ModelResponse(parts=[ToolCallPart(tool_name="playwright_search", args={}, tool_call_id="call_bad")]),
+        ModelResponse(parts=[TextPart(content="继续搜索")]),
+    ]
+
+    filtered = state.get_recent_history(2)
+    tool_call_ids, tool_return_ids = _collect_tool_call_ids(filtered)
+
+    assert filtered == [
+        state.message_history[0],
+        state.message_history[1],
+        ModelRequest(parts=[UserPromptPart(content="第二次搜索")]),
+        state.message_history[4],
+    ]
+    assert tool_call_ids == set()
+    assert tool_return_ids == set()
+
+
+def test_video_research_state_keeps_builtin_tool_pairs_when_complete() -> None:
+    state = VideoResearchState(
+        topic="city walk",
+        platforms=[Platform.X],
+        max_videos=3,
+        output_dir=None,
+    )
+    state.message_history = [
+        ModelRequest(parts=[UserPromptPart(content="第一次搜索")]),
+        ModelResponse(parts=[BuiltinToolCallPart(tool_name="web_search", args={"q": "city walk"}, tool_call_id="builtin_1", provider_name="anthropic")]),
+        ModelResponse(parts=[BuiltinToolReturnPart(tool_name="web_search_tool_result", content={"hits": []}, tool_call_id="builtin_1", provider_name="anthropic")]),
+        ModelResponse(parts=[TextPart(content="继续搜索")]),
+    ]
+
+    filtered = state.get_recent_history(1)
+    tool_call_ids, tool_return_ids = _collect_tool_call_ids(filtered)
+
+    assert tool_call_ids == {"builtin_1"}
+    assert tool_return_ids == {"builtin_1"}
+
+
+def test_video_research_state_drops_retry_prompt_without_matching_tool_call() -> None:
+    state = VideoResearchState(
+        topic="city walk",
+        platforms=[Platform.X],
+        max_videos=3,
+        output_dir=None,
+    )
+    state.message_history = [
+        ModelRequest(parts=[UserPromptPart(content="第一次搜索")]),
+        ModelRequest(parts=[RetryPromptPart(content="retry", tool_name="playwright_search", tool_call_id="retry_1")]),
+        ModelResponse(parts=[TextPart(content="继续搜索")]),
+    ]
+
+    filtered = state.get_recent_history(1)
+    tool_call_ids, tool_return_ids = _collect_tool_call_ids(filtered)
+
+    assert filtered == [
+        state.message_history[0],
+        state.message_history[2],
     ]
     assert tool_call_ids == set()
     assert tool_return_ids == set()

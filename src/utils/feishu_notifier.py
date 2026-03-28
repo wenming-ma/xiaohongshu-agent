@@ -17,6 +17,8 @@ from typing import Optional
 
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import (
+    CreateFileRequest,
+    CreateFileRequestBody,
     CreateMessageRequest,
     CreateMessageRequestBody,
     CreateImageRequest,
@@ -408,6 +410,100 @@ class FeishuNotifier:
             return msg_id
         except Exception as e:
             logger.error(f"发送图片失败: {e}")
+            return None
+
+    async def send_file(
+        self,
+        file_path: Path,
+        caption: str = "",
+        chat_id: Optional[str] = None,
+        *,
+        duration: Optional[int] = None,
+    ) -> Optional[str]:
+        """
+        发送文件（可用于视频文件）
+
+        Args:
+            file_path: 文件路径
+            caption: 文件说明
+            chat_id: 目标聊天 ID（可选）
+            duration: 媒体时长（毫秒，可选）
+
+        Returns:
+            消息 ID，发送失败返回 None
+        """
+        if self.client is None:
+            logger.warning("飞书客户端未初始化，无法发送文件")
+            return None
+
+        target_chat = chat_id or self.chat_id
+        if not target_chat:
+            logger.warning("未指定 chat_id，无法发送文件")
+            return None
+
+        if not file_path.exists():
+            logger.error(f"文件不存在: {file_path}")
+            return None
+
+        try:
+            with open(file_path, "rb") as f:
+                body_builder = (
+                    CreateFileRequestBody.builder()
+                    .file_type("stream")
+                    .file_name(file_path.name)
+                    .file(f)
+                )
+                if duration is not None and duration > 0:
+                    body_builder = body_builder.duration(duration)
+                upload_request = (
+                    CreateFileRequest.builder()
+                    .request_body(body_builder.build())
+                    .build()
+                )
+
+                upload_response = await asyncio.to_thread(
+                    self.client.im.v1.file.create, upload_request
+                )
+
+            if not upload_response.success():
+                logger.error(
+                    f"上传文件失败: code={upload_response.code}, msg={upload_response.msg}"
+                )
+                return None
+
+            file_key = upload_response.data.file_key
+            request = (
+                CreateMessageRequest.builder()
+                .receive_id_type(self.receive_id_type)
+                .request_body(
+                    CreateMessageRequestBody.builder()
+                    .receive_id(target_chat)
+                    .msg_type("file")
+                    .content(json.dumps({"file_key": file_key}))
+                    .build()
+                )
+                .build()
+            )
+
+            response = await asyncio.to_thread(
+                self.client.im.v1.message.create, request
+            )
+
+            if not response.success():
+                logger.error(
+                    f"发送文件消息失败: code={response.code}, msg={response.msg}"
+                )
+                return None
+
+            msg_id = response.data.message_id
+            logger.debug(f"文件已发送: {file_path.name}")
+
+            if caption:
+                await self.send_message(caption, target_chat)
+
+            return msg_id
+        except Exception as e:
+            logger.error(f"发送文件失败: {e}")
             return None
 
     # ------------------------------------------------------------------

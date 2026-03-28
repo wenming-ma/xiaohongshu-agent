@@ -5,10 +5,11 @@ from __future__ import annotations
 from dataclasses import replace
 
 from pydantic_ai.messages import (
+    BaseToolCallPart,
+    BaseToolReturnPart,
     ModelMessage,
     ModelRequest,
-    ToolCallPart,
-    ToolReturnPart,
+    RetryPromptPart,
     UserPromptPart,
 )
 
@@ -66,46 +67,72 @@ def _split_history_rounds(history: list[ModelMessage]) -> list[list[ModelMessage
 
 
 def _sanitize_tool_message_pairs(messages: list[ModelMessage]) -> list[ModelMessage]:
-    valid_tool_call_ids = _collect_matched_tool_call_ids(messages)
+    valid_tool_call_ids = _collect_causally_matched_tool_call_ids(messages)
     if not valid_tool_call_ids:
         return [
-            msg
-            for msg in (_filter_message_parts(message, valid_tool_call_ids) for message in messages)
-            if msg is not None
+            message
+            for message in (
+                _filter_message_parts(message, valid_tool_call_ids, set()) for message in messages
+            )
+            if message is not None
         ]
 
+    seen_tool_calls: set[str] = set()
     return [
-        msg
-        for msg in (_filter_message_parts(message, valid_tool_call_ids) for message in messages)
-        if msg is not None
+        message
+        for message in (
+            _filter_message_parts(message, valid_tool_call_ids, seen_tool_calls) for message in messages
+        )
+        if message is not None
     ]
 
 
-def _collect_matched_tool_call_ids(messages: list[ModelMessage]) -> set[str]:
-    tool_call_ids: set[str] = set()
-    tool_return_ids: set[str] = set()
+def _collect_causally_matched_tool_call_ids(messages: list[ModelMessage]) -> set[str]:
+    """Collect tool ids where a call appears before a matching result.
 
-    for message in messages:
-        for part in message.parts:
-            if isinstance(part, ToolCallPart) and part.tool_call_id:
-                tool_call_ids.add(part.tool_call_id)
-            elif isinstance(part, ToolReturnPart) and part.tool_call_id:
-                tool_return_ids.add(part.tool_call_id)
+    Anthropic-compatible providers require every retained tool result to refer to an
+    earlier tool call in the submitted history. A plain set intersection is not enough:
+    it can still preserve out-of-order pairs. We therefore collect ids by scanning the
+    history backwards and only mark calls that have a matching result later in the
+    retained message sequence.
+    """
+    future_tool_result_ids: set[str] = set()
+    matched_ids: set[str] = set()
 
-    return tool_call_ids & tool_return_ids
+    for message in reversed(messages):
+        for part in reversed(message.parts):
+            tool_result_id = _tool_result_id(part)
+            if tool_result_id:
+                future_tool_result_ids.add(tool_result_id)
+                continue
+
+            tool_call_id = _tool_call_id(part)
+            if tool_call_id and tool_call_id in future_tool_result_ids:
+                matched_ids.add(tool_call_id)
+
+    return matched_ids
 
 
-def _filter_message_parts(message: ModelMessage, valid_tool_call_ids: set[str]) -> ModelMessage | None:
+def _filter_message_parts(
+    message: ModelMessage,
+    valid_tool_call_ids: set[str],
+    seen_tool_calls: set[str],
+) -> ModelMessage | None:
     filtered_parts = []
     for part in message.parts:
-        if isinstance(part, ToolCallPart):
-            if part.tool_call_id in valid_tool_call_ids:
+        tool_call_id = _tool_call_id(part)
+        if tool_call_id:
+            if tool_call_id in valid_tool_call_ids:
+                filtered_parts.append(part)
+                seen_tool_calls.add(tool_call_id)
+            continue
+
+        tool_result_id = _tool_result_id(part)
+        if tool_result_id:
+            if tool_result_id in valid_tool_call_ids and tool_result_id in seen_tool_calls:
                 filtered_parts.append(part)
             continue
-        if isinstance(part, ToolReturnPart):
-            if part.tool_call_id in valid_tool_call_ids:
-                filtered_parts.append(part)
-            continue
+
         filtered_parts.append(part)
 
     if not filtered_parts:
@@ -113,3 +140,17 @@ def _filter_message_parts(message: ModelMessage, valid_tool_call_ids: set[str]) 
     if len(filtered_parts) == len(message.parts):
         return message
     return replace(message, parts=filtered_parts)
+
+
+def _tool_call_id(part: object) -> str | None:
+    if isinstance(part, BaseToolCallPart):
+        return part.tool_call_id
+    return None
+
+
+def _tool_result_id(part: object) -> str | None:
+    if isinstance(part, BaseToolReturnPart):
+        return part.tool_call_id
+    if isinstance(part, RetryPromptPart) and part.tool_name:
+        return part.tool_call_id
+    return None

@@ -5,10 +5,18 @@ Gemini Web UI 图片生成客户端
 作为 Gemini API 的降级方案，在 API 返回 503 等错误时使用。
 """
 import asyncio
+import mimetypes
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+from urllib.parse import urlsplit
 
-from playwright.async_api import async_playwright, Page, Browser, BrowserContext
+from playwright.async_api import (
+    BrowserContext,
+    Download,
+    Page,
+    TimeoutError as PlaywrightTimeoutError,
+    async_playwright,
+)
 
 from ...config.settings import APIConfig, PathConfig, TimeoutConfig
 from ..logger import get_logger
@@ -68,15 +76,154 @@ async () => {
 # 轮询检测生成完成的 JS
 _POLL_IMAGE_JS = """
 () => {
-    const imgs = document.querySelectorAll('img');
-    for (const img of imgs) {
-        if (img.naturalWidth > 200 && img.alt && img.alt.includes('AI generated')) {
-            return img.src;
-        }
+    const isVisible = (img) => {
+        const rect = img.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+    };
+    const candidates = [];
+    for (const [index, img] of Array.from(document.images).entries()) {
+        const src = img.currentSrc || img.src || '';
+        if (!src || img.naturalWidth < 200 || img.naturalHeight < 200) continue;
+        const rect = img.getBoundingClientRect();
+        const score =
+            (isVisible(img) ? 1_000_000 : 0) +
+            ((img.alt || '').includes('AI generated') ? 500_000 : 0) +
+            Math.round(rect.width * rect.height) +
+            index;
+        candidates.push({
+            index,
+            score,
+            src,
+            width: img.naturalWidth,
+            height: img.naturalHeight,
+            alt: img.alt || '',
+        });
     }
-    return null;
+    if (!candidates.length) return null;
+    candidates.sort((a, b) => a.score - b.score);
+    return candidates[candidates.length - 1];
 }
 """
+
+_CLICK_NATIVE_DOWNLOAD_JS = """
+async (sourceUrl) => {
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const normalize = value => (value || '').trim().toLowerCase();
+    const labelOf = el => normalize(
+        el?.getAttribute?.('aria-label')
+        || el?.getAttribute?.('title')
+        || el?.getAttribute?.('download')
+        || el?.textContent
+        || ''
+    );
+    const controlSelector = 'a[download], button, a, [role="button"], [role="menuitem"], [role="menuitemcheckbox"]';
+    const images = Array.from(document.images).filter(img => img.naturalWidth > 200 && img.naturalHeight > 200);
+    const target =
+        images.find(img => (img.currentSrc || img.src || '') === sourceUrl)
+        || images[images.length - 1]
+        || null;
+
+    const anchorCandidates = [];
+    const scopes = [
+        target?.closest('figure'),
+        target?.closest('[role="listitem"]'),
+        target?.closest('[data-turn-id]'),
+        target?.parentElement,
+        document,
+    ].filter(Boolean);
+
+    for (const scope of scopes) {
+        for (const anchor of Array.from(scope.querySelectorAll('a[download]'))) {
+            if (!anchorCandidates.includes(anchor)) {
+                anchorCandidates.push(anchor);
+            }
+        }
+    }
+
+    const exactAnchor = anchorCandidates.find(anchor => {
+        const href = anchor.getAttribute('href') || anchor.href || '';
+        return href === sourceUrl;
+    });
+    if (exactAnchor) {
+        exactAnchor.click();
+        return {
+            ok: true,
+            strategy: 'native-anchor-exact',
+            filename: exactAnchor.getAttribute('download') || null,
+        };
+    }
+
+    const fallbackAnchor = anchorCandidates[anchorCandidates.length - 1];
+    if (fallbackAnchor) {
+        fallbackAnchor.click();
+        return {
+            ok: true,
+            strategy: 'native-anchor',
+            filename: fallbackAnchor.getAttribute('download') || null,
+        };
+    }
+
+    const controls = Array.from(document.querySelectorAll(controlSelector));
+    const downloadControl = controls.find(el => {
+        const label = labelOf(el);
+        return (
+            (label.includes('download') && !label.includes('downloading'))
+            || label.includes('save image')
+            || label.includes('download image')
+        );
+    });
+
+    if (downloadControl) {
+        downloadControl.click();
+        await sleep(400);
+
+        const fullSizeControl = Array.from(document.querySelectorAll(controlSelector)).find(el => {
+            const label = labelOf(el);
+            return (
+                label.includes('full size')
+                || label.includes('original')
+                || label.includes('download full size')
+            );
+        });
+        if (fullSizeControl) {
+            fullSizeControl.click();
+            return { ok: true, strategy: 'download-menu-full-size' };
+        }
+
+        const menuAnchor = Array.from(document.querySelectorAll('a[download]')).pop();
+        if (menuAnchor) {
+            menuAnchor.click();
+            return {
+                ok: true,
+                strategy: 'download-menu-anchor',
+                filename: menuAnchor.getAttribute('download') || null,
+            };
+        }
+
+        return { ok: true, strategy: 'download-control' };
+    }
+
+    return { ok: false, error: 'native download control not found' };
+}
+"""
+
+_TRIGGER_OBJECT_URL_DOWNLOAD_JS = """
+async ({ sourceUrl, suggestedName }) => {
+    const link = document.createElement('a');
+    link.href = sourceUrl;
+    link.download = suggestedName || 'cover';
+    link.rel = 'noopener';
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    link.remove();
+    return { ok: true, strategy: 'synthetic-anchor' };
+}
+"""
+
+_MIN_IMAGE_BYTES = 1024
+_KNOWN_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
 # 检测登录状态的 JS（Google Account 链接是 <a> 标签，不是 <button>）
 _CHECK_LOGIN_JS = """
@@ -156,6 +303,7 @@ class GeminiWebImageClient:
         try:
             self._context = await self._pw.chromium.launch_persistent_context(
                 user_data_dir=session_dir,
+                channel="chrome",
                 headless=False,
                 args=[
                     "--disable-blink-features=AutomationControlled",
@@ -222,7 +370,10 @@ class GeminiWebImageClient:
                     '[aria-label="Enter a prompt for Gemini"]',
                     timeout=30000,
                 )
-                await page.wait_for_load_state("networkidle", timeout=15000)
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=15000)
+                except PlaywrightTimeoutError:
+                    logger.debug("[GeminiWeb] networkidle 超时，继续后续流程")
 
                 # 3. 检查登录状态
                 is_logged_in = await page.evaluate(_CHECK_LOGIN_JS)
@@ -278,16 +429,15 @@ class GeminiWebImageClient:
                 logger.info("[GeminiWeb] 提示词已发送，等待图片生成...")
 
                 # 5. 轮询等待图片生成完成
-                image_url = await self._poll_for_image(page, timeout)
+                image_meta = await self._poll_for_image(page, timeout)
 
-                # 6. 下载图片（通过浏览器上下文，携带认证 cookies）
-                image_url = self._optimize_image_url(image_url)
-                image_data = await self._download_image_via_browser(page, image_url)
-
-                # 7. 保存图片
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                output_path.write_bytes(image_data)
-                logger.info("[GeminiWeb] 图片已保存: %s (%d KB)", output_path, len(image_data) // 1024)
+                # 6. 下载图片（优先走浏览器原生下载事件）
+                output_path = await self._download_generated_image(page, image_meta, output_path)
+                logger.info(
+                    "[GeminiWeb] 图片已保存: %s (%d KB)",
+                    output_path,
+                    output_path.stat().st_size // 1024,
+                )
 
                 # 成功后关闭浏览器并轮换到下一个账号
                 await self.close()
@@ -356,16 +506,20 @@ class GeminiWebImageClient:
 
         logger.info("[GeminiWeb] %d 张参考图片上传完成", len(image_paths))
 
-    async def _poll_for_image(self, page: Page, timeout: int) -> str:
+    async def _poll_for_image(self, page: Page, timeout: int) -> dict[str, Any]:
         """轮询页面直到图片生成完成"""
         poll_interval = 2
         elapsed = 0
 
         while elapsed < timeout:
-            image_url = await page.evaluate(_POLL_IMAGE_JS)
-            if image_url:
-                logger.info("[GeminiWeb] 图片生成完成 (耗时 %ds)", elapsed)
-                return image_url
+            image_meta = await page.evaluate(_POLL_IMAGE_JS)
+            if image_meta and image_meta.get("src"):
+                logger.info(
+                    "[GeminiWeb] 图片生成完成 (耗时 %ds, src=%s)",
+                    elapsed,
+                    str(image_meta["src"])[:120],
+                )
+                return image_meta
             await asyncio.sleep(poll_interval)
             elapsed += poll_interval
 
@@ -381,56 +535,159 @@ class GeminiWebImageClient:
             url = url.rsplit("=", 1)[0] + "=s2048"
         return url
 
-    async def _download_image_via_browser(self, page: Page, url: str, max_retries: int = 3) -> bytes:
-        """通过 Playwright API 请求上下文下载图片（携带浏览器 cookies）"""
-        if url.startswith("blob:"):
-            return await self._download_blob_image_via_canvas(page)
+    async def _download_generated_image(
+        self,
+        page: Page,
+        image_meta: dict[str, Any],
+        output_path: Path,
+    ) -> Path:
+        source_url = str(image_meta.get("src") or "").strip()
+        if not source_url:
+            raise ValueError("[GeminiWeb] 图片候选缺少 src")
 
-        last_error: Optional[Exception] = None
+        try:
+            return await self._download_via_native_control(page, source_url, output_path)
+        except Exception as exc:
+            logger.warning("[GeminiWeb] 原生下载控件失败，准备回退: %s", exc)
 
-        for attempt in range(max_retries):
-            try:
-                # 使用 Playwright 的 request context（自动携带浏览器 cookies）
-                resp = await page.context.request.get(url)
-                if resp.status != 200:
-                    raise ValueError(f"HTTP {resp.status}")
-                data = await resp.body()
-                if len(data) < 1024:
-                    raise ValueError(f"图片数据过小: {len(data)} bytes")
-                return data
-            except Exception as e:
-                last_error = e
-                logger.warning("[GeminiWeb] 图片下载失败 (%d/%d): %s", attempt + 1, max_retries, e)
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(2)
+        if source_url.startswith(("blob:", "data:")):
+            return await self._download_via_object_url(page, source_url, output_path)
 
-        raise last_error or Exception("[GeminiWeb] 图片下载失败")
+        optimized_url = self._optimize_image_url(source_url)
+        return await self._download_via_request(page, optimized_url, output_path)
+
+    async def _download_via_native_control(self, page: Page, source_url: str, output_path: Path) -> Path:
+        click_result: dict[str, Any] = {}
+        try:
+            async with page.expect_download(timeout=10000) as download_info:
+                click_result = await page.evaluate(_CLICK_NATIVE_DOWNLOAD_JS, source_url)
+            download = await download_info.value
+        except PlaywrightTimeoutError as exc:
+            detail = click_result.get("error") if isinstance(click_result, dict) else None
+            raise ValueError(detail or "未触发下载事件") from exc
+
+        if not click_result.get("ok"):
+            raise ValueError(click_result.get("error") or "下载控件不可用")
+
+        return await self._save_download(
+            download,
+            output_path,
+            strategy=str(click_result.get("strategy") or "native-download"),
+        )
+
+    async def _download_via_object_url(self, page: Page, source_url: str, output_path: Path) -> Path:
+        trigger_result: dict[str, Any] = {}
+        payload = {
+            "sourceUrl": source_url,
+            "suggestedName": output_path.name,
+        }
+        try:
+            async with page.expect_download(timeout=10000) as download_info:
+                trigger_result = await page.evaluate(_TRIGGER_OBJECT_URL_DOWNLOAD_JS, payload)
+            download = await download_info.value
+        except PlaywrightTimeoutError as exc:
+            detail = trigger_result.get("error") if isinstance(trigger_result, dict) else None
+            raise ValueError(detail or "对象 URL 未触发下载事件") from exc
+
+        if not trigger_result.get("ok"):
+            raise ValueError(trigger_result.get("error") or "对象 URL 下载失败")
+
+        return await self._save_download(
+            download,
+            output_path,
+            strategy=str(trigger_result.get("strategy") or "object-url"),
+        )
+
+    async def _download_via_request(self, page: Page, url: str, output_path: Path) -> Path:
+        resp = await page.context.request.get(url)
+        if resp.status != 200:
+            raise ValueError(f"HTTP {resp.status}")
+        data = await resp.body()
+        if len(data) < _MIN_IMAGE_BYTES:
+            raise ValueError(f"图片数据过小: {len(data)} bytes")
+
+        target_path = self._resolve_output_path(
+            output_path,
+            suggested_filename=Path(urlsplit(url).path).name or output_path.name,
+            content_type=resp.headers.get("content-type"),
+            data=data,
+        )
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_bytes(data)
+        validated_path = self._normalize_and_validate_image_file(target_path)
+        logger.info(
+            "[GeminiWeb] request 下载完成: %s (%d KB)",
+            validated_path.name,
+            validated_path.stat().st_size // 1024,
+        )
+        return validated_path
+
+    async def _save_download(self, download: Download, output_path: Path, strategy: str) -> Path:
+        target_path = self._resolve_output_path(
+            output_path,
+            suggested_filename=download.suggested_filename,
+        )
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        await download.save_as(target_path)
+        validated_path = self._normalize_and_validate_image_file(target_path)
+        logger.info(
+            "[GeminiWeb] %s 下载完成: %s (%d KB)",
+            strategy,
+            validated_path.name,
+            validated_path.stat().st_size // 1024,
+        )
+        return validated_path
+
+    def _resolve_output_path(
+        self,
+        output_path: Path,
+        suggested_filename: str | None = None,
+        content_type: str | None = None,
+        data: bytes | None = None,
+    ) -> Path:
+        suffix = ""
+        if suggested_filename:
+            suffix = Path(suggested_filename).suffix.lower()
+        if not suffix and content_type:
+            guessed = mimetypes.guess_extension(content_type.split(";", 1)[0].strip())
+            suffix = (guessed or "").lower()
+        if not suffix and data:
+            suffix = self._sniff_image_suffix(data) or ""
+        if suffix not in _KNOWN_IMAGE_SUFFIXES:
+            suffix = output_path.suffix.lower()
+        if suffix in _KNOWN_IMAGE_SUFFIXES:
+            return output_path.with_suffix(".jpg" if suffix == ".jpeg" else suffix)
+        return output_path
+
+    def _normalize_and_validate_image_file(self, path: Path) -> Path:
+        data = path.read_bytes()
+        if len(data) < _MIN_IMAGE_BYTES:
+            raise ValueError(f"图片数据过小: {len(data)} bytes")
+
+        detected_suffix = self._sniff_image_suffix(data)
+        if detected_suffix:
+            normalized_suffix = ".jpg" if detected_suffix == ".jpeg" else detected_suffix
+            current_suffix = ".jpg" if path.suffix.lower() == ".jpeg" else path.suffix.lower()
+            if current_suffix != normalized_suffix:
+                new_path = path.with_suffix(normalized_suffix)
+                path.replace(new_path)
+                path = new_path
+        elif path.suffix.lower() not in _KNOWN_IMAGE_SUFFIXES:
+            raise ValueError(f"无法识别图片格式: {path.name}")
+
+        return path
 
     @staticmethod
-    async def _download_blob_image_via_canvas(page: Page) -> bytes:
-        """通过 canvas 提取 blob URL 图片数据（Gemini 新版 UI 使用 blob URL）"""
-        import base64
-        data_url: Optional[str] = await page.evaluate("""() => {
-            const imgs = document.querySelectorAll('img');
-            for (const img of imgs) {
-                if (img.naturalWidth > 200 && img.alt && img.alt.includes('AI generated')) {
-                    const canvas = document.createElement('canvas');
-                    canvas.width = img.naturalWidth;
-                    canvas.height = img.naturalHeight;
-                    canvas.getContext('2d').drawImage(img, 0, 0);
-                    return canvas.toDataURL('image/png');
-                }
-            }
-            return null;
-        }""")
-        if not data_url:
-            raise ValueError("[GeminiWeb] canvas 提取失败：未找到 AI 生成图片")
-        b64 = data_url.split(",", 1)[1]
-        data = base64.b64decode(b64)
-        if len(data) < 1024:
-            raise ValueError(f"[GeminiWeb] canvas 提取数据过小: {len(data)} bytes")
-        logger.info("[GeminiWeb] blob 图片通过 canvas 提取: %d KB", len(data) // 1024)
-        return data
+    def _sniff_image_suffix(data: bytes) -> str | None:
+        if data.startswith(b"\x89PNG\r\n\x1a\n"):
+            return ".png"
+        if data.startswith(b"\xff\xd8\xff"):
+            return ".jpg"
+        if data.startswith((b"GIF87a", b"GIF89a")):
+            return ".gif"
+        if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+            return ".webp"
+        return None
 
     @staticmethod
     def _cleanup_profile_locks(user_data_dir: str):

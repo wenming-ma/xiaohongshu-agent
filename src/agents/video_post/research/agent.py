@@ -22,6 +22,12 @@ logger = get_logger(__name__)
 MAX_ITERATIONS = 10
 MAX_HISTORY_ROUNDS = 3
 
+_INVALID_TOOL_HISTORY_MARKERS = (
+    "tool call id is invalid",
+    "tool result's tool id",
+    "tool id not found",
+)
+
 
 class ResearchAgent(BaseAgent):
 
@@ -126,10 +132,10 @@ class ResearchAgent(BaseAgent):
             )
         except ModelHTTPError as e:
             error_text = str(e).lower()
-            if "tool call id is invalid" not in error_text:
+            if not any(marker in error_text for marker in _INVALID_TOOL_HISTORY_MARKERS):
                 raise
             logger.warning(
-                "检测到 tool call id 失效，已清空历史并在当前轮次重试一次。"
+                "检测到 tool history 失效，已清空历史并在当前轮次重试一次。"
             )
             state.message_history.clear()
             result = await self.generator.run(

@@ -89,7 +89,7 @@ def main() -> None:
             f"--limit {args.limit}",
         ]
         if not args.publish:
-            parts.extend(["--no-publish", "--no-feishu"])
+            parts.append("--no-publish")
         overrides["target_command"] = " ".join(parts)
 
     config = ClusterConfig.from_env(**overrides)
