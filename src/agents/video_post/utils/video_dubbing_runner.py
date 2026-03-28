@@ -17,7 +17,7 @@ from ....utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_DUB_SCRIPT = PROJECT_ROOT / "scripts" / "dub_video.py"
 
 

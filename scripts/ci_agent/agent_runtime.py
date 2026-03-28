@@ -29,7 +29,7 @@ WEB_SNIPPET_CHARS = 12000
 CONTROLLER_MEMORY_SUMMARY_CHARS = 360
 CONTROLLER_MEMORY_SHORT_CHARS = 160
 CONTROLLER_MEMORY_MEDIUM_CHARS = 220
-AGENT_LABELS = ("controller", "explore", "task", "fixer", "validator")
+AGENT_LABELS = ("controller", "explore", "task", "fixer", "validator", "recovery")
 TOOL_AGENT_HINTS = {
     "request_done": "controller",
     "request_rollback": "controller",
@@ -103,6 +103,21 @@ class ControllerCycleOutcome(BaseModel):
     output_dir: str = ""
     review_video_path: str = ""
     latest_validator_record: ValidatorRecord
+    workers: list[WorkerInvocation] = Field(default_factory=list)
+
+
+class RecoveryDecision(BaseModel):
+    status: Literal["RECOVERED", "GIVE_UP"]
+    reason: str
+    fix_summary: str = ""
+    validation_notes: str = ""
+
+
+class RecoveryCycleOutcome(BaseModel):
+    status: Literal["RECOVERED", "GIVE_UP"]
+    reason: str
+    fix_summary: str = ""
+    validation_notes: str = ""
     workers: list[WorkerInvocation] = Field(default_factory=list)
 
 
@@ -864,6 +879,27 @@ Your final response must be strict JSON matching this schema:
 """
 
 
+RECOVERY_ROLE = """\
+You are the recovery agent for the CI orchestrator.
+
+Your job is to repair runtime failures that escaped the normal controller/fixer/validator loop so Python can restart and continue the same attempt.
+
+Scope:
+- Fix orchestrator/runtime exceptions, state handling problems, integration breakages, and repo issues that prevent the CI loop from progressing.
+- You may modify source-repo code, CI agent code, supporting config, or the isolated worktree state if that is necessary to restore execution.
+- You may run focused shell commands and tests to confirm the exception root cause is repaired.
+
+Rules:
+- Do not pursue PASS, SPEED, or QUALITY optimization for the target command. Your only objective is restoring the CI loop itself.
+- Prefer the smallest coherent repair that addresses the exception root cause.
+- Read traceback, state, logs, and relevant code before editing.
+- If the worktree state is part of the problem, assume Python has already reset it to the attempt's `head_before` before you start.
+- Return `RECOVERED` only if the next process run should plausibly advance past the captured exception.
+- Return `GIVE_UP` if the issue cannot be repaired safely or confidently from the available context.
+- Summaries must be concise and concrete.
+"""
+
+
 def _message_text(message: BaseMessage) -> str:
     content = message.content
     if isinstance(content, str):
@@ -995,6 +1031,76 @@ class DeepAgentRuntime:
         self.config = config
         self._validator_memory_store = ValidatorMemoryStore(config.validator_memory_file, config.worktree_root)
         self._controller_memory_store = ControllerMemoryStore(config.controller_memory_file, config.worktree_root)
+
+    async def run_recovery_cycle(
+        self,
+        prompt: str,
+        *,
+        attempt_number: int,
+    ) -> RecoveryCycleOutcome:
+        self._validator_memory_store.ensure_exists()
+        self._controller_memory_store.ensure_exists()
+        project_runbook_memory = _virtual_memory_source(self.config.runbook_file, self.config.project_root)
+        controller_memory_source = _virtual_memory_source(self.config.controller_memory_file, self.config.project_root)
+        validator_memory_source = _virtual_memory_source(self.config.validator_memory_file, self.config.project_root)
+        worker_model = self.config.build_worker_model()
+
+        recovery = create_deep_agent(
+            model=worker_model,
+            system_prompt=RECOVERY_ROLE,
+            backend=LocalShellBackend(
+                root_dir=self.config.project_root,
+                virtual_mode=True,
+                inherit_env=True,
+                env=self.config.build_env(),
+            ),
+            memory=[
+                project_runbook_memory,
+                controller_memory_source,
+                validator_memory_source,
+            ],
+            response_format=ToolStrategy(schema=RecoveryDecision),
+            name="ci-agent-recovery",
+        )
+
+        run_config = {"recursion_limit": max(40, self.config.max_worker_turns * 4)}
+        result: Any | None = None
+        stream_run_names: dict[str, str] = {}
+        async for event in recovery.astream_events(
+            {"messages": [("user", prompt)]},
+            config=run_config,
+            version="v2",
+        ):
+            _log_stream_event(event, stream_run_names)
+            streamed_output = _extract_stream_result(event, "ci-agent-recovery")
+            if streamed_output is not None:
+                result = streamed_output
+
+        if result is None:
+            logger.warning("Recovery stream returned no final output; falling back to ainvoke without event logging")
+            result = await recovery.ainvoke(
+                {"messages": [("user", prompt)]},
+                config=run_config,
+            )
+
+        workers = [_extract_worker("recovery", prompt, result)]
+        structured = _parse_structured_response(result, RecoveryDecision)
+        if isinstance(structured, RecoveryDecision):
+            return RecoveryCycleOutcome(
+                status=structured.status,
+                reason=structured.reason,
+                fix_summary=structured.fix_summary,
+                validation_notes=structured.validation_notes,
+                workers=workers,
+            )
+        logger.warning("Recovery agent returned no structured response, defaulting to GIVE_UP")
+        return RecoveryCycleOutcome(
+            status="GIVE_UP",
+            reason="Recovery agent did not return a structured decision.",
+            fix_summary="",
+            validation_notes="",
+            workers=workers,
+        )
 
     async def run_controller_cycle(self, prompt: str, *, attempt_number: int) -> ControllerCycleOutcome:
         self._validator_memory_store.ensure_exists()

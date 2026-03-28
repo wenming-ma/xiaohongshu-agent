@@ -4,13 +4,14 @@ You are maintaining the Xiaohongshu video post pipeline inside a dedicated CI wo
 
 ## Roles
 
-There are five agent roles in this workflow:
+There are six agent roles in this workflow:
 
 - `controller`: the only scheduler. It decides what to improve next and delegates work.
 - `explore`: the read-only discovery subagent for code search and evidence gathering.
 - `task`: the broader general-purpose helper for multi-step exploration.
 - `fixer`: the only role allowed to change repository code.
 - `validator`: the only role allowed to execute the target command.
+- `recovery`: the only role used when the orchestrator or runtime itself crashes.
 
 ## Workflow
 
@@ -29,6 +30,7 @@ There are five agent roles in this workflow:
 - On a fresh session or whenever validator memory is stale, `controller` should ask `validator` to run first.
 - After any meaningful code change, `controller` should ask `validator` to run again before deciding whether to keep or discard the attempt.
 - Explore boldly and verify carefully. Do not lock onto a direction without evidence.
+- If Python catches an unhandled `ci_agent` exception, it may invoke `recovery` before retrying the same attempt.
 
 ## Optimization Order
 
@@ -87,6 +89,14 @@ There are five agent roles in this workflow:
 - If the same root cause remains, the attempt should be discarded.
 - If a previously green target regresses, the attempt should be discarded.
 - If the system advances materially, preserve the attempt and tell controller what to optimize next.
+
+## Recovery Rules
+
+- `recovery` is only for restoring the `ci_agent` process after an orchestrator/runtime failure.
+- `recovery` may edit `scripts/ci_agent`, related runtime code, cached state, or isolated worktree files if that is required to restore execution.
+- `recovery` must not pursue PASS, SPEED, or QUALITY optimization goals.
+- `recovery` should fix the failure root cause, run focused checks, and then return either `RECOVERED` or `GIVE_UP`.
+- If `recovery` cannot justify another retry of the same attempt, it should return `GIVE_UP`.
 
 ## Git Rules
 

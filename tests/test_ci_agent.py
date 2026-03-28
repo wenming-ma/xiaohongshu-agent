@@ -8,6 +8,7 @@ from scripts.ci_agent.agent_runtime import (
     ControllerMemoryStore,
     ControllerCycleOutcome,
     DoneRequest,
+    RecoveryCycleOutcome,
     RollbackRequest,
     ValidationCommandRunner,
     ValidationRunReport,
@@ -507,6 +508,123 @@ class FakeNotifier:
         return None
 
 
+def _done_outcome(
+    config: ClusterConfig,
+    *,
+    attempt_number: int,
+    prompt: str,
+    reason: str = "Validated state is good enough to stop.",
+) -> ControllerCycleOutcome:
+    output_dir = config.worktree_root / "artifacts"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    video_path = output_dir / "result_dubbed.mp4"
+    video_path.write_bytes(b"fake-video")
+    record = _validator_record(
+        config,
+        attempt_number=attempt_number,
+        label="steady-state-validation",
+        exit_code=0,
+        duration_seconds=0.8,
+        stdout="ok\n",
+        stderr="",
+        verdict="PASS",
+        reason="The current state is green and good enough to stop.",
+        execution_record="Validated the current worktree again and it remains green.",
+    )
+    return ControllerCycleOutcome(
+        action="DONE",
+        objective_stage="QUALITY",
+        objective="Stop after the current validated result.",
+        reason=reason,
+        fix_summary="No code changes.",
+        output_dir=str(output_dir),
+        review_video_path=str(video_path),
+        latest_validator_record=record,
+        workers=[
+            WorkerInvocation(worker_type="controller", prompt_summary=prompt, final_text="Stop with the review path."),
+            WorkerInvocation(worker_type="validator", prompt_summary="Confirm the current state.", final_text="Green and stable."),
+        ],
+    )
+
+
+class RecoveringRuntime:
+    def __init__(self, config: ClusterConfig):
+        self.config = config
+        self.controller_attempts: list[int] = []
+        self.recovery_attempts: list[int] = []
+
+    async def run_controller_cycle(self, prompt: str, *, attempt_number: int) -> ControllerCycleOutcome:
+        self.controller_attempts.append(attempt_number)
+        if len(self.controller_attempts) == 1:
+            raise RuntimeError("controller crashed on first attempt")
+        return _done_outcome(self.config, attempt_number=attempt_number, prompt=prompt)
+
+    async def run_recovery_cycle(self, prompt: str, *, attempt_number: int) -> RecoveryCycleOutcome:
+        self.recovery_attempts.append(attempt_number)
+        return RecoveryCycleOutcome(
+            status="RECOVERED",
+            reason="Patched the crash and the same attempt can be retried.",
+            fix_summary="Recovered controller execution.",
+            validation_notes="No validation run in recovery.",
+            workers=[WorkerInvocation(worker_type="recovery", prompt_summary=prompt, final_text="Recovered.")],
+        )
+
+    def note_rollback(self, *, attempt_number: int, rollback_to: str, reason: str) -> None:
+        raise AssertionError("RecoveringRuntime should not roll back in this test")
+
+
+class AlwaysFailingRecoveryRuntime:
+    def __init__(self, config: ClusterConfig):
+        self.config = config
+        self.controller_attempts: list[int] = []
+        self.recovery_attempts: list[int] = []
+
+    async def run_controller_cycle(self, prompt: str, *, attempt_number: int) -> ControllerCycleOutcome:
+        self.controller_attempts.append(attempt_number)
+        raise RuntimeError(f"controller crashed on attempt {attempt_number}")
+
+    async def run_recovery_cycle(self, prompt: str, *, attempt_number: int) -> RecoveryCycleOutcome:
+        self.recovery_attempts.append(attempt_number)
+        return RecoveryCycleOutcome(
+            status="RECOVERED",
+            reason="Try the same attempt again.",
+            fix_summary="Patched something transient.",
+            validation_notes="",
+            workers=[WorkerInvocation(worker_type="recovery", prompt_summary=prompt, final_text="Recovered.")],
+        )
+
+    def note_rollback(self, *, attempt_number: int, rollback_to: str, reason: str) -> None:
+        raise AssertionError("AlwaysFailingRecoveryRuntime should not roll back in this test")
+
+
+class ResetCheckingRecoveryRuntime:
+    def __init__(self, config: ClusterConfig):
+        self.config = config
+        self.controller_calls = 0
+        self.observed_recovery_file_text = ""
+
+    async def run_controller_cycle(self, prompt: str, *, attempt_number: int) -> ControllerCycleOutcome:
+        self.controller_calls += 1
+        target = self.config.worktree_root / "app.txt"
+        if self.controller_calls == 1:
+            target.write_text("broken\n", encoding="utf-8")
+            raise RuntimeError("crash after mutating worktree")
+        return _done_outcome(self.config, attempt_number=attempt_number, prompt=prompt)
+
+    async def run_recovery_cycle(self, prompt: str, *, attempt_number: int) -> RecoveryCycleOutcome:
+        self.observed_recovery_file_text = (self.config.worktree_root / "app.txt").read_text(encoding="utf-8")
+        return RecoveryCycleOutcome(
+            status="RECOVERED",
+            reason="Worktree is back at head_before.",
+            fix_summary="Prepared retry.",
+            validation_notes="",
+            workers=[WorkerInvocation(worker_type="recovery", prompt_summary=prompt, final_text="Recovered.")],
+        )
+
+    def note_rollback(self, *, attempt_number: int, rollback_to: str, reason: str) -> None:
+        raise AssertionError("ResetCheckingRecoveryRuntime should not roll back in this test")
+
+
 def test_same_error_rolls_back_only_isolated_worktree(tmp_path: Path) -> None:
     repo = _create_repo(tmp_path)
     original_head = _git(repo, "rev-parse", "HEAD")
@@ -597,3 +715,98 @@ def test_done_request_without_review_video_path_is_rejected(tmp_path: Path) -> N
     assert notifier.files == [(str(config.worktree_root / "artifacts" / "result_dubbed.mp4"), "本轮生成的视频已附上，请检查内容、字幕、中文配音和整体完成度。")]
     assert "Controller 请求结束" in notifier.messages[0]
     assert orchestrator.state.attempts[-1].video_path.endswith("result_dubbed.mp4")
+
+
+def test_orchestrator_recovers_and_retries_same_attempt_number(tmp_path: Path) -> None:
+    repo = _create_repo(tmp_path)
+    cache_root = repo / ".cache" / "ci_agent"
+    config = ClusterConfig.from_env(
+        project_root=repo,
+        cache_root=cache_root,
+        session_id="session123",
+        target_command="python -c \"print('ok')\"",
+        max_attempts=1,
+        min_attempts_before_finish=1,
+        sleep_between_attempts=0,
+    )
+    runtime = RecoveringRuntime(config)
+    notifier = FakeNotifier(replies=["APPROVED"])
+    restart_argvs: list[list[str]] = []
+    orchestrator = Orchestrator(
+        config,
+        agent_runtime=runtime,  # type: ignore[arg-type]
+        notifier=notifier,
+        restart_callback=lambda argv: restart_argvs.append(list(argv)),
+    )
+
+    success = asyncio.run(orchestrator.run())
+
+    assert success is True
+    assert runtime.controller_attempts == [1, 1]
+    assert runtime.recovery_attempts == [1]
+    assert len(restart_argvs) == 1
+    assert "--resume" in restart_argvs[0]
+    assert len(orchestrator.state.recovery_history) == 1
+    recovery = orchestrator.state.recovery_history[0]
+    assert recovery.status == "RECOVERED"
+    assert recovery.restarted is True
+    assert len(orchestrator.state.attempts) == 1
+    assert orchestrator.state.attempts[0].attempt_number == 1
+    assert orchestrator.state.status == "success"
+
+
+def test_recovery_resets_worktree_to_head_before(tmp_path: Path) -> None:
+    repo = _create_repo(tmp_path)
+    cache_root = repo / ".cache" / "ci_agent"
+    config = ClusterConfig.from_env(
+        project_root=repo,
+        cache_root=cache_root,
+        session_id="session123",
+        target_command="python -c \"print('ok')\"",
+        max_attempts=1,
+        min_attempts_before_finish=1,
+        sleep_between_attempts=0,
+    )
+    runtime = ResetCheckingRecoveryRuntime(config)
+    notifier = FakeNotifier(replies=["APPROVED"])
+    orchestrator = Orchestrator(
+        config,
+        agent_runtime=runtime,  # type: ignore[arg-type]
+        notifier=notifier,
+        restart_callback=lambda argv: None,
+    )
+
+    success = asyncio.run(orchestrator.run())
+
+    assert success is True
+    assert runtime.observed_recovery_file_text == "original\n"
+
+
+def test_recovery_limit_marks_session_stuck(tmp_path: Path) -> None:
+    repo = _create_repo(tmp_path)
+    cache_root = repo / ".cache" / "ci_agent"
+    config = ClusterConfig.from_env(
+        project_root=repo,
+        cache_root=cache_root,
+        session_id="session123",
+        target_command="python -c \"print('ok')\"",
+        max_attempts=1,
+        min_attempts_before_finish=1,
+        max_recovery_attempts_per_attempt=3,
+        sleep_between_attempts=0,
+    )
+    runtime = AlwaysFailingRecoveryRuntime(config)
+    orchestrator = Orchestrator(
+        config,
+        agent_runtime=runtime,  # type: ignore[arg-type]
+        restart_callback=lambda argv: None,
+    )
+
+    success = asyncio.run(orchestrator.run())
+
+    assert success is False
+    assert orchestrator.state.status == "stuck"
+    assert runtime.controller_attempts == [1, 1, 1, 1]
+    assert runtime.recovery_attempts == [1, 1, 1]
+    assert len(orchestrator.state.recovery_history) == 4
+    assert orchestrator.state.recovery_history[-1].status == "limit_exceeded"

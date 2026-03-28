@@ -23,6 +23,23 @@ class WorkerInvocation(BaseModel):
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
+class RecoveryRecord(BaseModel):
+    attempt_number: int = 0
+    recovery_number: int = 0
+    phase: str = ""
+    error_type: str = ""
+    error_message: str = ""
+    traceback_excerpt: str = ""
+    traceback_log_path: str = ""
+    head_before: str = ""
+    status: str = ""
+    reason: str = ""
+    fix_summary: str = ""
+    validation_notes: str = ""
+    restarted: bool = False
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
 class AttemptRecord(BaseModel):
     attempt_number: int
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -74,6 +91,7 @@ class ClusterState(BaseModel):
     worktree_root: str = ""
     controller_memory_file: str = ""
     validator_memory_file: str = ""
+    recovery_history: list[RecoveryRecord] = Field(default_factory=list)
     source_head: str = ""
     source_dirty: bool = False
     status: str = "running"
