@@ -6,8 +6,6 @@ from pydantic_ai import Agent
 from ....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import CoverImageResult, XHSVideoContent
 from ....utils.providers import get_text_model, GeminiImageClient
-from ....utils.watermark_remover import remove_gemini_watermark
-from ....utils.image_sanitizer import sanitize_image
 from ....utils.video_frames import extract_frames
 from ....utils.logger import get_logger
 from ....config.settings import APIConfig
@@ -71,7 +69,7 @@ class CoverAgent(BaseAgent):
 
             if self._use_api:
                 try:
-                    await self.image_client.generate_image(
+                    cover_path = await self.image_client.generate_image(
                         prompt=prompt,
                         output_path=cover_path,
                         aspect_ratio="16:9",
@@ -86,7 +84,6 @@ class CoverAgent(BaseAgent):
                 return await self._run_web_agent(prompt, cover_path, frames)
 
             if cover_path.exists() and cover_path.stat().st_size > 0:
-                cover_path = await self._post_process(cover_path)
                 logger.info(f"封面生成成功: {cover_path}")
                 return CoverImageResult(success=True, cover_path=str(cover_path))
             else:
@@ -115,30 +112,11 @@ class CoverAgent(BaseAgent):
         reference_images: list[Path],
     ) -> CoverImageResult:
         web_agent = GeminiWebAgent(output_dir=cover_path.parent)
-        result = await web_agent.forward(
+        return await web_agent.forward(
             prompt=prompt,
             output_path=cover_path,
             reference_images=reference_images,
         )
-        if result.success and cover_path.exists():
-            processed = await self._post_process(cover_path)
-            result.cover_path = str(processed)
-        return result
-
-    async def _post_process(self, image_path: Path) -> Path:
-        try:
-            remove_gemini_watermark(image_path)
-            logger.debug("去水印完成: %s", image_path.name)
-        except Exception as e:
-            logger.warning("去水印失败: %s", e)
-        from ....config.settings import SanitizerConfig
-        if SanitizerConfig.ENABLED:
-            try:
-                image_path = await sanitize_image(image_path)
-                logger.debug("去AI标记完成: %s", image_path.name)
-            except Exception as e:
-                logger.warning("去AI标记失败: %s", e)
-        return image_path
 
     async def _generate_cover_prompt(
         self,
