@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 
 from deepagents import CompiledSubAgent, create_deep_agent
 from deepagents.backends import FilesystemBackend, LocalShellBackend
-from deepagents.backends.protocol import EditResult, WriteResult
+from deepagents.backends.protocol import EditResult, ExecuteResponse, WriteResult
 from langchain.agents.structured_output import ToolStrategy
 from langchain.tools import tool
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
@@ -190,7 +190,10 @@ def _tool_log_detail(event: dict[str, Any]) -> str:
     if not isinstance(payload, dict):
         return ""
     if isinstance(payload.get("subagent_type"), str):
-        return payload["subagent_type"]
+        subagent_type = payload["subagent_type"]
+        if subagent_type == "general-purpose":
+            return "task"
+        return subagent_type
     for key in ("command", "query", "url", "file_path", "path", "label"):
         value = payload.get(key)
         if isinstance(value, str) and value.strip():
@@ -366,7 +369,84 @@ class ReadOnlyFilesystemBackend(FilesystemBackend):
         return self.edit(file_path, old_string, new_string, replace_all=replace_all)
 
 
-class ReadOnlyShellBackend(LocalShellBackend):
+class Utf8LocalShellBackend(LocalShellBackend):
+    def execute(
+        self,
+        command: str,
+        *,
+        timeout: int | None = None,
+    ) -> ExecuteResponse:
+        if not command or not isinstance(command, str):
+            return ExecuteResponse(
+                output="Error: Command must be a non-empty string.",
+                exit_code=1,
+                truncated=False,
+            )
+
+        effective_timeout = timeout if timeout is not None else self._default_timeout
+        if effective_timeout <= 0:
+            msg = f"timeout must be positive, got {effective_timeout}"
+            raise ValueError(msg)
+
+        prepared_command = command
+        if os.name == "nt":
+            prepared_command = f"chcp 65001 >nul && {command}"
+
+        try:
+            result = subprocess.run(  # noqa: S602
+                prepared_command,
+                check=False,
+                shell=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=effective_timeout,
+                env=self._env,
+                cwd=str(self.cwd),
+            )
+
+            output_parts: list[str] = []
+            if result.stdout:
+                output_parts.append(result.stdout)
+            if result.stderr:
+                stderr_lines = result.stderr.strip().split("\n")
+                output_parts.extend(f"[stderr] {line}" for line in stderr_lines if line)
+
+            output = "\n".join(output_parts) if output_parts else "<no output>"
+            truncated = False
+            if len(output) > self._max_output_bytes:
+                output = output[: self._max_output_bytes]
+                output += f"\n\n... Output truncated at {self._max_output_bytes} bytes."
+                truncated = True
+
+            if result.returncode != 0:
+                output = f"{output.rstrip()}\n\nExit code: {result.returncode}"
+
+            return ExecuteResponse(
+                output=output,
+                exit_code=result.returncode,
+                truncated=truncated,
+            )
+        except subprocess.TimeoutExpired:
+            if timeout is not None:
+                msg = f"Error: Command timed out after {effective_timeout} seconds (custom timeout). The command may be stuck or require more time."
+            else:
+                msg = f"Error: Command timed out after {effective_timeout} seconds. For long-running commands, re-run using the timeout parameter."
+            return ExecuteResponse(
+                output=msg,
+                exit_code=124,
+                truncated=False,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return ExecuteResponse(
+                output=f"Error executing command ({type(exc).__name__}): {exc}",
+                exit_code=1,
+                truncated=False,
+            )
+
+
+class ReadOnlyShellBackend(Utf8LocalShellBackend):
     def write(self, file_path: str, content: str) -> WriteResult:
         return WriteResult(error=f"Read-only shell backend: refusing to write {file_path}")
 
@@ -940,6 +1020,9 @@ Rules:
 - Do not run the target command; validator owns that.
 - You have shell access. Use it boldly for investigation, prototyping, and gathering references.
 - Shell starts in the analysis workspace. Useful environment variables include `CI_AGENT_SOURCE_ROOT`, `CI_AGENT_WORKTREE_ROOT`, and `CI_AGENT_ANALYSIS_ROOT`.
+- Filesystem tools in this subagent use virtual paths rooted at the analysis workspace. Example: use `/_failed.json`, not a Windows absolute path, with `read_file`, `ls`, `glob`, or `grep`.
+- If you need to inspect source-repo files outside the analysis workspace, prefer the `explore` subagent or use shell commands with explicit absolute paths.
+- Do not waste time trying to discover hidden virtual-path mappings. Analysis files are directly available under the analysis workspace root.
 - If you clone external repositories or download artifacts, keep them under the analysis workspace instead of the main repository.
 - Return concrete findings, tradeoffs, and a recommended next move for the controller.
 """
@@ -1168,7 +1251,7 @@ class DeepAgentRuntime:
         recovery = create_deep_agent(
             model=worker_model,
             system_prompt=RECOVERY_ROLE,
-            backend=LocalShellBackend(
+            backend=Utf8LocalShellBackend(
                 root_dir=self.config.project_root,
                 virtual_mode=True,
                 inherit_env=True,
@@ -1396,7 +1479,7 @@ class DeepAgentRuntime:
         fixer = create_deep_agent(
             model=worker_model,
             system_prompt=FIXER_ROLE,
-            backend=LocalShellBackend(
+            backend=Utf8LocalShellBackend(
                 root_dir=self.config.worktree_root,
                 virtual_mode=True,
                 inherit_env=True,
@@ -1424,6 +1507,14 @@ class DeepAgentRuntime:
                 virtual_mode=True,
             ),
             subagents=[
+                CompiledSubAgent(
+                    name="general-purpose",
+                    description=(
+                        "Alias for the task helper. Use this for broad exploratory work when the model asks for the "
+                        "default general-purpose agent."
+                    ),
+                    runnable=task,
+                ),
                 CompiledSubAgent(
                     name="explore",
                     description=(

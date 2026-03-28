@@ -132,6 +132,9 @@ def test_cluster_config_defaults_to_session_scoped_cache_paths(tmp_path: Path) -
     assert config.controller_memory_file == repo / ".cache" / "ci_agent" / "memory" / "session123" / "controller.md"
     assert config.validator_memory_file == repo / ".cache" / "ci_agent" / "memory" / "session123" / "validator.md"
     assert config.git_branch == "ci-agent/session123"
+    built_env = config.build_env()
+    assert built_env["PYTHONUTF8"] == "1"
+    assert built_env["PYTHONIOENCODING"] == "utf-8"
 
 
 def test_build_controller_model_uses_chat_completions_settings(tmp_path: Path, monkeypatch) -> None:
@@ -278,6 +281,22 @@ def test_stream_event_logging_reports_controller_delegation(caplog) -> None:
         _log_stream_event(event, run_names)
 
     assert "delegating to validator" in caplog.text
+
+
+def test_stream_event_logging_normalizes_general_purpose_to_task(caplog) -> None:
+    run_names: dict[str, str] = {}
+    event = {
+        "event": "on_tool_start",
+        "name": "task",
+        "run_id": "run-task",
+        "parent_ids": [],
+        "data": {"input": {"subagent_type": "general-purpose"}},
+    }
+
+    with caplog.at_level(logging.INFO):
+        _log_stream_event(event, run_names)
+
+    assert "delegating to task" in caplog.text
 
 
 def test_stream_event_logging_inferrs_agent_from_parent_chain(caplog) -> None:

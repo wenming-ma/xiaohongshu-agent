@@ -104,6 +104,8 @@ class ClusterConfig:
         env.setdefault("CI_AGENT_SOURCE_ROOT", str(self.project_root))
         env.setdefault("CI_AGENT_WORKTREE_ROOT", str(self.worktree_root))
         env.setdefault("CI_AGENT_ANALYSIS_ROOT", str(self.cache_root / "analysis" / self.session_id))
+        env.setdefault("PYTHONUTF8", "1")
+        env.setdefault("PYTHONIOENCODING", "utf-8")
         return env
 
     def build_worker_model(self) -> ChatOpenAI:
