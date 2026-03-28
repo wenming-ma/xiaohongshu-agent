@@ -25,10 +25,17 @@ class WorkerInvocation(BaseModel):
 class AttemptRecord(BaseModel):
     attempt_number: int
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    objective_stage: str = "PASS"
+    objective_summary: str = ""
+    controller_reason: str = ""
+    fixer_directive: str = ""
+    validator_directive: str = ""
     exit_code: int | None = None
+    duration_seconds: float | None = None
     stdout_tail: str = ""
     stderr_tail: str = ""
     validation_exit_code: int | None = None
+    validation_duration_seconds: float | None = None
     validation_stdout_tail: str = ""
     validation_stderr_tail: str = ""
     log_files_read: list[str] = Field(default_factory=list)
@@ -52,6 +59,12 @@ class ClusterState(BaseModel):
     started_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     target_command: str = ""
     attempts: list[AttemptRecord] = Field(default_factory=list)
+    current_objective_stage: str = "PASS"
+    current_objective: str = "Make the target command pass."
+    current_controller_reason: str = ""
+    current_fixer_directive: str = ""
+    current_validator_directive: str = ""
+    best_success_duration_seconds: float | None = None
     current_branch: str = ""
     original_branch: str = ""
     source_repo_root: str = ""
@@ -78,6 +91,9 @@ class ClusterState(BaseModel):
             status = "ROLLED_BACK" if a.rolled_back else ("COMMITTED" if a.committed else "NO_CHANGE")
             lines.append(
                 f"Attempt #{a.attempt_number} [{status}] exit={a.exit_code}\n"
+                f"  Objective: {a.objective_stage} - {a.objective_summary[:120]}\n"
+                f"  Controller: {a.controller_reason[:160]}\n"
+                f"  Duration: target={_format_duration(a.duration_seconds)}, validation={_format_duration(a.validation_duration_seconds)}\n"
                 f"  Category: {a.diagnosis_category}\n"
                 f"  Diagnosis: {a.diagnosis[:300]}\n"
                 f"  Fix: {a.fix_description[:200]}\n"
@@ -85,3 +101,9 @@ class ClusterState(BaseModel):
                 f"  Files: {', '.join(a.files_modified) or 'none'}"
             )
         return "\n\n".join(lines)
+
+
+def _format_duration(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:.2f}s"

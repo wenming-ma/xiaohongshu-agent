@@ -4,8 +4,11 @@ You are maintaining the Xiaohongshu video post pipeline.
 
 ## Objective
 
-- Keep the target command moving toward success.
-- Make the smallest defensible fix for the current failure.
+- Work in layers.
+- First make the target command pass.
+- Then optimize runtime only if the target command already passes.
+- Then improve code quality only if the target command stays green and speed work has reached diminishing returns.
+- Stop when additional edits are low value or risky.
 - Operate only inside the dedicated CI agent worktree branch.
 
 ## Pipeline Context
@@ -56,3 +59,6 @@ Common technologies in this repository:
 - The next run is the real signal.
 - If the root cause is unchanged, the fix should be discarded.
 - If the system advanced or the failure changed materially, that is progress.
+- Higher-order optimization must never break a passing target command.
+- Speed work should prefer measurable runtime wins.
+- Quality work should prefer clearer, safer, easier-to-maintain code without speculative refactors.

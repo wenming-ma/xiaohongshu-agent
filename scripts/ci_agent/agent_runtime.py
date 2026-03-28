@@ -22,6 +22,14 @@ class ValidationVerdict(BaseModel):
     reason: str
 
 
+class ObjectiveDecision(BaseModel):
+    stage: Literal["PASS", "SPEED", "QUALITY", "DONE"]
+    objective: str
+    reason: str
+    fixer_system_overlay: str = ""
+    validator_system_overlay: str = ""
+
+
 class ReadOnlyFilesystemBackend(FilesystemBackend):
     def write(self, file_path: str, content: str) -> WriteResult:
         return WriteResult(error=f"Read-only backend: refusing to write {file_path}")
@@ -52,6 +60,37 @@ class ValidationOutcome(BaseModel):
     verdict: Literal["SAME_ERROR", "PROGRESS"]
     reason: str
     worker: WorkerInvocation
+
+
+class ControllerOutcome(BaseModel):
+    stage: Literal["PASS", "SPEED", "QUALITY", "DONE"]
+    objective: str
+    reason: str
+    fixer_system_overlay: str = ""
+    validator_system_overlay: str = ""
+    worker: WorkerInvocation
+
+
+CONTROLLER_ROLE = """\
+You are the higher-level CI objective controller for a Xiaohongshu video post pipeline.
+
+Choose the single current optimization stage for the fixer agent.
+
+Priority order:
+1. PASS: the target command must pass before anything else matters.
+2. SPEED: only after the target command passes; reduce runtime while preserving behavior.
+3. QUALITY: only after the target command passes and speed work has reached diminishing returns; improve maintainability, clarity, and safety without regressing behavior or speed materially.
+4. DONE: only when the current baseline is good enough and no further worthwhile optimization is justified right now.
+
+Rules:
+- If the latest target run failed, return PASS.
+- Do not skip straight to QUALITY when PASS is not already satisfied.
+- Be conservative about DONE; choose it only when the recent history suggests further edits are low value or risky.
+- Return a specific objective sentence the fixer can execute in one attempt.
+- Also return `fixer_system_overlay` and `validator_system_overlay`.
+- These overlays are temporary system-level operating instructions for this attempt.
+- You may change strategy between attempts, but you must still respect repository safety and worktree isolation.
+"""
 
 
 FIXER_ROLE = """\
@@ -139,45 +178,110 @@ def _extract_worker(worker_type: str, prompt: str, result: dict) -> WorkerInvoca
     )
 
 
+def _parse_structured_response(result: dict, schema: type[BaseModel]) -> BaseModel | None:
+    structured = result.get("structured_response")
+    if isinstance(structured, schema):
+        return structured
+    if isinstance(structured, dict):
+        return schema.model_validate(structured)
+    return None
+
+
+def _build_system_prompt(shared_prompt: str, role_prompt: str, overlay: str = "") -> str:
+    if not overlay.strip():
+        return shared_prompt + role_prompt
+    return (
+        shared_prompt
+        + role_prompt
+        + "\n\nController directive for this attempt:\n"
+        + overlay.strip()
+        + "\n\nYou must follow this directive unless it conflicts with repository safety rules above."
+    )
+
+
 class DeepAgentRuntime:
     def __init__(self, config: ClusterConfig):
         runbook = _load_runbook(config.runbook_file)
-        shared_prompt = f"{runbook}\n\n" if runbook else ""
+        self._shared_prompt = f"{runbook}\n\n" if runbook else ""
         self.config = config
-        self._fixer = create_deep_agent(
+        self._controller = create_deep_agent(
             model=config.model,
-            system_prompt=shared_prompt + FIXER_ROLE,
-            backend=LocalShellBackend(
-                root_dir=config.worktree_root,
-                virtual_mode=True,
-                inherit_env=True,
-                env=config.build_env(),
-            ),
-        )
-        self._validator = create_deep_agent(
-            model=config.model,
-            system_prompt=shared_prompt + VALIDATOR_ROLE,
+            system_prompt=_build_system_prompt(self._shared_prompt, CONTROLLER_ROLE),
             backend=ReadOnlyFilesystemBackend(
                 root_dir=config.worktree_root,
+                virtual_mode=True,
+            ),
+            response_format=ToolStrategy(schema=ObjectiveDecision),
+        )
+
+    def _create_fixer(self, overlay: str):
+        return create_deep_agent(
+            model=self.config.model,
+            system_prompt=_build_system_prompt(self._shared_prompt, FIXER_ROLE, overlay),
+            backend=LocalShellBackend(
+                root_dir=self.config.worktree_root,
+                virtual_mode=True,
+                inherit_env=True,
+                env=self.config.build_env(),
+            ),
+        )
+
+    def _create_validator(self, overlay: str):
+        return create_deep_agent(
+            model=self.config.model,
+            system_prompt=_build_system_prompt(self._shared_prompt, VALIDATOR_ROLE, overlay),
+            backend=ReadOnlyFilesystemBackend(
+                root_dir=self.config.worktree_root,
                 virtual_mode=True,
             ),
             response_format=ToolStrategy(schema=ValidationVerdict),
         )
 
-    async def run_fixer(self, prompt: str) -> WorkerInvocation:
-        result = await self._fixer.ainvoke(
+    async def run_controller(self, prompt: str) -> ControllerOutcome:
+        result = await self._controller.ainvoke(
+            {"messages": [("user", prompt)]},
+            config={"recursion_limit": max(20, self.config.max_worker_turns * 2)},
+        )
+        worker = _extract_worker("controller", prompt, result)
+        structured = _parse_structured_response(result, ObjectiveDecision)
+        if isinstance(structured, ObjectiveDecision):
+            stage = structured.stage
+            objective = structured.objective
+            reason = structured.reason
+            fixer_system_overlay = structured.fixer_system_overlay
+            validator_system_overlay = structured.validator_system_overlay
+        else:
+            logger.warning("Controller returned no structured response, defaulting to PASS")
+            stage = "PASS"
+            objective = "Make the target command pass."
+            reason = "Controller response was not structured."
+            fixer_system_overlay = "Focus narrowly on restoring a passing target command."
+            validator_system_overlay = "Judge only whether the target command meaningfully improved."
+        return ControllerOutcome(
+            stage=stage,
+            objective=objective,
+            reason=reason,
+            fixer_system_overlay=fixer_system_overlay,
+            validator_system_overlay=validator_system_overlay,
+            worker=worker,
+        )
+
+    async def run_fixer(self, prompt: str, system_overlay: str = "") -> WorkerInvocation:
+        fixer = self._create_fixer(system_overlay)
+        result = await fixer.ainvoke(
             {"messages": [("user", prompt)]},
             config={"recursion_limit": max(50, self.config.max_worker_turns * 4)},
         )
         return _extract_worker("fixer", prompt, result)
 
-    async def run_validator(self, prompt: str) -> ValidationOutcome:
-        result = await self._validator.ainvoke(
+    async def run_validator(self, prompt: str, system_overlay: str = "") -> ValidationOutcome:
+        validator = self._create_validator(system_overlay)
+        result = await validator.ainvoke(
             {"messages": [("user", prompt)]},
             config={"recursion_limit": max(30, self.config.max_worker_turns * 2)},
         )
         worker = _extract_worker("validator", prompt, result)
-        structured = result.get("structured_response")
+        structured = _parse_structured_response(result, ValidationVerdict)
         if isinstance(structured, ValidationVerdict):
             verdict = structured.verdict
             reason = structured.reason
