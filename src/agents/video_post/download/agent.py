@@ -64,6 +64,8 @@ class DownloadAgent(BaseAgent):
 
     role = "视频下载专员"
     goal = "使用 yt-dlp 从多平台下载视频"
+    DUBBING_SOFT_BONUS = 8.0
+    KEEP_WHISPER_LOADED_BY_DEFAULT = True
 
     def init_tools(self) -> None:
         pass
@@ -83,53 +85,64 @@ class DownloadAgent(BaseAgent):
         if not sources:
             raise RuntimeError("没有可下载的视频源")
 
-        total_sources = len(sources)
-        top_k = max(1, min(preselect_top_k, total_sources))
-        logger.info(f"候选视频总数: {total_sources}，预筛选 Top {top_k} 进入下载")
+        try:
+            total_sources = len(sources)
+            top_k = max(1, min(preselect_top_k, total_sources))
+            logger.info(f"候选视频总数: {total_sources}，预筛选 Top {top_k} 进入下载")
 
-        # Step 1: 先做轻量预评分，避免下载全部候选
-        selected_sources = self._preselect_sources(sources, topic, top_k)
+            # Step 1: 先做轻量预评分，避免下载全部候选
+            selected_sources = self._preselect_sources(sources, topic, top_k)
 
-        # Step 2: 仅下载 TopK，并做转录用于精细评分
-        candidates = await self._download_candidates(
-            selected_sources,
-            output_dir,
-            stage_name=f"Top{len(selected_sources)}",
-        )
-
-        # 回退：若 TopK 全部失败，再尝试其余候选，避免整批失败
-        if not candidates and len(selected_sources) < total_sources:
-            selected_urls = {s.url for s in selected_sources}
-            fallback_sources = [s for s in sources if s.url not in selected_urls]
-            logger.warning(
-                f"Top{len(selected_sources)} 下载全部失败，回退尝试剩余 {len(fallback_sources)} 个候选"
-            )
+            # Step 2: 仅下载 TopK，并做转录用于精细评分
             candidates = await self._download_candidates(
-                fallback_sources,
+                selected_sources,
                 output_dir,
-                stage_name="Fallback",
+                stage_name=f"Top{len(selected_sources)}",
             )
 
-        if not candidates:
-            raise RuntimeError(f"所有 {total_sources} 个视频源下载均失败")
+            # 回退：若 TopK 全部失败，再尝试其余候选，避免整批失败
+            if not candidates and len(selected_sources) < total_sources:
+                selected_urls = {s.url for s in selected_sources}
+                fallback_sources = [s for s in sources if s.url not in selected_urls]
+                logger.warning(
+                    f"Top{len(selected_sources)} 下载全部失败，回退尝试剩余 {len(fallback_sources)} 个候选"
+                )
+                candidates = await self._download_candidates(
+                    fallback_sources,
+                    output_dir,
+                    stage_name="Fallback",
+                )
 
-        # Step 3: 综合打分 + LLM 评估，选最佳视频
-        best = await self._pick_best(candidates, topic)
-        logger.info(f"选中最佳视频: {best.source.title[:50]}")
+            if not candidates:
+                raise RuntimeError(f"所有 {total_sources} 个视频源下载均失败")
 
-        # Step 4: 只对选中的视频做字体选择 + 字幕烧录
-        await self._select_font(best.source)
-        best = await self._transcribe(best)
-        release_whisper_model()
+            # Step 3: 综合打分 + LLM 评估，选最佳视频
+            best = await self._pick_best(candidates, topic)
+            logger.info(f"选中最佳视频: {best.source.title[:50]}")
 
-        # 清理未选中的视频文件
-        for c in candidates:
-            if c is not best and c.local_path:
-                path = Path(c.local_path)
-                if path.exists():
-                    path.unlink(missing_ok=True)
+            # Step 4: 只对选中的视频做字体选择 + 字幕烧录
+            await self._select_font(best.source)
+            best = await self._transcribe(best)
 
-        return best
+            # 清理未选中的视频文件
+            for c in candidates:
+                if c is not best and c.local_path:
+                    path = Path(c.local_path)
+                    if path.exists():
+                        path.unlink(missing_ok=True)
+
+            return best
+        finally:
+            keep_loaded_raw = os.getenv("VIDEO_POST_KEEP_WHISPER_LOADED", "").strip().lower()
+            if keep_loaded_raw:
+                keep_loaded = keep_loaded_raw in {"1", "true", "yes", "y", "on"}
+            else:
+                keep_loaded = self.KEEP_WHISPER_LOADED_BY_DEFAULT
+
+            if keep_loaded:
+                logger.info("Whisper 模型保持常驻（CUDA），跳过释放")
+            else:
+                release_whisper_model()
 
     async def _download_candidates(
         self,
@@ -149,14 +162,14 @@ class DownloadAgent(BaseAgent):
             validation = await self.validate(result)
 
             if not validation.passed:
-                logger.warning(f"[{stage_name}] 下载失败: {result.error_message}")
+                failure_detail = result.error_message or validation.feedback
+                logger.warning(f"[{stage_name}] 下载失败: {failure_detail}")
                 continue
 
             logger.info(f"[{stage_name}] 下载成功: {result.local_path}")
 
             # 转录（获取字幕文本用于细评分）
             result = await self._transcribe_text_only(result)
-            release_whisper_model()
             candidates.append(result)
 
         return candidates
@@ -283,17 +296,23 @@ class DownloadAgent(BaseAgent):
 
         return result
 
+    @staticmethod
+    def _has_usable_transcript(result: DownloadResult) -> bool:
+        transcription = result.transcription
+        if not transcription or not transcription.success:
+            return False
+        return bool(transcription.transcript and transcription.transcript.strip())
+
     def _score_video(self, result: DownloadResult, topic: str) -> float:
         """综合打分：转录质量 + 互动数据 + 时长合理性"""
         score = 0.0
         source = result.source
 
         # 转录质量（0-40 分）
-        if result.transcription and result.transcription.success:
-            transcript_len = len(result.transcription.transcript)
-            # 转录越长说明内容越丰富，上限 2000 字符得满分
+        if self._has_usable_transcript(result):
+            transcript_text = result.transcription.transcript.strip()
+            transcript_len = len(transcript_text)
             score += min(transcript_len / 2000, 1.0) * 30
-            # 中文内容加分（目标平台是小红书）
             if result.transcription.language == "zh":
                 score += 10
             elif result.transcription.language in ("ja", "ko"):
@@ -336,10 +355,27 @@ class DownloadAgent(BaseAgent):
         from pydantic_ai import Agent
         from ....utils.providers import get_text_model
 
-        # Step 1: 规则打分
-        scored = [(self._score_video(c, topic), c) for c in candidates]
-        for s, c in scored:
-            logger.info(f"  规则分 {s:.0f}: {c.source.title[:50]} ({c.source.platform.value})")
+        # Step 1: 规则打分 + 可配音软优先加权
+        scored = []
+        for c in candidates:
+            base_score = self._score_video(c, topic)
+            dubbing_ready = self._has_usable_transcript(c)
+            dubbing_bonus = self.DUBBING_SOFT_BONUS if dubbing_ready else 0.0
+            total_score = base_score + dubbing_bonus
+            scored.append((total_score, base_score, dubbing_bonus, c))
+            logger.info(
+                f"  综合分 {total_score:.0f} = 规则分 {base_score:.0f} + "
+                f"可配音加权 {dubbing_bonus:.0f}: {c.source.title[:50]} ({c.source.platform.value})"
+            )
+
+        dubbable_count = sum(1 for c in candidates if self._has_usable_transcript(c))
+        if dubbable_count > 0:
+            logger.info(
+                f"检测到 {dubbable_count} 个可配音候选，将使用软优先策略"
+                f"（可配音候选额外 +{self.DUBBING_SOFT_BONUS:.0f} 分）"
+            )
+        else:
+            logger.warning("候选均无有效转录，将按常规综合分选择（本次可能跳过 AI 配音）")
 
         # Step 2: LLM 从候选中选出最佳
         class VideoPick(BaseModel):
@@ -347,22 +383,28 @@ class DownloadAgent(BaseAgent):
             reason: str = Field(description="选择理由")
 
         videos_desc = []
-        for i, (rule_score, c) in enumerate(scored):
+        for i, (total_score, base_score, dubbing_bonus, c) in enumerate(scored):
             transcript_preview = ""
-            if c.transcription and c.transcription.success:
-                transcript_preview = c.transcription.transcript[:200]
+            transcript_len = 0
+            dubbing_ready = self._has_usable_transcript(c)
+            if dubbing_ready:
+                cleaned = c.transcription.transcript.strip()
+                transcript_len = len(cleaned)
+                transcript_preview = cleaned[:200]
             videos_desc.append(
                 f"[{i}] 标题: {c.source.title}\n"
                 f"    平台: {c.source.platform.value}, 时长: {c.source.duration_seconds}秒\n"
                 f"    👍{c.source.engagement.likes} 💬{c.source.engagement.comments} 👁{c.source.engagement.views}\n"
-                f"    规则分: {rule_score:.0f}\n"
+                f"    综合分: {total_score:.0f}（规则分 {base_score:.0f} + 可配音加权 {dubbing_bonus:.0f}）\n"
+                f"    可配音: {'是' if dubbing_ready else '否'}, 转录字数: {transcript_len}\n"
                 f"    转录预览: {transcript_preview or '无转录'}"
             )
 
         prompt = (
             f"话题: {topic}\n\n"
             f"以下是 {len(scored)} 个候选视频，请选出最适合在小红书发布的一个。\n"
-            f"考虑因素：内容丰富度、信息价值、小红书用户兴趣匹配度、转录质量。\n\n"
+            f"考虑因素：内容丰富度、信息价值、小红书用户兴趣匹配度、转录质量、可配音性。\n"
+            "策略要求：可配音视频为软优先（内容质量接近时优先），但若无转录视频明显更优可以选择。\n\n"
             + "\n\n".join(videos_desc)
         )
 
@@ -377,16 +419,18 @@ class DownloadAgent(BaseAgent):
 
             idx = pick.best_index
             if 0 <= idx < len(scored):
-                logger.info(f"LLM 选择: [{idx}] {scored[idx][1].source.title[:50]} — {pick.reason}")
-                return scored[idx][1]
+                logger.info(
+                    f"LLM 选择: [{idx}] {scored[idx][3].source.title[:50]} — {pick.reason}"
+                )
+                return scored[idx][3]
             else:
-                logger.warning(f"LLM 返回无效索引 {idx}，回退规则分最高")
+                logger.warning(f"LLM 返回无效索引 {idx}，回退综合分最高")
         except Exception as e:
-            logger.warning(f"LLM 选择失败，回退规则分最高: {e}")
+            logger.warning(f"LLM 选择失败，回退综合分最高: {e}")
 
-        # 回退：规则分最高
+        # 回退：综合分最高
         scored.sort(key=lambda x: x[0], reverse=True)
-        return scored[0][1]
+        return scored[0][3]
 
     async def step(self, source: VideoSource, output_dir: Path) -> DownloadResult:
         with logfire.span('video_download:step', platform=source.platform.value, url=source.url[:80]):

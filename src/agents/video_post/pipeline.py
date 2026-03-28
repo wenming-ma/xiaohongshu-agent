@@ -192,6 +192,19 @@ class XHSVideoPostPipeline(BasePipeline[XHSVideoPostInput, XHSVideoPostOutput]):
                 except Exception as e:
                     logger.warning(f"配音失败（不影响发布）: {e}")
                 logger.info("")
+            else:
+                skip_reason = ""
+                if not download_result.subtitle:
+                    skip_reason = "未生成字幕结果（subtitle 为空）"
+                elif not download_result.subtitle.success:
+                    detail = download_result.subtitle.error_message or "未知错误"
+                    skip_reason = f"字幕生成失败: {detail}"
+                elif not download_result.subtitle.srt_path:
+                    skip_reason = "字幕结果缺少 srt_path"
+                else:
+                    skip_reason = "字幕状态不满足配音条件"
+                logger.info(f"Phase 2.5 跳过 AI 中文配音: {skip_reason}")
+                logger.info("")
 
             # Phase 3: 内容适配
             logger.info("=" * 60)

@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from typing import Optional
+from threading import Lock
 
 # 设置离线模式和禁用警告
 os.environ["HF_HUB_OFFLINE"] = "1"
@@ -91,35 +92,41 @@ _STYLE_KEYWORDS = {
 
 
 _shared_whisper_model: Optional[WhisperModel] = None
+_shared_whisper_model_lock = Lock()
 
 
 def _get_shared_whisper_model() -> WhisperModel:
     global _shared_whisper_model
-    if _shared_whisper_model is None:
-        logger.info("加载 Whisper 模型（本地离线模式）...")
-        _shared_whisper_model = WhisperModel(
-            SUBTITLE_CONFIG["WHISPER_MODEL"],
-            device=SUBTITLE_CONFIG["WHISPER_DEVICE"],
-            compute_type=SUBTITLE_CONFIG["WHISPER_COMPUTE_TYPE"],
-            local_files_only=True,
-        )
-        logger.info("Whisper 模型加载完成")
+    if _shared_whisper_model is not None:
+        return _shared_whisper_model
+
+    with _shared_whisper_model_lock:
+        if _shared_whisper_model is None:
+            logger.info("加载 Whisper 模型（本地离线模式）...")
+            _shared_whisper_model = WhisperModel(
+                SUBTITLE_CONFIG["WHISPER_MODEL"],
+                device=SUBTITLE_CONFIG["WHISPER_DEVICE"],
+                compute_type=SUBTITLE_CONFIG["WHISPER_COMPUTE_TYPE"],
+                local_files_only=True,
+            )
+            logger.info("Whisper 模型加载完成")
     return _shared_whisper_model
 
 
 def release_whisper_model() -> None:
     import gc
     global _shared_whisper_model
-    if _shared_whisper_model is not None:
-        del _shared_whisper_model
-        _shared_whisper_model = None
-        gc.collect()
-        try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except ImportError:
-            pass
+    with _shared_whisper_model_lock:
+        if _shared_whisper_model is not None:
+            del _shared_whisper_model
+            _shared_whisper_model = None
+            gc.collect()
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except ImportError:
+                pass
 
 
 def pick_subtitle_style(topic: str) -> dict:
@@ -131,6 +138,17 @@ def pick_subtitle_style(topic: str) -> dict:
             return SUBTITLE_STYLES[style_name]
     logger.info("字幕配色: default")
     return SUBTITLE_STYLES["default"]
+
+
+async def _check_has_audio(video_path: Path) -> bool:
+    probe = await asyncio.create_subprocess_exec(
+        "ffprobe", "-v", "error", "-select_streams", "a",
+        "-show_entries", "stream=codec_type", "-of", "csv=p=0",
+        str(video_path),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    stdout, _ = await probe.communicate()
+    return bool(stdout.strip())
 
 
 class SubtitleSegment:
@@ -210,6 +228,8 @@ class WhisperTranscriber:
             return TranscriptionResult(success=False, error_message=str(e))
 
     async def _extract_audio(self, video_path: Path) -> Path:
+        if not await _check_has_audio(video_path):
+            raise RuntimeError("视频无音频轨道，无法提取音频")
         audio_path = Path(tempfile.mktemp(suffix=".mp3"))
         cmd = [
             "ffmpeg", "-i", str(video_path),
@@ -311,6 +331,8 @@ class WhisperSubtitleGenerator:
             )
 
     async def _extract_audio(self, video_path: Path) -> Path:
+        if not await _check_has_audio(video_path):
+            raise RuntimeError("视频无音频轨道，无法提取音频")
         audio_path = Path(tempfile.mktemp(suffix=".mp3"))
         cmd = [
             "ffmpeg", "-i", str(video_path),
