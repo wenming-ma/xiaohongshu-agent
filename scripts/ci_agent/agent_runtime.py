@@ -41,7 +41,7 @@ TOOL_AGENT_HINTS = {
 }
 THINK_TAG_PATTERN = re.compile(r"<think>\s*(.*?)\s*</think>", re.IGNORECASE | re.DOTALL)
 ANSI_RESET = "\x1b[0m"
-MODEL_OUTPUT_COLOR = "\x1b[38;5;45m"
+MODEL_OUTPUT_COLOR = "\x1b[48;5;24;38;5;231m"
 
 
 class ValidationToolResult(BaseModel):
