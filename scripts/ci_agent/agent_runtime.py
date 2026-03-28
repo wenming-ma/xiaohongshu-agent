@@ -37,6 +37,7 @@ TOOL_AGENT_HINTS = {
     "run_validation_command": "validator",
     "record_validator_memory": "validator",
 }
+THINK_TAG_PATTERN = re.compile(r"<think>\s*(.*?)\s*</think>", re.IGNORECASE | re.DOTALL)
 
 
 class ValidationToolResult(BaseModel):
@@ -193,9 +194,111 @@ def _tool_log_detail(event: dict[str, Any]) -> str:
     return ""
 
 
+def _normalize_model_text(value: str, limit: int = 500) -> str:
+    cleaned = re.sub(r"\s+", " ", value.strip())
+    if not cleaned:
+        return ""
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 3] + "..."
+
+
+def _thinking_text_from_content(content: Any) -> str:
+    if isinstance(content, str):
+        matches = [match.strip() for match in THINK_TAG_PATTERN.findall(content) if match.strip()]
+        if matches:
+            return "\n".join(_normalize_model_text(match) for match in matches if match.strip())
+        return ""
+    if isinstance(content, list):
+        thoughts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                direct = _thinking_text_from_content(item)
+                if direct:
+                    thoughts.append(direct)
+                continue
+            if not isinstance(item, dict):
+                continue
+            block_type = str(item.get("type", "")).lower()
+            if block_type in {"reasoning", "thinking"}:
+                for key in ("text", "reasoning", "summary", "content"):
+                    value = item.get(key)
+                    if isinstance(value, str) and value.strip():
+                        thoughts.append(_normalize_model_text(value))
+                        break
+        return "\n".join(part for part in thoughts if part)
+    return ""
+
+
+def _plain_text_from_content(content: Any) -> str:
+    if isinstance(content, str):
+        without_think = THINK_TAG_PATTERN.sub("", content)
+        return _normalize_model_text(without_think)
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                text = _plain_text_from_content(item)
+                if text:
+                    parts.append(text)
+                continue
+            if not isinstance(item, dict):
+                continue
+            block_type = str(item.get("type", "")).lower()
+            if block_type in {"reasoning", "thinking"}:
+                continue
+            for key in ("text", "content"):
+                value = item.get(key)
+                if isinstance(value, str) and value.strip():
+                    parts.append(_normalize_model_text(value))
+                    break
+        return "\n".join(part for part in parts if part)
+    if isinstance(content, dict):
+        for key in ("text", "content"):
+            value = content.get(key)
+            if isinstance(value, str) and value.strip():
+                return _normalize_model_text(value)
+    return ""
+
+
+def _extract_model_output_text(event: dict[str, Any]) -> str:
+    data = event.get("data")
+    if not isinstance(data, dict):
+        return ""
+    output = data.get("output")
+    content: Any = None
+    if hasattr(output, "content"):
+        content = getattr(output, "content")
+    elif isinstance(output, dict):
+        content = output.get("content")
+        if content is None:
+            generations = output.get("generations")
+            if isinstance(generations, list) and generations:
+                first_generation = generations[0]
+                if isinstance(first_generation, list) and first_generation:
+                    candidate = first_generation[0]
+                    if hasattr(candidate, "message") and hasattr(candidate.message, "content"):
+                        content = candidate.message.content
+                    elif isinstance(candidate, dict):
+                        message = candidate.get("message")
+                        if isinstance(message, dict):
+                            content = message.get("content")
+    thinking = _thinking_text_from_content(content)
+    if thinking:
+        return thinking
+    return _plain_text_from_content(content)
+
+
 def _log_stream_event(event: dict[str, Any], run_names: dict[str, str]) -> None:
     _remember_stream_name(event, run_names)
-    if event.get("event") != "on_tool_start":
+    event_name = event.get("event")
+    if event_name == "on_chat_model_end":
+        agent = _infer_agent_label(event, run_names)
+        text = _extract_model_output_text(event)
+        if text:
+            logger.info("[%s] model output: %s", agent, text)
+        return
+    if event_name != "on_tool_start":
         return
     tool_name = str(event.get("name", "") or "tool")
     detail = _tool_log_detail(event)

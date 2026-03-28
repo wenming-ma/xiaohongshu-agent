@@ -13,6 +13,7 @@ from scripts.ci_agent.agent_runtime import (
     ValidationCommandRunner,
     ValidationRunReport,
     ValidatorRecord,
+    _extract_model_output_text,
     _extract_stream_result,
     _log_stream_event,
     _resolve_cycle_action,
@@ -304,6 +305,39 @@ def test_extract_stream_result_reads_root_chain_output() -> None:
     }
 
     assert _extract_stream_result(event, "ci-agent-controller") == output
+
+
+def test_extract_model_output_prefers_thinking_content() -> None:
+    event = {
+        "event": "on_chat_model_end",
+        "data": {
+            "output": {
+                "content": "<think>reason carefully about the failure</think>\nFinal answer."
+            }
+        },
+    }
+
+    assert _extract_model_output_text(event) == "reason carefully about the failure"
+
+
+def test_stream_event_logging_reports_model_output(caplog) -> None:
+    run_names = {"validator-run": "ci-agent-validator"}
+    event = {
+        "event": "on_chat_model_end",
+        "name": "ChatOpenAI",
+        "run_id": "model-run",
+        "parent_ids": ["validator-run"],
+        "data": {
+            "output": {
+                "content": "<think>inspect validator logs first</think>\nThen answer."
+            }
+        },
+    }
+
+    with caplog.at_level(logging.INFO):
+        _log_stream_event(event, run_names)
+
+    assert "[validator] model output: inspect validator logs first" in caplog.text
 
 
 class RollbackRuntime:
