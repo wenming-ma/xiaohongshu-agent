@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import html
 import logging
+import os
 import re
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
@@ -38,6 +40,8 @@ TOOL_AGENT_HINTS = {
     "record_validator_memory": "validator",
 }
 THINK_TAG_PATTERN = re.compile(r"<think>\s*(.*?)\s*</think>", re.IGNORECASE | re.DOTALL)
+ANSI_RESET = "\x1b[0m"
+MODEL_OUTPUT_COLOR = "\x1b[38;5;45m"
 
 
 class ValidationToolResult(BaseModel):
@@ -203,6 +207,19 @@ def _normalize_model_text(value: str, limit: int = 500) -> str:
     return cleaned[: limit - 3] + "..."
 
 
+def _supports_color_logs() -> bool:
+    if os.environ.get("NO_COLOR"):
+        return False
+    stream = getattr(sys, "stdout", None)
+    return bool(stream and hasattr(stream, "isatty") and stream.isatty())
+
+
+def _colorize_model_output(text: str) -> str:
+    if not text or not _supports_color_logs():
+        return text
+    return f"{MODEL_OUTPUT_COLOR}{text}{ANSI_RESET}"
+
+
 def _thinking_text_from_content(content: Any) -> str:
     if isinstance(content, str):
         matches = [match.strip() for match in THINK_TAG_PATTERN.findall(content) if match.strip()]
@@ -296,7 +313,7 @@ def _log_stream_event(event: dict[str, Any], run_names: dict[str, str]) -> None:
         agent = _infer_agent_label(event, run_names)
         text = _extract_model_output_text(event)
         if text:
-            logger.info("[%s] model output: %s", agent, text)
+            logger.info("[%s] model output: %s", agent, _colorize_model_output(text))
         return
     if event_name != "on_tool_start":
         return
