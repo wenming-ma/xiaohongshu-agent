@@ -1,7 +1,8 @@
 from dataclasses import dataclass, field
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
+from pydantic_ai.messages import ModelMessage
 
+from ...shared.utils.message_history import truncate_history_by_rounds
 from ..schemas import VideoResearchResult, VideoSource, XHSVideoContent, ContentReviewResult, TranscriptionResult
 
 
@@ -24,23 +25,11 @@ class ContentState:
 
     @staticmethod
     def _truncate_history(history: list[ModelMessage], max_rounds: int) -> list[ModelMessage]:
-        if not history or max_rounds <= 0:
-            return []
-
-        run_boundaries = [
-            idx
-            for idx, msg in enumerate(history)
-            if isinstance(msg, ModelRequest)
-            and any(isinstance(part, UserPromptPart) for part in msg.parts)
-        ]
-
-        if len(run_boundaries) <= max_rounds:
-            return history
-
-        # 始终保留首轮（包含 SystemPromptPart）+ 最近 N-1 轮
-        first_round_end = run_boundaries[1] if len(run_boundaries) > 1 else len(history)
-        recent_start = run_boundaries[-(max_rounds - 1)]
-        return history[:first_round_end] + history[recent_start:]
+        return truncate_history_by_rounds(
+            history,
+            max_rounds=max_rounds,
+            keep_first_round=False,
+        )
 
     def get_recent_history(self, max_rounds: int) -> list[ModelMessage]:
         return self._truncate_history(self.message_history, max_rounds)

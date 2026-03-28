@@ -138,6 +138,7 @@ class ResearchAgent(BaseAgent):
             )
 
         state.current_result = result.output
+        state.record_result(state.current_result)
         state.message_history.extend(result.new_messages())
         logger.info(f"Found {len(state.current_result.sources)} videos")
 

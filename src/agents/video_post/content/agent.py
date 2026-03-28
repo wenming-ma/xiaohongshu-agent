@@ -21,6 +21,9 @@ from .state import ContentState
 logger = get_logger(__name__)
 
 MAX_HISTORY_ROUNDS = 3
+AI_TEMPLATE_PHRASE_RE = re.compile(
+    r"(首先|其次|再次|接下来|最后|总的来说|综上所述|总而言之|值得注意的是|需要指出的是|不可否认|从某种程度上来说|本质上|其核心在于)"
+)
 
 
 class ContentAgent(BaseAgent):
@@ -139,6 +142,19 @@ class ContentAgent(BaseAgent):
             if not has_cta:
                 deductions += 10
                 issues.append("缺少互动引导")
+
+        template_hits = AI_TEMPLATE_PHRASE_RE.findall(content.body)
+        if template_hits:
+            unique_hits = []
+            for hit in template_hits:
+                if hit not in unique_hits:
+                    unique_hits.append(hit)
+            if len(template_hits) >= 2:
+                deductions += 15
+                issues.append(f"正文模板化衔接词过多: {', '.join(unique_hits)}")
+            else:
+                deductions += 8
+                issues.append(f"正文存在明显 AI 模板词: {unique_hits[0]}")
 
         return deductions, issues
 

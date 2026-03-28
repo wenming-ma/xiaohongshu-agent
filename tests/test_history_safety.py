@@ -12,7 +12,7 @@ from pydantic_ai.exceptions import ModelHTTPError
 
 from src.agents.image_post.content.agent import ContentAgent as ImageContentAgent
 from src.agents.image_post.content.state import ContentState as ImageContentState
-from src.agents.image_post.image.utils import run_grouping_with_review
+from src.agents.image_post.utils.image import run_grouping_with_review
 from src.agents.image_post.schemas import (
     ImageGroupingPlan,
     ImageGroupingReviewResult,
@@ -175,6 +175,18 @@ def _build_complete_run_history() -> list:
     ]
 
 
+def _collect_tool_call_ids(messages: list[object]) -> tuple[set[str], set[str]]:
+    tool_call_ids: set[str] = set()
+    tool_return_ids: set[str] = set()
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, ToolCallPart):
+                tool_call_ids.add(part.tool_call_id)
+            elif isinstance(part, ToolReturnPart):
+                tool_return_ids.add(part.tool_call_id)
+    return tool_call_ids, tool_return_ids
+
+
 def _build_image_research() -> ResearchResult:
     return ResearchResult(
         summary="关于法式穿搭神话的研究摘要。",
@@ -260,6 +272,28 @@ def test_video_content_state_keeps_last_complete_runs() -> None:
     assert filtered == state.message_history[4:]
 
 
+def test_video_content_state_drops_unmatched_tool_call_when_truncating() -> None:
+    state = VideoContentState(
+        research=_build_video_research(),
+        video_source=_build_video_research().sources[0],
+        topic="city walk",
+        transcript=TranscriptionResult(success=True, transcript="walk transcript"),
+    )
+    state.message_history = [
+        ModelRequest(parts=[UserPromptPart(content="初稿")], instructions="sys"),
+        ModelResponse(parts=[TextPart(content="初稿结果")]),
+        ModelRequest(parts=[UserPromptPart(content="请根据反馈修订")]),
+        ModelResponse(parts=[ToolCallPart(tool_name="read_excerpt", args={}, tool_call_id="call_orphan")]),
+    ]
+
+    filtered = state.get_recent_history(1)
+    tool_call_ids, tool_return_ids = _collect_tool_call_ids(filtered)
+
+    assert filtered == [state.message_history[2]]
+    assert tool_call_ids == set()
+    assert tool_return_ids == set()
+
+
 def test_video_content_step_uses_revision_prompt_without_mutating_history() -> None:
     research = _build_video_research()
     state = VideoContentState(
@@ -342,6 +376,34 @@ def test_video_research_step_retries_with_cleared_history_on_invalid_tool_call_i
     assert agent.generator.calls[0]["message_history"] == initial_history
     assert agent.generator.calls[1]["message_history"] == []
     assert "需要更多高质量视频" in str(agent.generator.calls[1]["prompt"])
+
+
+def test_video_research_state_drops_unmatched_tool_return_from_retained_history() -> None:
+    state = VideoResearchState(
+        topic="city walk",
+        platforms=[Platform.X],
+        max_videos=3,
+        output_dir=None,
+    )
+    state.message_history = [
+        ModelRequest(parts=[UserPromptPart(content="第一次搜索")]),
+        ModelResponse(parts=[TextPart(content="初轮完成")]),
+        ModelRequest(parts=[UserPromptPart(content="第二次搜索")]),
+        ModelRequest(parts=[ToolReturnPart(tool_name="playwright_search", content="{}", tool_call_id="orphan_return")]),
+        ModelResponse(parts=[TextPart(content="继续搜索")]),
+    ]
+
+    filtered = state.get_recent_history(2)
+    tool_call_ids, tool_return_ids = _collect_tool_call_ids(filtered)
+
+    assert filtered == [
+        state.message_history[0],
+        state.message_history[1],
+        state.message_history[2],
+        state.message_history[4],
+    ]
+    assert tool_call_ids == set()
+    assert tool_return_ids == set()
 
 
 def test_image_grouping_retry_uses_revision_prompt_without_feedback_message_in_history() -> None:
