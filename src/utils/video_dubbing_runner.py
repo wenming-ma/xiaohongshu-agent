@@ -143,13 +143,18 @@ async def _run_via_audio_env(
         cwd=str(PROJECT_ROOT),
         env=env,
     )
-    timeout_s = _get_env_float("VIDEO_DUB_SUBPROCESS_TIMEOUT_SECONDS", 3600.0)
-    try:
-        code = await asyncio.wait_for(proc.wait(), timeout=timeout_s)
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        raise RuntimeError(f"配音子进程超时（{timeout_s:.0f}s），已强制终止")
+    timeout_s = _get_env_float("VIDEO_DUB_SUBPROCESS_TIMEOUT_SECONDS", 0.0)
+    if timeout_s > 0:
+        logger.info(f"配音子进程超时限制: {timeout_s:.0f}s")
+        try:
+            code = await asyncio.wait_for(proc.wait(), timeout=timeout_s)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise RuntimeError(f"配音子进程超时（{timeout_s:.0f}s），已强制终止")
+    else:
+        logger.info("配音子进程超时限制: disabled")
+        code = await proc.wait()
     if code != 0:
         raise RuntimeError(f"独立环境配音失败，退出码={code}")
 
@@ -171,6 +176,7 @@ async def dub_video_with_runner(
 
     - `VIDEO_DUB_USE_SEPARATE_ENV=1`（默认）: 使用 `.venv-audio` 子进程执行；
     - `VIDEO_DUB_USE_SEPARATE_ENV=0`: 当前环境内联执行。
+    - `VIDEO_DUB_SUBPROCESS_TIMEOUT_SECONDS<=0`（默认）: 不限制子进程时长。
     """
     use_separate_env = _get_env_bool("VIDEO_DUB_USE_SEPARATE_ENV", True)
 

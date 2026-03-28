@@ -44,7 +44,8 @@ dependencies = [
     "trafilatura>=2.0.0",
     "scipy>=1.17.1",
     "onnxruntime>=1.24.1",
-    "claude-agent-sdk>=0.1.50",
+    "deepagents>=0.4.12",
+    "langchain-openai>=1.1.12",
 ]
 
 [project.scripts]

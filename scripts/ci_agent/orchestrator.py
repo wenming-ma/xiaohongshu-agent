@@ -1,102 +1,36 @@
 from __future__ import annotations
+
 import asyncio
 import logging
-import re
 import subprocess
-import time
 from pathlib import Path
 
-from claude_agent_sdk import (
-    query,
-    ClaudeAgentOptions,
-    AssistantMessage,
-    ResultMessage,
-    TextBlock,
-)
-
+from .agent_runtime import DeepAgentRuntime, ValidationOutcome
 from .config import ClusterConfig
 from .state import AttemptRecord, ClusterState
 
 logger = logging.getLogger(__name__)
 
 TAIL_CHARS = 4000
-ALL_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
-
-FIXER_PROMPT = """\
-You are an autonomous CI agent for a Xiaohongshu video post pipeline.
-The pipeline phases: research -> download -> dub -> content -> cover -> publish.
-Tech stack: pydantic-ai, Playwright MCP, yt-dlp, Whisper, FFmpeg, TTS providers, uv.
-
-A script run has failed. Your job:
-1. Analyze the error output and read relevant source files to understand the root cause
-2. Fix the issue - modify code, config, or dependencies as needed
-3. Use git to commit your changes (stage specific files, write a descriptive message)
-
-Rules:
-- Make the SMALLEST change that fixes the issue
-- Do NOT refactor or improve unrelated code
-- After editing, read the file back to verify
-- For dependency issues, use uv (uv add, uv sync), not pip
-- For git: never use "git add ." - stage specific files only
-- Commit message format: "fix(<scope>): <description>"
-
-You have full tool access: Read, Write, Edit, Bash, Glob, Grep.
-Use Bash for git commands, uv commands, and any other shell operations.\
-"""
-
-VALIDATOR_PROMPT = """\
-You are a senior engineer evaluating whether a code fix was effective.
-
-You will receive stderr output from before and after a fix attempt.
-You may also read source files to better understand the situation.
-
-Output in this EXACT format:
-
-VERDICT: <SAME_ERROR|PROGRESS>
-REASON: <one paragraph explanation>
-
-Guidelines:
-- SAME_ERROR: The root cause is identical, the fix had no real effect. Should rollback.
-- PROGRESS: The error changed, disappeared, or moved to a different phase. Keep the fix.\
-"""
-
-
-async def _run_agent(prompt: str, config: ClusterConfig, system_prompt: str, tools: list[str] | None = None) -> str:
-    options = ClaudeAgentOptions(
-        system_prompt=system_prompt,
-        allowed_tools=tools or ALL_TOOLS,
-        permission_mode="bypassPermissions",
-        max_turns=config.max_worker_turns,
-        model=config.model,
-        cwd=str(config.project_root),
-    )
-    result_text = ""
-    try:
-        async for msg in query(prompt=prompt, options=options):
-            if isinstance(msg, AssistantMessage):
-                for block in msg.content:
-                    if isinstance(block, TextBlock):
-                        result_text = block.text
-            elif isinstance(msg, ResultMessage):
-                if msg.result:
-                    result_text = msg.result
-                if msg.is_error:
-                    logger.warning("Agent error: %s", msg.errors)
-    except Exception as e:
-        logger.error("Agent failed: %s", e)
-        result_text = f"Agent error: {e}"
-    return result_text
 
 
 class Orchestrator:
-    def __init__(self, config: ClusterConfig):
+    def __init__(self, config: ClusterConfig, agent_runtime: DeepAgentRuntime | None = None):
         self.config = config
-        self.state = ClusterState(target_command=config.target_command)
+        self.state = ClusterState(
+            session_id=config.session_id,
+            target_command=config.target_command,
+            source_repo_root=str(config.project_root),
+            worktree_root=str(config.worktree_root),
+        )
+        self._agent_runtime = agent_runtime
 
     async def run(self) -> bool:
-        self._init_git_state()
-        if self.config.git_branch:
-            self._create_branch(self.config.git_branch)
+        self._init_source_git_state()
+        self._ensure_isolated_worktree()
+
+        if self._agent_runtime is None:
+            self._agent_runtime = DeepAgentRuntime(self.config)
 
         consecutive_rollbacks = 0
 
@@ -105,9 +39,11 @@ class Orchestrator:
             logger.info("ATTEMPT #%d / %d", attempt_num, self.config.max_attempts)
             logger.info("=" * 60)
 
-            record = AttemptRecord(attempt_number=attempt_num)
+            record = AttemptRecord(
+                attempt_number=attempt_num,
+                head_before=self._rev_parse(self.config.worktree_root, "HEAD"),
+            )
 
-            # Step 1: Run target script
             exit_code, stdout, stderr = self._run_target()
             record.exit_code = exit_code
             record.stdout_tail = stdout[-TAIL_CHARS:]
@@ -115,86 +51,111 @@ class Orchestrator:
 
             if exit_code == 0:
                 logger.info("SUCCESS on attempt #%d", attempt_num)
-                self.state.status = "success"
-                self.state.attempts.append(record)
-                self.state.save(self.config.state_file)
+                self._finish_with_status("success", record)
                 return True
 
             logger.warning("Script failed with exit code %d", exit_code)
 
-            # Step 2: Agent analyzes, fixes, and commits
             history = self.state.format_attempt_history()
             fixer_prompt = (
                 f"The script failed with exit code {exit_code}.\n\n"
-                f"=== STDOUT (tail) ===\n{stdout[-TAIL_CHARS:]}\n\n"
-                f"=== STDERR (tail) ===\n{stderr[-TAIL_CHARS:]}\n\n"
+                f"=== STDOUT (tail) ===\n{record.stdout_tail}\n\n"
+                f"=== STDERR (tail) ===\n{record.stderr_tail}\n\n"
                 f"=== Previous attempts (DO NOT repeat failed fixes) ===\n{history}\n\n"
-                "Analyze the error, fix it, and commit your changes."
+                f"=== Git branch ===\n{self.config.git_branch}\n\n"
+                "Analyze the error, make the smallest fix you can justify, and commit it if the fix is coherent enough to keep."
             )
-            logger.info("Running Fixer agent...")
-            fix_result = await _run_agent(fixer_prompt, self.config, FIXER_PROMPT)
-            record.fix_description = fix_result
+            logger.info("Running fixer agent...")
+            fixer_worker = await self._agent_runtime.run_fixer(fixer_prompt)
+            record.fix_description = fixer_worker.final_text
+            record.workers.append(fixer_worker)
+            self._capture_git_effects(record)
 
-            # Step 3: Validate - run script again
-            logger.info("Running validation...")
+            logger.info("Running validation target...")
             exit_code_2, stdout_2, stderr_2 = self._run_target()
+            record.validation_exit_code = exit_code_2
+            record.validation_stdout_tail = stdout_2[-TAIL_CHARS:]
+            record.validation_stderr_tail = stderr_2[-TAIL_CHARS:]
 
             if exit_code_2 == 0:
                 logger.info("SUCCESS after fix on attempt #%d", attempt_num)
-                self.state.status = "success"
-                self.state.attempts.append(record)
-                self.state.save(self.config.state_file)
+                self._finish_with_status("success", record)
                 return True
 
-            # Step 4: Agent judges whether fix helped
             validator_prompt = (
-                f"=== STDERR BEFORE FIX ===\n{stderr[-TAIL_CHARS:]}\n\n"
-                f"=== STDERR AFTER FIX ===\n{stderr_2[-TAIL_CHARS:]}\n\n"
-                f"=== FIX APPLIED ===\n{fix_result[:1000]}\n\n"
-                "Judge whether the fix was effective."
+                f"=== STDERR BEFORE FIX ===\n{record.stderr_tail}\n\n"
+                f"=== STDERR AFTER FIX ===\n{record.validation_stderr_tail}\n\n"
+                f"=== FIX SUMMARY ===\n{record.fix_description[:1000]}\n\n"
+                "Decide whether the fix changed the failure meaningfully."
             )
-            logger.info("Running Validator agent...")
-            verdict_text = await _run_agent(
-                validator_prompt, self.config, VALIDATOR_PROMPT, ["Read", "Grep"],
-            )
-            verdict = self._parse_verdict(verdict_text)
-            logger.info("Verdict: %s", verdict)
+            logger.info("Running validator agent...")
+            validation = await self._agent_runtime.run_validator(validator_prompt)
+            self._record_validation(record, validation)
+            logger.info("Verdict: %s", validation.verdict)
 
-            if verdict == "SAME_ERROR":
-                logger.warning("Agent says SAME_ERROR -- rolling back")
-                self._rollback_last_commit()
+            if validation.verdict == "SAME_ERROR":
+                logger.warning("Validator says SAME_ERROR; discarding worktree changes")
+                if not self._rollback_to(record.head_before):
+                    logger.error("Could not roll back isolated worktree to %s", record.head_before)
+                    self._finish_with_status("stuck", record)
+                    return False
                 record.rolled_back = True
+                record.rollback_to = record.head_before
                 consecutive_rollbacks += 1
                 if consecutive_rollbacks >= self.config.max_consecutive_rollbacks:
-                    logger.error("Max consecutive rollbacks (%d) -- stopping", self.config.max_consecutive_rollbacks)
-                    self.state.status = "stuck"
-                    self.state.attempts.append(record)
-                    self.state.save(self.config.state_file)
+                    logger.error(
+                        "Max consecutive rollbacks (%d) reached",
+                        self.config.max_consecutive_rollbacks,
+                    )
+                    self._finish_with_status("stuck", record)
                     return False
             else:
-                logger.info("Agent says PROGRESS -- keeping fix")
                 consecutive_rollbacks = 0
 
             self.state.attempts.append(record)
             self.state.save(self.config.state_file)
 
             if self.config.sleep_between_attempts > 0:
-                time.sleep(self.config.sleep_between_attempts)
+                await asyncio.sleep(self.config.sleep_between_attempts)
 
         logger.error("Max attempts (%d) exhausted", self.config.max_attempts)
         self.state.status = "exhausted"
         self.state.save(self.config.state_file)
         return False
 
-    # --- Minimal helpers (only things an agent can't do) ---
+    def _finish_with_status(self, status: str, record: AttemptRecord) -> None:
+        self.state.status = status
+        self.state.attempts.append(record)
+        self.state.save(self.config.state_file)
+
+    def _record_validation(self, record: AttemptRecord, validation: ValidationOutcome) -> None:
+        record.validator_verdict = validation.verdict
+        record.validator_reason = validation.reason
+        record.workers.append(validation.worker)
+
+    def _capture_git_effects(self, record: AttemptRecord) -> None:
+        record.head_after = self._rev_parse(self.config.worktree_root, "HEAD")
+        record.committed = bool(record.head_before and record.head_after and record.head_after != record.head_before)
+        if record.committed:
+            record.commit_hash = record.head_after
+        record.files_modified = self._collect_modified_files(record.head_before, record.head_after)
+
+    def _collect_modified_files(self, head_before: str, head_after: str) -> list[str]:
+        files: set[str] = set()
+        if head_before and head_after and head_before != head_after:
+            files.update(self._git_lines(self.config.worktree_root, "diff", "--name-only", head_before, head_after))
+        files.update(self._git_lines(self.config.worktree_root, "diff", "--name-only"))
+        files.update(self._git_lines(self.config.worktree_root, "diff", "--cached", "--name-only"))
+        files.update(self._git_lines(self.config.worktree_root, "ls-files", "--others", "--exclude-standard"))
+        return sorted(file_name for file_name in files if file_name)
 
     def _run_target(self) -> tuple[int, str, str]:
-        logger.info("Running: %s", self.config.target_command)
+        logger.info("Running in %s: %s", self.config.worktree_root, self.config.target_command)
         try:
             result = subprocess.run(
                 self.config.target_command,
                 shell=True,
-                cwd=str(self.config.project_root),
+                cwd=str(self.config.worktree_root),
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -205,30 +166,105 @@ class Orchestrator:
             return result.returncode, result.stdout or "", result.stderr or ""
         except subprocess.TimeoutExpired:
             return -1, "", f"TIMEOUT after {self.config.target_timeout}s"
-        except Exception as e:
-            return -1, "", str(e)
+        except Exception as exc:
+            return -1, "", str(exc)
 
-    def _init_git_state(self) -> None:
-        r = subprocess.run(["git", "branch", "--show-current"],
-                           cwd=str(self.config.project_root), capture_output=True, text=True)
-        self.state.original_branch = r.stdout.strip()
-        self.state.current_branch = r.stdout.strip()
+    def _init_source_git_state(self) -> None:
+        self.state.original_branch = self._git(self.config.project_root, "branch", "--show-current").strip()
+        self.state.current_branch = self.config.git_branch
+        self.state.source_head = self._rev_parse(self.config.project_root, "HEAD")
+        self.state.source_dirty = bool(self._git(self.config.project_root, "status", "--porcelain").strip())
+        if self.state.source_dirty:
+            logger.warning(
+                "Source repository has uncommitted changes. The isolated worktree is created from HEAD and will not include them."
+            )
 
-    def _create_branch(self, name: str) -> None:
-        subprocess.run(["git", "checkout", "-b", name],
-                       cwd=str(self.config.project_root), capture_output=True, text=True)
-        self.state.current_branch = name
+    def _ensure_isolated_worktree(self) -> None:
+        worktree_root = self.config.worktree_root
+        if (worktree_root / ".git").exists():
+            logger.info("Using existing isolated worktree at %s", worktree_root)
+            return
+        if worktree_root.exists():
+            msg = f"Worktree path exists but is not a git worktree: {worktree_root}"
+            raise RuntimeError(msg)
 
-    def _parse_verdict(self, text: str) -> str:
-        m = re.search(r"VERDICT:\s*(SAME_ERROR|PROGRESS)", text)
-        return m.group(1) if m else "PROGRESS"
+        worktree_root.parent.mkdir(parents=True, exist_ok=True)
+        branch_exists = self._git_returncode(
+            self.config.project_root,
+            "show-ref",
+            "--verify",
+            "--quiet",
+            f"refs/heads/{self.config.git_branch}",
+        ) == 0
+        if branch_exists:
+            self._git_checked(
+                self.config.project_root,
+                "worktree",
+                "add",
+                str(worktree_root),
+                self.config.git_branch,
+            )
+        else:
+            self._git_checked(
+                self.config.project_root,
+                "worktree",
+                "add",
+                "-b",
+                self.config.git_branch,
+                str(worktree_root),
+                "HEAD",
+            )
+        logger.info("Created isolated worktree %s on branch %s", worktree_root, self.config.git_branch)
 
-    def _rollback_last_commit(self) -> None:
-        r = subprocess.run(["git", "log", "--oneline", "-5"],
-                           cwd=str(self.config.project_root), capture_output=True, text=True)
-        lines = r.stdout.strip().splitlines()
-        if len(lines) >= 2:
-            prev = lines[1].split()[0]
-            subprocess.run(["git", "reset", "--hard", prev],
-                           cwd=str(self.config.project_root), capture_output=True, text=True)
-            logger.info("Rolled back to %s", prev)
+    def _rollback_to(self, head: str) -> bool:
+        if not head:
+            return False
+        try:
+            self._git_checked(self.config.worktree_root, "reset", "--hard", head)
+            self._git_checked(self.config.worktree_root, "clean", "-fd")
+            return True
+        except subprocess.CalledProcessError:
+            logger.exception("Rollback failed")
+            return False
+
+    def _rev_parse(self, cwd: Path, ref: str) -> str:
+        return self._git(cwd, "rev-parse", ref).strip()
+
+    def _git_lines(self, cwd: Path, *args: str) -> list[str]:
+        output = self._git(cwd, *args)
+        return [line.strip() for line in output.splitlines() if line.strip()]
+
+    def _git(self, cwd: Path, *args: str) -> str:
+        completed = subprocess.run(
+            ["git", *args],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
+        )
+        return completed.stdout
+
+    def _git_checked(self, cwd: Path, *args: str) -> None:
+        subprocess.run(
+            ["git", *args],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
+        )
+
+    def _git_returncode(self, cwd: Path, *args: str) -> int:
+        completed = subprocess.run(
+            ["git", *args],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        return completed.returncode

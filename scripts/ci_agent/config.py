@@ -1,16 +1,20 @@
 from __future__ import annotations
 import os
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+CACHE_ROOT = PROJECT_ROOT / ".cache" / "ci_agent"
+RUNBOOK_FILE = PROJECT_ROOT / "scripts" / "ci_agent" / "AGENTS.md"
 
 
 @dataclass(frozen=True)
 class ClusterConfig:
-    model: str = "claude-sonnet-4-6"
+    session_id: str = ""
+    model: str = "openai:gpt-5.4"
     target_command: str = ""
     target_timeout: int = 600
 
@@ -22,9 +26,12 @@ class ClusterConfig:
 
     # Paths
     project_root: Path = PROJECT_ROOT
-    state_file: Path = PROJECT_ROOT / "scripts" / "ci_agent" / "state.json"
-    log_dir: Path = PROJECT_ROOT / "scripts" / "ci_agent" / "logs"
-    git_branch: str | None = None
+    cache_root: Path = CACHE_ROOT
+    state_file: Path = CACHE_ROOT / "sessions" / "default" / "state.json"
+    log_dir: Path = CACHE_ROOT / "logs"
+    worktree_root: Path = CACHE_ROOT / "worktrees" / "default"
+    git_branch: str = "ci-agent/default"
+    runbook_file: Path = RUNBOOK_FILE
 
     # run.ps1 env var defaults
     default_env_vars: dict[str, str] = field(default_factory=lambda: {
@@ -42,13 +49,26 @@ class ClusterConfig:
 
     @classmethod
     def from_env(cls, **overrides) -> ClusterConfig:
-        load_dotenv(PROJECT_ROOT / ".env")
+        project_root = Path(overrides.get("project_root", PROJECT_ROOT))
+        cache_root = Path(overrides.get("cache_root", project_root / ".cache" / "ci_agent"))
+        session_id = overrides.get("session_id") or uuid.uuid4().hex[:12]
         default_target = (
             "uv run python workshop/video_post/run.py"
             " --topics-file workshop/video_post/topics.json"
             " --limit 1 --no-publish --no-feishu"
         )
-        kwargs: dict = {"target_command": default_target}
+        load_dotenv(project_root / ".env")
+        kwargs: dict = {
+            "session_id": session_id,
+            "project_root": project_root,
+            "cache_root": cache_root,
+            "state_file": cache_root / "sessions" / session_id / "state.json",
+            "log_dir": cache_root / "logs",
+            "worktree_root": cache_root / "worktrees" / session_id,
+            "git_branch": f"ci-agent/{session_id}",
+            "runbook_file": project_root / "scripts" / "ci_agent" / "AGENTS.md",
+            "target_command": default_target,
+        }
         kwargs.update(overrides)
         return cls(**kwargs)
 
@@ -63,4 +83,7 @@ class ClusterConfig:
             unix_path = self.project_root / ".venv-audio" / "bin" / "python"
             if unix_path.exists():
                 env.setdefault("VIDEO_DUB_AUDIO_PYTHON", str(unix_path))
+        env.setdefault("CI_AGENT_SESSION_ID", self.session_id)
+        env.setdefault("CI_AGENT_SOURCE_ROOT", str(self.project_root))
+        env.setdefault("CI_AGENT_WORKTREE_ROOT", str(self.worktree_root))
         return env

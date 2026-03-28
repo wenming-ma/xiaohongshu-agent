@@ -530,6 +530,7 @@ class DownloadAgent(BaseAgent):
                         language="zh",
                         translated=True,
                         srt_path=str(ytdlp_srt),
+                        tts_srt_path=str(ytdlp_srt),
                         video_with_subs=str(subtitled_path),
                     )
                     result.local_path = str(subtitled_path)
@@ -576,12 +577,18 @@ class DownloadAgent(BaseAgent):
             result.subtitle = SubtitleResult(
                 success=subtitle_result_obj.success,
                 segments=[
-                    SubtitleSegment(start=seg.start, end=seg.end, text=seg.text)
+                    SubtitleSegment(
+                        start=seg.start,
+                        end=seg.end,
+                        text=seg.text,
+                        tone_tag=getattr(seg, "tone_tag", ""),
+                    )
                     for seg in subtitle_result_obj.segments
                 ],
                 language=subtitle_result_obj.language,
                 translated=subtitle_result_obj.translated,
                 srt_path=subtitle_result_obj.srt_path,
+                tts_srt_path=subtitle_result_obj.tts_srt_path,
                 video_with_subs=subtitle_result_obj.video_with_subs,
                 error_message=subtitle_result_obj.error_message,
             )

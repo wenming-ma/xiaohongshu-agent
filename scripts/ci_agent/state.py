@@ -28,6 +28,9 @@ class AttemptRecord(BaseModel):
     exit_code: int | None = None
     stdout_tail: str = ""
     stderr_tail: str = ""
+    validation_exit_code: int | None = None
+    validation_stdout_tail: str = ""
+    validation_stderr_tail: str = ""
     log_files_read: list[str] = Field(default_factory=list)
     diagnosis: str = ""
     diagnosis_category: str = ""
@@ -35,7 +38,12 @@ class AttemptRecord(BaseModel):
     files_modified: list[str] = Field(default_factory=list)
     committed: bool = False
     commit_hash: str = ""
+    head_before: str = ""
+    head_after: str = ""
+    rollback_to: str = ""
     rolled_back: bool = False
+    validator_verdict: str = ""
+    validator_reason: str = ""
     workers: list[WorkerInvocation] = Field(default_factory=list)
 
 
@@ -46,6 +54,10 @@ class ClusterState(BaseModel):
     attempts: list[AttemptRecord] = Field(default_factory=list)
     current_branch: str = ""
     original_branch: str = ""
+    source_repo_root: str = ""
+    worktree_root: str = ""
+    source_head: str = ""
+    source_dirty: bool = False
     status: str = "running"
 
     def save(self, path: Path) -> None:
@@ -69,6 +81,7 @@ class ClusterState(BaseModel):
                 f"  Category: {a.diagnosis_category}\n"
                 f"  Diagnosis: {a.diagnosis[:300]}\n"
                 f"  Fix: {a.fix_description[:200]}\n"
+                f"  Verdict: {a.validator_verdict or 'N/A'}\n"
                 f"  Files: {', '.join(a.files_modified) or 'none'}"
             )
         return "\n\n".join(lines)

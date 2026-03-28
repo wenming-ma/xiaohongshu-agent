@@ -26,6 +26,12 @@ import httpx
 from dotenv import load_dotenv
 
 from .logger import get_logger
+from .tts_tags import (
+    DEFAULT_TONE_TAG,
+    normalize_tone_tag,
+    prepare_provider_tts_text,
+    strip_tone_tag,
+)
 
 logger = get_logger(__name__)
 
@@ -277,12 +283,21 @@ async def dub_video(
 # ─── SRT 解析 ────────────────────────────────────────────────
 
 class SrtSegment:
-    def __init__(self, index: int, start: float, end: float, text: str, speaker_id: int = 0):
+    def __init__(
+        self,
+        index: int,
+        start: float,
+        end: float,
+        text: str,
+        speaker_id: int = 0,
+        tone_tag: str = "",
+    ):
         self.index = index
         self.start = start
         self.end = end
         self.text = text
         self.speaker_id = speaker_id
+        self.tone_tag = tone_tag
 
     @property
     def duration(self) -> float:
@@ -323,8 +338,23 @@ def parse_srt(srt_path: Path) -> list[SrtSegment]:
             speaker_id = int(sp_match.group(1))
             text = text[sp_match.end():]
 
+        tone_tag = ""
+        tone_match = re.match(r"\[([^\]]+)\]\s*", text)
+        if tone_match:
+            tone_tag = normalize_tone_tag(tone_match.group(1))
+            text = text[tone_match.end():].strip()
+
         if text:
-            segments.append(SrtSegment(index, start, end, text, speaker_id=speaker_id))
+            segments.append(
+                SrtSegment(
+                    index,
+                    start,
+                    end,
+                    text,
+                    speaker_id=speaker_id,
+                    tone_tag=tone_tag,
+                )
+            )
 
     return segments
 
@@ -351,6 +381,7 @@ def _merge_srt_segments(
         end=segments[0].end,
         text=segments[0].text,
         speaker_id=segments[0].speaker_id,
+        tone_tag=segments[0].tone_tag,
     )
     for seg in segments[1:]:
         gap = seg.start - cur.end
@@ -364,6 +395,8 @@ def _merge_srt_segments(
         ):
             cur.end = seg.end
             cur.text = f"{cur.text} {seg.text}".strip()
+            if seg.tone_tag and seg.tone_tag != cur.tone_tag:
+                cur.tone_tag = DEFAULT_TONE_TAG
         else:
             merged.append(cur)
             cur = SrtSegment(
@@ -372,6 +405,7 @@ def _merge_srt_segments(
                 end=seg.end,
                 text=seg.text,
                 speaker_id=seg.speaker_id,
+                tone_tag=seg.tone_tag,
             )
     merged.append(cur)
     return merged
@@ -783,14 +817,14 @@ async def assign_voices_to_speakers(
 
 
 def _build_s2cpp_reference_text(segments: list[SrtSegment], voice: str = "") -> str:
-    configured = _normalize_tts_text(os.getenv("S2CPP_TTS_REFERENCE_TEXT", ""))
+    configured = _normalize_tts_text(strip_tone_tag(os.getenv("S2CPP_TTS_REFERENCE_TEXT", "")))
     if configured:
         return configured[:1200]
 
     voice = voice or DEFAULT_VOICE
     try:
         _, txt_path = _get_voice_ref_paths(voice)
-        text = _normalize_tts_text(txt_path.read_text(encoding="utf-8", errors="ignore"))
+        text = _normalize_tts_text(strip_tone_tag(txt_path.read_text(encoding="utf-8", errors="ignore")))
         if text:
             return text[:1200]
     except FileNotFoundError:
@@ -1001,7 +1035,7 @@ async def _synthesize_s2cpp_tts_segment_with_retry(
     retries: int,
     semaphore: asyncio.Semaphore,
 ) -> tuple[int, Path | None]:
-    text = _normalize_tts_text(segment.text)
+    text = _prepare_segment_tts_text(segment, provider="s2cpp")
     if not text:
         return index, None
 
@@ -1067,7 +1101,7 @@ async def _generate_dubbed_segments_s2cpp(
 
     speaker_ids = sorted(set(seg.speaker_id for seg in effective_segments))
     if len(speaker_ids) > 1:
-        transcript = " ".join(seg.text[:30] for seg in effective_segments[:10])
+        transcript = " ".join(strip_tone_tag(seg.text)[:30] for seg in effective_segments[:10])
         speaker_voice_map = await assign_voices_to_speakers(
             topic="", transcript=transcript, speaker_ids=speaker_ids,
         )
@@ -1125,6 +1159,14 @@ def _normalize_tts_text(text: str) -> str:
     return text
 
 
+def _prepare_segment_tts_text(segment: SrtSegment, provider: str) -> str:
+    return prepare_provider_tts_text(
+        text=segment.text,
+        provider=provider,
+        tone_tag=segment.tone_tag,
+    )
+
+
 def _extract_http_detail(response: httpx.Response) -> str:
     try:
         body = response.json()
@@ -1134,14 +1176,14 @@ def _extract_http_detail(response: httpx.Response) -> str:
 
 
 def _build_fish_reference_text(segments: list[SrtSegment]) -> str:
-    configured = _normalize_tts_text(os.getenv("FISH_TTS_REFERENCE_TEXT", ""))
+    configured = _normalize_tts_text(strip_tone_tag(os.getenv("FISH_TTS_REFERENCE_TEXT", "")))
     if configured:
         return configured[:240]
 
     collected: list[str] = []
     total_len = 0
     for seg in segments:
-        text = _normalize_tts_text(seg.text)
+        text = _normalize_tts_text(strip_tone_tag(seg.text))
         if not text:
             continue
         collected.append(text)
@@ -1321,7 +1363,7 @@ async def _synthesize_fish_tts_segment_with_retry(
     retries: int,
     semaphore: asyncio.Semaphore,
 ) -> tuple[int, Path | None]:
-    text = _normalize_tts_text(segment.text)
+    text = _prepare_segment_tts_text(segment, provider="fish")
     if not text:
         return index, None
 
@@ -1398,7 +1440,7 @@ async def _synthesize_google_tts_segment_with_retry(
     retries: int,
     semaphore: asyncio.Semaphore,
 ) -> tuple[int, Path | None]:
-    text = _normalize_tts_text(segment.text)
+    text = _prepare_segment_tts_text(segment, provider="google")
     if not text:
         return index, None
 

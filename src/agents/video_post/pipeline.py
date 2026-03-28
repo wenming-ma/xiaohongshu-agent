@@ -164,13 +164,18 @@ class XHSVideoPostPipeline(BasePipeline[XHSVideoPostInput, XHSVideoPostOutput]):
                 logger.info(f"   字幕语言: {download_result.subtitle.language}")
                 logger.info(f"   已翻译: {'是' if download_result.subtitle.translated else '否'}")
                 logger.info(f"   字幕片段: {len(download_result.subtitle.segments)} 条")
+                if download_result.subtitle.tts_srt_path:
+                    logger.info(f"   TTS 字幕: {Path(download_result.subtitle.tts_srt_path).name}")
             logger.info("")
 
             # Phase 2.5: AI 配音（将外语音频替换为中文配音）
+            dub_srt_path = ""
+            if download_result.subtitle:
+                dub_srt_path = download_result.subtitle.tts_srt_path or download_result.subtitle.srt_path
             if (
                 download_result.subtitle
                 and download_result.subtitle.success
-                and download_result.subtitle.srt_path
+                and dub_srt_path
             ):
                 logger.info("=" * 60)
                 logger.info("Phase 2.5: AI 中文配音")
@@ -183,7 +188,7 @@ class XHSVideoPostPipeline(BasePipeline[XHSVideoPostInput, XHSVideoPostOutput]):
                     dubbed_path = video_for_dub.parent / f"{video_for_dub.stem}_dubbed{video_for_dub.suffix}"
                     await dub_video_with_runner(
                         video_path=video_for_dub,
-                        srt_path=Path(download_result.subtitle.srt_path),
+                        srt_path=Path(dub_srt_path),
                         output_path=dubbed_path,
                         work_dir=output_dir / "dubbing_work",
                     )
@@ -199,8 +204,8 @@ class XHSVideoPostPipeline(BasePipeline[XHSVideoPostInput, XHSVideoPostOutput]):
                 elif not download_result.subtitle.success:
                     detail = download_result.subtitle.error_message or "未知错误"
                     skip_reason = f"字幕生成失败: {detail}"
-                elif not download_result.subtitle.srt_path:
-                    skip_reason = "字幕结果缺少 srt_path"
+                elif not dub_srt_path:
+                    skip_reason = "字幕结果缺少可配音的 SRT 路径"
                 else:
                     skip_reason = "字幕状态不满足配音条件"
                 logger.info(f"Phase 2.5 跳过 AI 中文配音: {skip_reason}")

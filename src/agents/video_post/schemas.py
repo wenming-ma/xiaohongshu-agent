@@ -81,6 +81,7 @@ class SubtitleSegment(BaseModel):
     start: float
     end: float
     text: str
+    tone_tag: str = ""
 
 
 class SubtitleResult(BaseModel):
@@ -89,6 +90,7 @@ class SubtitleResult(BaseModel):
     language: str = ""
     translated: bool = False
     srt_path: str = ""
+    tts_srt_path: str = ""
     video_with_subs: str = ""
     error_message: str = ""
 

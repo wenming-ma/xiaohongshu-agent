@@ -16,10 +16,12 @@ if _venv_nvidia_bin.exists():
     os.environ["PATH"] = str(_venv_nvidia_bin) + os.pathsep + os.environ.get("PATH", "")
 
 from faster_whisper import WhisperModel
+from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
 from ..utils.providers import get_text_model
 from ..utils.logger import get_logger
+from .tts_tags import DEFAULT_TONE_TAG, build_tts_text, normalize_tone_tag
 
 logger = get_logger(__name__)
 
@@ -152,11 +154,19 @@ async def _check_has_audio(video_path: Path) -> bool:
 
 
 class SubtitleSegment:
-    def __init__(self, start: float, end: float, text: str, speaker_id: int = 0):
+    def __init__(
+        self,
+        start: float,
+        end: float,
+        text: str,
+        speaker_id: int = 0,
+        tone_tag: str = "",
+    ):
         self.start = start
         self.end = end
         self.text = text
         self.speaker_id = speaker_id
+        self.tone_tag = tone_tag
 
 
 class SubtitleResult:
@@ -167,6 +177,7 @@ class SubtitleResult:
         language: str = "",
         translated: bool = False,
         srt_path: str = "",
+        tts_srt_path: str = "",
         video_with_subs: str = "",
         error_message: str = "",
     ):
@@ -175,8 +186,19 @@ class SubtitleResult:
         self.language = language
         self.translated = translated
         self.srt_path = srt_path
+        self.tts_srt_path = tts_srt_path
         self.video_with_subs = video_with_subs
         self.error_message = error_message
+
+
+class TranslationLine(BaseModel):
+    index: int = Field(ge=1)
+    tone_tag: str = DEFAULT_TONE_TAG
+    text: str = ""
+
+
+class TranslationBatch(BaseModel):
+    lines: list[TranslationLine]
 
 
 class WhisperTranscriber:
@@ -268,6 +290,7 @@ class WhisperSubtitleGenerator:
             model = get_text_model()
             self.translation_agent = Agent(
                 model=model,
+                output_type=TranslationBatch,
                 system_prompt="你是小红书风格的字幕翻译专家。翻译风格要求：口语化、轻松活泼，像年轻人日常聊天；适当使用 emoji 增加趣味感（不要过度）；保留语气词和情感表达；翻译要简短精练，适合视频字幕阅读。支持英语、日语、韩语、法语、西班牙语等所有语言到中文的翻译。",
             )
 
@@ -308,8 +331,15 @@ class WhisperSubtitleGenerator:
                 )
 
             srt_path = output_path.with_suffix(".srt")
-            self._generate_srt(segments, srt_path)
-            logger.info(f"SRT 文件生成: {srt_path}")
+            tts_srt_path = output_path.with_name(f"{output_path.stem}_tts.srt")
+            self._generate_srt(segments, srt_path, include_tone_tags=False)
+            logger.info(f"屏显 SRT 文件生成: {srt_path}")
+
+            if any(seg.tone_tag for seg in segments):
+                self._generate_srt(segments, tts_srt_path, include_tone_tags=True)
+                logger.info(f"TTS SRT 文件生成: {tts_srt_path}")
+            else:
+                tts_srt_path = srt_path
 
             await self._burn_subtitles(video_path, srt_path, output_path, topic=topic, font_file=font_file)
             logger.info(f"字幕烧录完成: {output_path}")
@@ -320,6 +350,7 @@ class WhisperSubtitleGenerator:
                 language=detected_lang,
                 translated=translated,
                 srt_path=str(srt_path),
+                tts_srt_path=str(tts_srt_path),
                 video_with_subs=str(output_path),
             )
 
@@ -492,33 +523,41 @@ class WhisperSubtitleGenerator:
                 "- 语气词可以保留（比如'哇''嘿''嗯'）\n"
                 "- 保持简短，字幕不宜太长\n"
                 f"{speaker_instruction}"
-                "- 在翻译文本前添加一个语气/情感标记（用于 TTS 合成），格式为 [英文描述]，例如：\n"
-                "  [excited tone] 哇太好吃了！\n"
-                "  [gentle] 慢慢搅拌均匀\n"
-                "  [laughing] 哈哈哈翻车了\n"
-                "  [serious] 这一步很关键\n"
-                "  [whisper] 偷偷告诉你\n"
-                "  每条都要加语气标记，根据说话内容和语境选择合适的\n\n"
-                "只输出翻译后的文本，每行一条，格式为 '序号. [语气] 翻译内容'：\n\n"
+                "- 为每条字幕单独给一个语气 tag，供 Fish/S2 TTS 使用\n"
+                "- tag 只允许简短英文短语：1 到 3 个单词，只能包含英文字母和空格\n"
+                "- tag 要能直接放进 [tag] 形式里，例如 neutral, friendly, excited, serious, whisper\n"
+                "- 不要输出方括号，不要输出中文 tag，不要输出长句 tag\n"
+                "- 如果语气不明显，用 neutral\n\n"
+                "按结构化结果输出，每条包含 index、tone_tag、text。\n"
             ) + "\n".join(texts)
 
             async with semaphore:
                 result = await self.translation_agent.run(prompt)
 
-            translated_lines = result.output.strip().split("\n")
+            translated_lines = {line.index: line for line in result.output.lines}
             batch_result = []
             for j, seg in enumerate(batch):
-                if j < len(translated_lines):
-                    translated_text = translated_lines[j]
-                    if ". " in translated_text:
-                        translated_text = translated_text.split(". ", 1)[1]
+                line_index = j + 1
+                translated_line = translated_lines.get(line_index)
+                if translated_line is not None:
+                    translated_text = translated_line.text.strip() or seg.text.strip()
+                    tone_tag = normalize_tone_tag(translated_line.tone_tag)
                     batch_result.append(SubtitleSegment(
                         start=seg.start, end=seg.end,
-                        text=translated_text.strip(),
+                        text=translated_text,
                         speaker_id=seg.speaker_id,
+                        tone_tag=tone_tag,
                     ))
                 else:
-                    batch_result.append(seg)
+                    batch_result.append(
+                        SubtitleSegment(
+                            start=seg.start,
+                            end=seg.end,
+                            text=seg.text,
+                            speaker_id=seg.speaker_id,
+                            tone_tag=DEFAULT_TONE_TAG,
+                        )
+                    )
             results_by_index[batch_idx] = batch_result
             done_count += 1
             logger.info(f"翻译进度: {done_count}/{len(batches)} 批 ({min((done_count) * batch_size, len(segments))}/{len(segments)})")
@@ -531,13 +570,23 @@ class WhisperSubtitleGenerator:
 
         return translated_segments
 
-    def _generate_srt(self, segments: list[SubtitleSegment], output_path: Path) -> None:
+    def _generate_srt(
+        self,
+        segments: list[SubtitleSegment],
+        output_path: Path,
+        *,
+        include_tone_tags: bool,
+    ) -> None:
         has_speakers = any(seg.speaker_id != 0 for seg in segments)
         with open(output_path, "w", encoding="utf-8") as f:
             for i, seg in enumerate(segments, 1):
                 start = self._format_timestamp(seg.start)
                 end = self._format_timestamp(seg.end)
-                text = f"[S{seg.speaker_id}] {seg.text}" if has_speakers else seg.text
+                text = seg.text
+                if include_tone_tags:
+                    text = build_tts_text(text, seg.tone_tag or DEFAULT_TONE_TAG)
+                if has_speakers:
+                    text = f"[S{seg.speaker_id}] {text}"
                 f.write(f"{i}\n{start} --> {end}\n{text}\n\n")
 
     def _format_timestamp(self, seconds: float) -> str:

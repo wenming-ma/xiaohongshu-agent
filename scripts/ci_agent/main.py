@@ -1,14 +1,14 @@
 """
 CI Agent - Autonomous pipeline runner and fixer
 
-Uses Claude Agent SDK to run, diagnose, fix, commit, and retry
-until the video post pipeline succeeds.
+Runs the pipeline inside an isolated git worktree and uses Deep Agents
+to diagnose, fix, validate, and retry until the video post pipeline succeeds.
 
 Usage:
     uv run python scripts/ci_agent/main.py
     uv run python scripts/ci_agent/main.py --max-attempts 30
-    uv run python scripts/ci_agent/main.py --model claude-sonnet-4-6
-    uv run python scripts/ci_agent/main.py --resume scripts/ci_agent/state.json
+    uv run python scripts/ci_agent/main.py --model openai:gpt-5.4
+    uv run python scripts/ci_agent/main.py --resume .cache/ci_agent/sessions/<session_id>/state.json
     uv run python scripts/ci_agent/main.py --publish
 """
 import argparse
@@ -34,7 +34,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--target", default=None, help="Override target command")
     parser.add_argument("--max-attempts", type=int, default=20)
-    parser.add_argument("--model", default="claude-sonnet-4-6")
+    parser.add_argument("--model", default="openai:gpt-5.4")
     parser.add_argument("--resume", type=Path, default=None, help="Resume from state.json")
     parser.add_argument("--branch", default=None, help="Isolated git branch for fixes")
     parser.add_argument("--publish", action="store_true", help="Enable publishing")
@@ -49,21 +49,32 @@ def setup_logging(verbose: bool = False) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(level=level, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", stream=sys.stdout)
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("anthropic").setLevel(logging.WARNING)
+    logging.getLogger("openai").setLevel(logging.WARNING)
 
 
 def main() -> None:
     args = parse_args()
     load_dotenv(PROJECT_ROOT / ".env")
     setup_logging(args.verbose)
+    resume_state = ClusterState.load(args.resume) if args.resume else None
 
     overrides: dict = {
         "max_attempts": args.max_attempts,
         "model": args.model,
         "target_timeout": args.timeout,
         "sleep_between_attempts": args.sleep,
-        "git_branch": args.branch,
     }
+    if resume_state:
+        overrides["session_id"] = resume_state.session_id
+        overrides["state_file"] = args.resume
+        if resume_state.worktree_root:
+            overrides["worktree_root"] = Path(resume_state.worktree_root)
+        if args.branch:
+            overrides["git_branch"] = args.branch
+        elif resume_state.current_branch:
+            overrides["git_branch"] = resume_state.current_branch
+    elif args.branch:
+        overrides["git_branch"] = args.branch
 
     if args.target:
         overrides["target_command"] = args.target
@@ -80,19 +91,21 @@ def main() -> None:
     config = ClusterConfig.from_env(**overrides)
 
     logger.info("=" * 60)
-    logger.info("CI Agent Starting (Claude Agent SDK)")
+    logger.info("CI Agent Starting (Deep Agents)")
     logger.info("Model: %s", config.model)
     logger.info("Target: %s", config.target_command)
     logger.info("Max attempts: %d", config.max_attempts)
     logger.info("Timeout: %ds", config.target_timeout)
-    logger.info("Branch: %s", config.git_branch or "(current)")
+    logger.info("Branch: %s", config.git_branch)
+    logger.info("Worktree: %s", config.worktree_root)
+    logger.info("State file: %s", config.state_file)
     logger.info("=" * 60)
 
     orchestrator = Orchestrator(config)
 
-    if args.resume:
+    if resume_state:
         logger.info("Resuming from %s", args.resume)
-        orchestrator.state = ClusterState.load(args.resume)
+        orchestrator.state = resume_state
         orchestrator.state.status = "running"
 
     success = asyncio.run(orchestrator.run())
