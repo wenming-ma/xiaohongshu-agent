@@ -16,18 +16,13 @@ from ...shared.utils.transcription import (
     AudioTranscriber,
     release_transcription_model,
 )
-from .subtitle import (
-    SubtitleTranslationReview,
-    SubtitleGenerator,
-    TranslationBatch,
-)
+from .subtitle import SubtitleGenerator
+from .subtitle_translation_agent import SubtitleTranslationAgent
 from .prompts import (
     download_font_selector_system_prompt,
     download_font_selector_user_prompt,
     download_pick_system_prompt,
     download_pick_user_prompt,
-    download_subtitle_review_system_prompt,
-    download_subtitle_translation_system_prompt,
 )
 
 logger = get_logger(__name__)
@@ -35,9 +30,9 @@ logger = get_logger(__name__)
 BEST_QUALITY_FORMAT = "bestvideo*+bestaudio/best"
 TARGET_DOWNLOAD_SHORT_EDGE = 1080
 DEFAULT_FORMAT_SORT = [
-    f"res:{TARGET_DOWNLOAD_SHORT_EDGE}",
-    "vcodec:h264",
-    "acodec:aac",
+    f"+res:{TARGET_DOWNLOAD_SHORT_EDGE}",
+    "+size",
+    "+br",
 ]
 FONTS_DIR = Path(__file__).resolve().parents[3] / "assets" / "fonts"
 
@@ -169,6 +164,42 @@ class _YtDlpLogger:
         logger.debug("yt-dlp error: %s", msg)
 
 
+def _estimate_selected_download_size(info: dict[str, Any]) -> int | None:
+    requested_formats = info.get("requested_formats") or []
+    if requested_formats:
+        sizes = [
+            int(size)
+            for fmt in requested_formats
+            for size in [fmt.get("filesize") or fmt.get("filesize_approx")]
+            if size
+        ]
+        if sizes:
+            return sum(sizes)
+
+    single_size = info.get("filesize") or info.get("filesize_approx")
+    return int(single_size) if single_size else None
+
+
+def _format_size_for_log(size_bytes: int | None) -> str:
+    if size_bytes is None:
+        return "未知"
+    return f"{size_bytes / (1024 * 1024):.1f} MiB"
+
+
+def _extract_selected_video_short_edge(info: dict[str, Any]) -> int | None:
+    requested_formats = info.get("requested_formats") or []
+    video_formats = [fmt for fmt in requested_formats if fmt.get("vcodec") != "none"]
+    candidates = video_formats or [info]
+
+    for candidate in candidates:
+        width = candidate.get("width")
+        height = candidate.get("height")
+        if width and height:
+            return min(int(width), int(height))
+
+    return None
+
+
 class DownloadAgent(BaseAgent):
 
     role = "视频下载专员"
@@ -193,16 +224,7 @@ class DownloadAgent(BaseAgent):
                 download_font_selector_system_prompt(font_list_text=_FONT_LIST_TEXT),
             ),
         )
-        self.subtitle_translation_agent = Agent(
-            model=model,
-            output_type=TranslationBatch,
-            system_prompt=(download_subtitle_translation_system_prompt(),),
-        )
-        self.subtitle_translation_reviewer = Agent(
-            model=model,
-            output_type=SubtitleTranslationReview,
-            system_prompt=(download_subtitle_review_system_prompt(),),
-        )
+        self.subtitle_translation_agent = SubtitleTranslationAgent()
         self._apply_font_selection(_default_font_selection())
 
     async def forward(
@@ -634,8 +656,7 @@ class DownloadAgent(BaseAgent):
         # 字幕生成 + 烧录
         try:
             subtitle_gen = SubtitleGenerator(
-                translation_agent=self.subtitle_translation_agent,
-                translation_reviewer=self.subtitle_translation_reviewer,
+                subtitle_translation_agent=self.subtitle_translation_agent,
             )
             subtitle_result_obj = await subtitle_gen.generate_and_burn(
                 video_path=video_path,
@@ -701,6 +722,40 @@ class DownloadAgent(BaseAgent):
         self._font_name = font_info["font_family"]
         self._font_path = FONTS_DIR / selection.font_file
 
+    def _select_download_format(self, yt_dlp_module: Any, source: VideoSource, ydl_opts: dict[str, Any]) -> str:
+        probe_opts = {
+            **ydl_opts,
+            "simulate": True,
+            "skip_download": True,
+        }
+
+        with yt_dlp_module.YoutubeDL(probe_opts) as ydl:
+            info = ydl.extract_info(source.url, download=False)
+
+        selected_format = info.get("format_id") or ydl_opts["format"]
+        estimated_size = _estimate_selected_download_size(info)
+        selected_short_edge = _extract_selected_video_short_edge(info)
+        logger.info(
+            "yt-dlp 预选格式: format=%s, short_edge=%s, 预估大小=%s",
+            selected_format,
+            selected_short_edge or "未知",
+            _format_size_for_log(estimated_size),
+        )
+
+        if selected_short_edge is not None and selected_short_edge < TARGET_DOWNLOAD_SHORT_EDGE:
+            raise RuntimeError(
+                "未找到不低于 1080p 的下载格式，"
+                f"当前最优候选 short_edge={selected_short_edge}"
+            )
+
+        if estimated_size is not None and estimated_size > MAX_FILE_SIZE:
+            raise RuntimeError(
+                "没有符合大小限制的 1080p+ 格式，"
+                f"最优候选 format={selected_format}, estimated={_format_size_for_log(estimated_size)}"
+            )
+
+        return selected_format
+
     async def _download_with_ytdlp(self, source: VideoSource, output_dir: Path) -> Path:
         import yt_dlp
 
@@ -718,14 +773,22 @@ class DownloadAgent(BaseAgent):
             "outtmpl": output_template,
             "quiet": True,
             "no_warnings": True,
-            "merge_output_format": "mp4",
+            "merge_output_format": "mp4/mkv",
             "socket_timeout": 30,
             "retries": 3,
             "logger": _YtDlpLogger(),
         }
 
         def _sync_download(opts: dict) -> Path:
-            with yt_dlp.YoutubeDL(opts) as ydl:
+            selected_format = self._select_download_format(yt_dlp, source, opts)
+            download_opts = {
+                **opts,
+                "format": selected_format,
+            }
+            download_opts.pop("format_sort", None)
+            download_opts.pop("format_sort_force", None)
+
+            with yt_dlp.YoutubeDL(download_opts) as ydl:
                 info = ydl.extract_info(source.url, download=True)
                 filename = ydl.prepare_filename(info)
                 base = os.path.splitext(filename)[0]

@@ -7,16 +7,9 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
-
 from ....utils.logger import get_logger
 from ...shared.utils.transcription import extract_audio_track, get_transcription_model
 from ..utils.tts_tags import DEFAULT_TONE_TAG, build_tts_text, normalize_tone_tag
-from .prompts import (
-    download_subtitle_review_user_prompt,
-    download_subtitle_revision_user_prompt,
-    download_subtitle_translation_user_prompt,
-)
 
 logger = get_logger(__name__)
 
@@ -32,6 +25,8 @@ _TTS_SPLIT_RE = re.compile(r"(?<=[。！？；，、：,.!?;:])\s*")
 _MAX_TTS_SEGMENT_CHARS = 22
 _MAX_TTS_CHARS_PER_SECOND = 6.5
 _MIN_TTS_SEGMENT_DURATION = 0.35
+_SUBTITLE_TRANSLATION_BATCH_SIZE = 15
+_SUBTITLE_TRANSLATION_MAX_CONCURRENCY = 5
 
 SUBTITLE_STYLES = {
     "food": {
@@ -221,44 +216,21 @@ class SubtitleGenerationResult:
         self.error_message = error_message
 
 
-class TranslationLine(BaseModel):
-    index: int = Field(ge=1)
-    tone_tag: str = DEFAULT_TONE_TAG
-    text: str = ""
-
-
-class TranslationBatch(BaseModel):
-    lines: list[TranslationLine]
-
-
-class SubtitleTranslationReview(BaseModel):
-    passed: bool = False
-    issues: list[str] = []
-    summary: str = ""
-
-
 class SubtitleGenerator:
     def __init__(
         self,
         *,
-        translation_agent: Any | None = None,
-        translation_reviewer: Any | None = None,
+        subtitle_translation_agent: Any | None = None,
     ):
-        self.translation_agent = translation_agent
-        self.translation_reviewer = translation_reviewer
+        self.subtitle_translation_agent = subtitle_translation_agent
 
     def _load_model(self) -> None:
         self.model = get_transcription_model()
 
-    def _require_translation_agent(self) -> Any:
-        if self.translation_agent is None:
-            raise RuntimeError("字幕翻译 agent 未配置")
-        return self.translation_agent
-
-    def _require_translation_reviewer(self) -> Any:
-        if self.translation_reviewer is None:
+    def _require_subtitle_translation_agent(self) -> Any:
+        if self.subtitle_translation_agent is None:
             raise RuntimeError("字幕翻译审核 agent 未配置")
-        return self.translation_reviewer
+        return self.subtitle_translation_agent
 
     async def generate_and_burn(
         self,
@@ -431,181 +403,6 @@ class SubtitleGenerator:
             logger.warning(f"说话人识别失败（不影响字幕生成）: {e}")
             return segments
 
-    async def _rewrite_segments_to_chinese(
-        self,
-        segments: list[SubtitleSegment],
-        *,
-        source_language: str,
-        mode: str,
-        current_segments: list[SubtitleSegment] | None = None,
-        feedback: str = "",
-    ) -> list[SubtitleSegment]:
-        translation_agent = self._require_translation_agent()
-
-        lang_names = {
-            "en": "英文", "ja": "日文", "ko": "韩文", "fr": "法文",
-            "es": "西班牙文", "de": "德文", "pt": "葡萄牙文", "ru": "俄文",
-            "th": "泰文", "vi": "越南文", "ar": "阿拉伯文", "it": "意大利文",
-            "mixed": "混合语言",
-        }
-        lang_name = lang_names.get(source_language, f"{source_language} 语言")
-        batch_size = 10 if mode == "revise" else 15
-        semaphore = asyncio.Semaphore(5)
-
-        batches = [
-            segments[index:index + batch_size]
-            for index in range(0, len(segments), batch_size)
-        ]
-        results_by_index: dict[int, list[SubtitleSegment]] = {}
-        done_count = 0
-        has_multiple_speakers = len({segment.speaker_id for segment in segments}) > 1
-
-        async def _rewrite_batch(batch_idx: int, batch: list[SubtitleSegment]) -> None:
-            nonlocal done_count
-
-            current_batch = None
-            if current_segments is not None:
-                current_batch = current_segments[batch_idx * batch_size:(batch_idx + 1) * batch_size]
-
-            if has_multiple_speakers:
-                source_lines = "\n".join(
-                    f"{line_idx + 1}. [说话人{segment.speaker_id}] {segment.text}"
-                    for line_idx, segment in enumerate(batch)
-                )
-                current_lines = "\n".join(
-                    f"{line_idx + 1}. [说话人{segment.speaker_id}] {segment.text}"
-                    for line_idx, segment in enumerate(current_batch or [])
-                )
-                speaker_instruction = (
-                    "- 每行开头的 [说话人N] 只是上下文，不要出现在输出里\n"
-                    "- 说话人不同可以保留不同语气\n"
-                )
-            else:
-                source_lines = "\n".join(
-                    f"{line_idx + 1}. {segment.text}"
-                    for line_idx, segment in enumerate(batch)
-                )
-                current_lines = "\n".join(
-                    f"{line_idx + 1}. {segment.text}"
-                    for line_idx, segment in enumerate(current_batch or [])
-                )
-                speaker_instruction = ""
-
-            if mode == "revise" and current_batch is not None:
-                prompt = download_subtitle_revision_user_prompt(
-                    lang_name=lang_name,
-                    feedback=feedback or "请修复所有非中文和不自然表达。",
-                    source_lines=source_lines,
-                    current_lines=current_lines,
-                    speaker_instruction=speaker_instruction,
-                )
-            else:
-                prompt = download_subtitle_translation_user_prompt(
-                    lang_name=lang_name,
-                    source_lines=source_lines,
-                    speaker_instruction=speaker_instruction,
-                )
-
-            async with semaphore:
-                result = await translation_agent.run(prompt)
-
-            translated_lines = {line.index: line for line in result.output.lines}
-            batch_result: list[SubtitleSegment] = []
-            for line_idx, segment in enumerate(batch, start=1):
-                translated_line = translated_lines.get(line_idx)
-                translated_text = (
-                    _normalize_subtitle_text(translated_line.text)
-                    if translated_line is not None
-                    else ""
-                )
-                if not translated_text:
-                    if current_batch is not None and line_idx - 1 < len(current_batch):
-                        translated_text = _normalize_subtitle_text(current_batch[line_idx - 1].text)
-                    else:
-                        translated_text = _normalize_subtitle_text(segment.text)
-
-                tone_source = translated_line.tone_tag if translated_line is not None else segment.tone_tag
-                tone_tag = normalize_tone_tag(tone_source or segment.tone_tag or DEFAULT_TONE_TAG)
-                batch_result.append(
-                    SubtitleSegment(
-                        start=segment.start,
-                        end=segment.end,
-                        text=translated_text,
-                        speaker_id=segment.speaker_id,
-                        tone_tag=tone_tag,
-                    )
-                )
-
-            results_by_index[batch_idx] = batch_result
-            done_count += 1
-            label = "修订" if mode == "revise" else "翻译"
-            logger.info(
-                f"{label}进度: {done_count}/{len(batches)} 批 "
-                f"({min(done_count * batch_size, len(segments))}/{len(segments)})"
-            )
-
-        await asyncio.gather(
-            *[_rewrite_batch(index, batch) for index, batch in enumerate(batches)]
-        )
-
-        rewritten_segments: list[SubtitleSegment] = []
-        for index in range(len(batches)):
-            rewritten_segments.extend(results_by_index[index])
-        return rewritten_segments
-
-    async def _review_translated_segments(
-        self,
-        source_segments: list[SubtitleSegment],
-        translated_segments: list[SubtitleSegment],
-        source_language: str,
-    ) -> SubtitleTranslationReview:
-        translation_reviewer = self._require_translation_reviewer()
-
-        lang_names = {
-            "en": "英文", "ja": "日文", "ko": "韩文", "fr": "法文",
-            "es": "西班牙文", "de": "德文", "pt": "葡萄牙文", "ru": "俄文",
-            "th": "泰文", "vi": "越南文", "ar": "阿拉伯文", "it": "意大利文",
-            "mixed": "混合语言", "zh": "中文字幕",
-        }
-        lang_name = lang_names.get(source_language or "mixed", f"{source_language} 字幕")
-        has_multiple_speakers = len({segment.speaker_id for segment in translated_segments}) > 1
-
-        if has_multiple_speakers:
-            source_lines = "\n".join(
-                f"{idx + 1}. [说话人{segment.speaker_id}] {segment.text}"
-                for idx, segment in enumerate(source_segments)
-            )
-            translated_lines = "\n".join(
-                f"{idx + 1}. [说话人{segment.speaker_id}] {segment.text}"
-                for idx, segment in enumerate(translated_segments)
-            )
-        else:
-            source_lines = "\n".join(
-                f"{idx + 1}. {segment.text}"
-                for idx, segment in enumerate(source_segments)
-            )
-            translated_lines = "\n".join(
-                f"{idx + 1}. {segment.text}"
-                for idx, segment in enumerate(translated_segments)
-            )
-
-        prompt = download_subtitle_review_user_prompt(
-            lang_name=lang_name,
-            source_lines=source_lines,
-            translated_lines=translated_lines,
-        )
-        result = await translation_reviewer.run(prompt)
-        return result.output
-
-    @staticmethod
-    def _build_translation_review_feedback(review: SubtitleTranslationReview) -> str:
-        lines = [review.summary.strip() or "字幕中文审核未通过，请根据问题修订。"]
-        for issue in review.issues:
-            cleaned = issue.strip()
-            if cleaned:
-                lines.append(f"- {cleaned}")
-        return "\n".join(lines)
-
     async def _translate_segments_for_chinese_tts(
         self,
         segments: list[SubtitleSegment],
@@ -623,49 +420,54 @@ class SubtitleGenerator:
             )
             for segment in segments
         ]
-        current_segments = (
-            await self._rewrite_segments_to_chinese(
-                normalized_source,
-                source_language=source_language or "mixed",
-                mode="translate",
+        if not normalized_source:
+            return []
+
+        subtitle_translation_agent = self._require_subtitle_translation_agent()
+        batches = [
+            normalized_source[index:index + _SUBTITLE_TRANSLATION_BATCH_SIZE]
+            for index in range(0, len(normalized_source), _SUBTITLE_TRANSLATION_BATCH_SIZE)
+        ]
+        results_by_index: dict[int, list[SubtitleSegment]] = {}
+        done_count = 0
+        semaphore = asyncio.Semaphore(_SUBTITLE_TRANSLATION_MAX_CONCURRENCY)
+
+        async def _translate_batch(batch_index: int, batch: list[SubtitleSegment]) -> None:
+            nonlocal done_count
+
+            async with semaphore:
+                translated_batch = await subtitle_translation_agent.forward(
+                    batch,
+                    source_language=source_language or "mixed",
+                    translate_first=translate_first,
+                )
+
+            results_by_index[batch_index] = translated_batch
+            done_count += 1
+            logger.info(
+                f"字幕翻译审核进度: {done_count}/{len(batches)} 批 "
+                f"({min(done_count * _SUBTITLE_TRANSLATION_BATCH_SIZE, len(normalized_source))}/"
+                f"{len(normalized_source)})"
             )
-            if translate_first
-            else normalized_source
+
+        await asyncio.gather(
+            *[_translate_batch(batch_index, batch) for batch_index, batch in enumerate(batches)]
         )
 
-        last_review: SubtitleTranslationReview | None = None
-        for round_index in range(3):
-            last_review = await self._review_translated_segments(
-                normalized_source,
-                current_segments,
-                source_language=source_language or "mixed",
-            )
-            if last_review.passed:
-                return [
-                    SubtitleSegment(
-                        start=segment.start,
-                        end=segment.end,
-                        text=_normalize_subtitle_text(segment.text),
-                        speaker_id=segment.speaker_id,
-                        tone_tag=normalize_tone_tag(segment.tone_tag or DEFAULT_TONE_TAG),
-                    )
-                    for segment in current_segments
-                ]
+        translated_segments: list[SubtitleSegment] = []
+        for batch_index in range(len(batches)):
+            translated_segments.extend(results_by_index[batch_index])
 
-            feedback = self._build_translation_review_feedback(last_review)
-            logger.warning(f"字幕中文审核未通过 (第{round_index + 1}轮): {last_review.summary or feedback}")
-            current_segments = await self._rewrite_segments_to_chinese(
-                normalized_source,
-                source_language=source_language or "mixed",
-                mode="revise",
-                current_segments=current_segments,
-                feedback=feedback,
+        return [
+            SubtitleSegment(
+                start=segment.start,
+                end=segment.end,
+                text=_normalize_subtitle_text(segment.text),
+                speaker_id=segment.speaker_id,
+                tone_tag=normalize_tone_tag(segment.tone_tag or DEFAULT_TONE_TAG),
             )
-
-        raise RuntimeError(
-            "字幕中文审核未通过，达到最大修订轮数: "
-            f"{self._build_translation_review_feedback(last_review or SubtitleTranslationReview())}"
-        )
+            for segment in translated_segments
+        ]
 
     def _build_tts_segments(self, segments: list[SubtitleSegment]) -> list[SubtitleSegment]:
         tts_segments: list[SubtitleSegment] = []

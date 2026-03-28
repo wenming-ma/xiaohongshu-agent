@@ -24,6 +24,10 @@ to stay small, composable, and focused on a single responsibility.
 
 - **Keep agents small**: Avoid routing across platforms or owning the full pipeline flow inside a
   phase agent.
+- **Separate business closure from orchestration**: An agent should own the quality loop for a
+  single business unit of work, such as generate-review-revise for one item or one batch. Batch
+  splitting, concurrency limits, ordering, retries across units, and end-to-end scheduling belong
+  to the pipeline or orchestration layer, not inside the agent itself.
 - **Expose tools, not flows**: If the agent needs tools, provide them as `Tool` or helper methods.
 - **Use validators intentionally**: Put pipeline-local validators beside the phase that uses them.
   Reuse shared validator primitives from `src/core/base_validator.py` when needed.
@@ -116,6 +120,13 @@ class ValidationResult(BaseModel):
 - 除 `__init__` 外，公开方法不加下划线前缀
 - 私有辅助方法使用下划线前缀（如 `_check_images`）
 - 验证失败回调统一命名为 `on_validation_failed`
+
+### 职责边界
+
+- Agent 只负责单个业务单元的闭环处理，例如一条内容、一张图、一个字幕批次的生成、审核、修订。
+- 批次切分、并发控制、执行顺序、跨批重试、整体调度属于 pipeline 或 orchestration 层，不应塞进 agent 内部。
+- 如果某个能力既需要“单元内闭环”又需要“多单元调度”，优先拆成两层：
+  上层负责拆分和调度，下层 agent 只负责把传入的单元处理到可用为止。
 
 ### 现有 Agent（示例）
 
