@@ -44,6 +44,9 @@ class AttemptRecord(BaseModel):
     validator_next_focus: str = ""
     controller_memory_path: str = ""
     validator_memory_path: str = ""
+    output_dir: str = ""
+    video_path: str = ""
+    user_feedback: str = ""
     files_modified: list[str] = Field(default_factory=list)
     committed: bool = False
     commit_hash: str = ""
@@ -62,6 +65,8 @@ class ClusterState(BaseModel):
     current_objective_stage: str = "PASS"
     current_objective: str = "Make the target command pass."
     current_controller_reason: str = ""
+    current_user_feedback: str = ""
+    current_review_video_path: str = ""
     best_success_duration_seconds: float | None = None
     current_branch: str = ""
     original_branch: str = ""
@@ -95,6 +100,7 @@ class ClusterState(BaseModel):
                 f"  Controller: {attempt.controller_reason[:160]}\n"
                 f"  Result: exit={_format_exit_code(attempt.exit_code)}, duration={_format_duration(attempt.duration_seconds)}, verdict={attempt.validator_verdict or 'n/a'}\n"
                 f"  Validator: {attempt.validator_reason[:180]}\n"
+                f"  User feedback: {(attempt.user_feedback or 'n/a')[:180]}\n"
                 f"  Fix: {attempt.fix_description[:200]}\n"
                 f"  Files: {', '.join(attempt.files_modified) or 'none'}"
             )

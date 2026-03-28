@@ -81,6 +81,8 @@ class ControllerDecision(BaseModel):
     objective: str
     reason: str
     fix_summary: str = ""
+    output_dir: str = ""
+    review_video_path: str = ""
     latest_validator_record: ValidatorRecord
 
 
@@ -90,6 +92,8 @@ class ControllerCycleOutcome(BaseModel):
     objective: str
     reason: str
     fix_summary: str = ""
+    output_dir: str = ""
+    review_video_path: str = ""
     latest_validator_record: ValidatorRecord
     workers: list[WorkerInvocation] = Field(default_factory=list)
 
@@ -476,6 +480,33 @@ class ControllerMemoryStore:
         updated_history = self._append_history(history, entry)
         self.path.write_text(self._render_document(current_state=current_state, history=updated_history), encoding="utf-8")
 
+    def record_user_feedback(
+        self,
+        *,
+        attempt_number: int,
+        feedback: str,
+        video_path: str,
+        output_dir: str,
+    ) -> None:
+        self.ensure_exists()
+        compact_feedback = _compact_memory_text(feedback, CONTROLLER_MEMORY_SUMMARY_CHARS)
+        history = self._extract_history()
+        entry = (
+            f"### User Feedback After Attempt {attempt_number}\n"
+            f"- Head: `{self._current_head()}`\n"
+            f"- Video path: `{video_path or 'unknown'}`\n"
+            f"- Output dir: `{output_dir or 'unknown'}`\n"
+            f"- Feedback: {compact_feedback or 'n/a'}\n"
+        )
+        current_state = (
+            f"- Synced worktree head: `{self._current_head()}`\n"
+            "- Strategy status: incorporate latest user feedback\n"
+            f"- Latest review video: `{video_path or 'unknown'}`\n"
+            f"- Latest feedback: {compact_feedback or 'n/a'}\n"
+        )
+        updated_history = self._append_history(history, entry)
+        self.path.write_text(self._render_document(current_state=current_state, history=updated_history), encoding="utf-8")
+
     def _extract_history(self) -> str:
         if not self.path.exists():
             return ""
@@ -607,6 +638,9 @@ Hard rules:
 - Do not be artificially conservative. If a dependency, architecture, or model-level change is the best path, pursue it.
 - Prefer the smallest sufficient change, not the smallest possible diff.
 - Controller memory entries should be compact: short bullets or short paragraphs, focused on what must survive context compression.
+- Before calling `request_done`, you must ensure there is at least one completed, reviewable video artifact from the current repo state.
+- Your structured response must include `output_dir` and `review_video_path` when a completed artifact exists.
+- If you call `request_done`, `review_video_path` must point to the review artifact you want Python to send to the user.
 - If the current attempt should be discarded, you must call the `request_rollback` tool. Do not encode rollback only in structured output.
 - If the current validated state is good enough to stop, you must call the `request_done` tool. Do not encode done only in structured output.
 
@@ -616,6 +650,7 @@ Decision rules:
 - If neither request is made, Python will treat the attempt as `CONTINUE`.
 
 Your final structured response must include the latest validator record from the current repo state.
+Your final structured response should include the current output directory and the latest reviewable video path whenever they are known.
 Your structured response must not contain an action field. Done and rollback are requested via tools.
 """
 
@@ -1104,6 +1139,8 @@ class DeepAgentRuntime:
                 objective=structured.objective,
                 reason=resolved_reason,
                 fix_summary=structured.fix_summary,
+                output_dir=structured.output_dir,
+                review_video_path=structured.review_video_path,
                 latest_validator_record=latest_record,
                 workers=workers,
             )
@@ -1122,6 +1159,8 @@ class DeepAgentRuntime:
                 objective="Re-establish a trustworthy validated state.",
                 reason=resolved_reason,
                 fix_summary="",
+                output_dir="",
+                review_video_path="",
                 latest_validator_record=latest_record,
                 workers=workers,
             )
@@ -1135,3 +1174,11 @@ class DeepAgentRuntime:
     def note_rollback(self, *, attempt_number: int, rollback_to: str, reason: str) -> None:
         self._validator_memory_store.note_rollback(attempt_number=attempt_number, rollback_to=rollback_to, reason=reason)
         self._controller_memory_store.note_rollback(attempt_number=attempt_number, rollback_to=rollback_to, reason=reason)
+
+    def note_user_feedback(self, *, attempt_number: int, feedback: str, video_path: str, output_dir: str) -> None:
+        self._controller_memory_store.record_user_feedback(
+            attempt_number=attempt_number,
+            feedback=feedback,
+            video_path=video_path,
+            output_dir=output_dir,
+        )

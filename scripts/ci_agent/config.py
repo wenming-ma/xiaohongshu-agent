@@ -24,6 +24,7 @@ class ClusterConfig:
 
     # Limits
     max_attempts: int = 20
+    min_attempts_before_finish: int = 10
     max_consecutive_rollbacks: int = 3
     max_worker_turns: int = 30
     sleep_between_attempts: int = 5

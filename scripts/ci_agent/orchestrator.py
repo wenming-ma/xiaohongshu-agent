@@ -4,6 +4,7 @@ import asyncio
 import logging
 import subprocess
 from pathlib import Path
+from typing import Protocol
 
 from .agent_runtime import ControllerCycleOutcome, DeepAgentRuntime, ValidatorRecord
 from .config import ClusterConfig
@@ -12,8 +13,27 @@ from .state import AttemptRecord, ClusterState
 logger = logging.getLogger(__name__)
 
 
+class _Notifier(Protocol):
+    async def send_message(self, text: str, chat_id: str | None = None, parse_mode: str | None = None) -> str | None: ...
+    async def send_file(
+        self,
+        file_path: Path,
+        caption: str = "",
+        chat_id: str | None = None,
+        *,
+        duration: int | None = None,
+    ) -> str | None: ...
+    async def wait_for_reply(self) -> str: ...
+    def clear_queue(self) -> None: ...
+
+
 class Orchestrator:
-    def __init__(self, config: ClusterConfig, agent_runtime: DeepAgentRuntime | None = None):
+    def __init__(
+        self,
+        config: ClusterConfig,
+        agent_runtime: DeepAgentRuntime | None = None,
+        notifier: _Notifier | None = None,
+    ):
         self.config = config
         self.state = ClusterState(
             session_id=config.session_id,
@@ -24,6 +44,7 @@ class Orchestrator:
             validator_memory_file=str(config.validator_memory_file),
         )
         self._agent_runtime = agent_runtime
+        self._notifier = notifier
 
     async def run(self) -> bool:
         self._init_source_git_state()
@@ -36,9 +57,11 @@ class Orchestrator:
         consecutive_rollbacks = 0
         start_attempt = len(self.state.attempts) + 1
 
-        for attempt_num in range(start_attempt, self.config.max_attempts + 1):
+        attempt_limit = self._attempt_limit()
+
+        for attempt_num in range(start_attempt, attempt_limit + 1):
             logger.info("=" * 60)
-            logger.info("ATTEMPT #%d / %d", attempt_num, self.config.max_attempts)
+            logger.info("ATTEMPT #%d / %d", attempt_num, attempt_limit)
             logger.info("=" * 60)
 
             head_before = self._rev_parse(self.config.worktree_root, "HEAD")
@@ -78,6 +101,76 @@ class Orchestrator:
                 consecutive_rollbacks = 0
 
             if outcome.action == "DONE":
+                if not record.video_path:
+                    logger.warning("Controller requested done without returning review_video_path; continuing the loop")
+                    record.controller_reason = (
+                        (record.controller_reason + " " if record.controller_reason else "")
+                        + "Done request rejected because controller did not return review_video_path."
+                    ).strip()
+                    self.state.attempts.append(record)
+                    self.state.save(self.config.state_file)
+                    if self.config.sleep_between_attempts > 0:
+                        await asyncio.sleep(self.config.sleep_between_attempts)
+                    continue
+                if not Path(record.video_path).exists():
+                    logger.warning(
+                        "Controller requested done with a missing review_video_path %s; continuing the loop",
+                        record.video_path,
+                    )
+                    record.controller_reason = (
+                        (record.controller_reason + " " if record.controller_reason else "")
+                        + "Done request rejected because review_video_path does not exist."
+                    ).strip()
+                    self.state.attempts.append(record)
+                    self.state.save(self.config.state_file)
+                    if self.config.sleep_between_attempts > 0:
+                        await asyncio.sleep(self.config.sleep_between_attempts)
+                    continue
+                if not Path(record.video_path).is_file():
+                    logger.warning(
+                        "Controller requested done with a non-file review_video_path %s; continuing the loop",
+                        record.video_path,
+                    )
+                    record.controller_reason = (
+                        (record.controller_reason + " " if record.controller_reason else "")
+                        + "Done request rejected because review_video_path is not a file."
+                    ).strip()
+                    self.state.attempts.append(record)
+                    self.state.save(self.config.state_file)
+                    if self.config.sleep_between_attempts > 0:
+                        await asyncio.sleep(self.config.sleep_between_attempts)
+                    continue
+                self.state.current_review_video_path = record.video_path
+                feedback = await self._handle_done_review(attempt_num, attempt_limit, record)
+                if feedback:
+                    record.user_feedback = feedback
+                    self.state.current_user_feedback = feedback
+                    self.state.current_review_video_path = record.video_path
+                    if hasattr(self._agent_runtime, "note_user_feedback"):
+                        self._agent_runtime.note_user_feedback(
+                            attempt_number=attempt_num,
+                            feedback=feedback,
+                            video_path=record.video_path,
+                            output_dir=record.output_dir,
+                        )
+                if attempt_num < self.config.min_attempts_before_finish:
+                    logger.info(
+                        "Controller requested done at attempt #%d, but the loop must run at least %d attempts",
+                        attempt_num,
+                        self.config.min_attempts_before_finish,
+                    )
+                    self.state.attempts.append(record)
+                    self.state.save(self.config.state_file)
+                    if self.config.sleep_between_attempts > 0:
+                        await asyncio.sleep(self.config.sleep_between_attempts)
+                    continue
+                if not self._is_feedback_approval(feedback):
+                    logger.info("User feedback did not approve ending the loop; continuing to the next attempt")
+                    self.state.attempts.append(record)
+                    self.state.save(self.config.state_file)
+                    if self.config.sleep_between_attempts > 0:
+                        await asyncio.sleep(self.config.sleep_between_attempts)
+                    continue
                 if record.exit_code == 0:
                     logger.info("Controller ended the loop with a passing validated state")
                     self._finish_with_status("success", record)
@@ -92,7 +185,7 @@ class Orchestrator:
             if self.config.sleep_between_attempts > 0:
                 await asyncio.sleep(self.config.sleep_between_attempts)
 
-        logger.error("Max attempts (%d) exhausted", self.config.max_attempts)
+        logger.error("Max attempts (%d) exhausted", attempt_limit)
         self.state.status = "exhausted"
         self.state.save(self.config.state_file)
         return False
@@ -115,6 +208,8 @@ class Orchestrator:
             validator_memory_path=str(self.config.validator_memory_file),
             workers=outcome.workers,
         )
+        record.output_dir = self._normalize_output_dir(outcome.output_dir)
+        record.video_path = self._normalize_video_path(outcome.review_video_path, record.output_dir)
         self._record_validator_details(record, outcome.latest_validator_record)
         return record
 
@@ -154,13 +249,16 @@ class Orchestrator:
     def _build_controller_prompt(self, attempt_num: int, head_before: str) -> str:
         return (
             f"Session: {self.state.session_id}\n"
-            f"Attempt: {attempt_num} / {self.config.max_attempts}\n"
+            f"Attempt: {attempt_num} / {self._attempt_limit()}\n"
             f"Target command: {self.config.target_command}\n"
             f"Current worktree branch: {self.config.git_branch}\n"
             f"Current worktree HEAD: {head_before}\n"
             f"Rollback target for this attempt: {head_before}\n"
+            f"Minimum attempts before finish is allowed: {self.config.min_attempts_before_finish}\n"
             f"Controller memory file: {self.config.controller_memory_file}\n"
             f"Validator memory file: {self.config.validator_memory_file}\n"
+            f"Latest user feedback: {self.state.current_user_feedback or 'none'}\n"
+            f"Latest reviewed video path: {self.state.current_review_video_path or 'none'}\n"
             f"Current objective stage: {self.state.current_objective_stage}\n"
             f"Current objective: {self.state.current_objective}\n"
             f"Best successful duration seconds so far: {self._format_duration(self.state.best_success_duration_seconds)}\n\n"
@@ -169,7 +267,10 @@ class Orchestrator:
             "Use validator memory as the durable record of validated state. "
             "If that memory is stale or not synced to the current HEAD, send validator first. "
             "If this attempt should be discarded, call the rollback request tool with the rollback target above. "
-            "If the current validated state is sufficient to stop, call the done request tool."
+            "If the current validated state is sufficient to stop, call the done request tool. "
+            "If you request done, you must return review_video_path for the completed artifact; Python will reject done requests that omit it. "
+            "A done request before the minimum-attempt threshold becomes a progress checkpoint: Python will notify the user via Telegram, send the generated video, collect user feedback, and continue the outer loop. "
+            "After the threshold, Python still requires explicit user approval feedback before it will finalize the run."
         )
 
     def _finish_with_status(self, status: str, record: AttemptRecord) -> None:
@@ -182,6 +283,89 @@ class Orchestrator:
         self.config.log_dir.mkdir(parents=True, exist_ok=True)
         self.config.controller_memory_file.parent.mkdir(parents=True, exist_ok=True)
         self.config.validator_memory_file.parent.mkdir(parents=True, exist_ok=True)
+
+    def _attempt_limit(self) -> int:
+        return max(self.config.max_attempts, self.config.min_attempts_before_finish)
+
+    async def _notify_done_request(self, attempt_num: int, attempt_limit: int, record: AttemptRecord) -> None:
+        notifier = self._get_notifier()
+        if notifier is None:
+            logger.warning("Telegram notifier is unavailable; skipping done-request notification")
+            return
+        message = self._format_done_request_message(attempt_num, attempt_limit, record)
+        try:
+            await notifier.send_message(message)
+        except Exception:
+            logger.exception("Failed to send Telegram notification for controller done request")
+
+    async def _handle_done_review(self, attempt_num: int, attempt_limit: int, record: AttemptRecord) -> str:
+        await self._notify_done_request(attempt_num, attempt_limit, record)
+        notifier = self._get_notifier()
+        if notifier is None:
+            return ""
+        if hasattr(notifier, "clear_queue"):
+            notifier.clear_queue()
+        if record.video_path:
+            try:
+                await notifier.send_file(
+                    Path(record.video_path),
+                    caption="本轮生成的视频已附上，请检查内容、字幕、中文配音和整体完成度。",
+                )
+            except Exception:
+                logger.exception("Failed to send generated video to Telegram")
+        else:
+            try:
+                await notifier.send_message("未自动发现本轮生成视频文件，请根据输出目录人工检查。")
+            except Exception:
+                logger.exception("Failed to send missing-video notice to Telegram")
+        prompt = (
+            "请回复你的反馈。\n"
+            "- 如果还需要修改，请直接回复修改意见。\n"
+            "- 如果你认可当前结果并允许结束，请回复 APPROVED。"
+        )
+        try:
+            await notifier.send_message(prompt)
+            feedback = await notifier.wait_for_reply()
+            return feedback.strip()
+        except Exception:
+            logger.exception("Failed to collect Telegram feedback after done request")
+            return ""
+
+    def _get_notifier(self) -> _Notifier | None:
+        if self._notifier is not None:
+            return self._notifier
+        try:
+            from src.utils.telegram_notifier import get_telegram_notifier
+        except Exception:
+            logger.exception("Could not import Telegram notifier")
+            return None
+        self._notifier = get_telegram_notifier()
+        return self._notifier
+
+    def _format_done_request_message(self, attempt_num: int, attempt_limit: int, record: AttemptRecord) -> str:
+        finish_allowed = attempt_num >= self.config.min_attempts_before_finish
+        status = "等待你的 APPROVED 才会结束" if finish_allowed else f"继续迭代，至少跑到第 {self.config.min_attempts_before_finish} 轮"
+        files_line = ", ".join(record.files_modified[:8]) if record.files_modified else "none"
+        if len(record.files_modified) > 8:
+            files_line += f" ... (+{len(record.files_modified) - 8} more)"
+        return (
+            "[CI Agent] Controller 请求结束\n"
+            f"Session: {self.state.session_id}\n"
+            f"Attempt: {attempt_num}/{attempt_limit}\n"
+            f"当前处理: {status}\n"
+            f"阶段: {record.objective_stage}\n"
+            f"目标: {self._clip(record.objective_summary, 180)}\n"
+            f"Controller 判断: {self._clip(record.controller_reason, 220)}\n"
+            f"本轮优化: {self._clip(record.fix_description or 'No code change summary provided.', 260)}\n"
+            f"验证结果: {record.validator_verdict} | exit={record.exit_code} | {self._format_duration(record.duration_seconds)}s\n"
+            f"验证说明: {self._clip(record.validator_reason, 220)}\n"
+            f"建议下一步: {self._clip(record.validator_next_focus or 'n/a', 180)}\n"
+            f"修改文件: {files_line}\n"
+            f"Commit: {record.commit_hash or 'none'}\n"
+            f"输出目录: {record.output_dir or 'unknown'}\n"
+            f"视频文件: {record.video_path or 'unknown'}\n"
+            f"Worktree branch: {self.config.git_branch}"
+        )
 
     def _capture_git_effects(self, record: AttemptRecord) -> None:
         record.head_after = self._rev_parse(self.config.worktree_root, "HEAD")
@@ -311,3 +495,33 @@ class Orchestrator:
         if duration is None:
             return "n/a"
         return f"{duration:.2f}"
+
+    @staticmethod
+    def _clip(text: str, limit: int) -> str:
+        normalized = " ".join(text.split())
+        if len(normalized) <= limit:
+            return normalized
+        return normalized[: max(limit - 3, 0)].rstrip() + "..."
+
+    @staticmethod
+    def _is_feedback_approval(feedback: str) -> bool:
+        return feedback.strip().upper() == "APPROVED"
+
+    def _normalize_output_dir(self, output_dir: str) -> str:
+        raw = output_dir.strip()
+        if not raw:
+            return ""
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            path = self.config.worktree_root / path
+        return str(path.resolve(strict=False))
+
+    def _normalize_video_path(self, video_path: str, output_dir: str) -> str:
+        raw = video_path.strip()
+        if not raw:
+            return ""
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            base_dir = Path(output_dir) if output_dir else self.config.worktree_root
+            path = base_dir / path
+        return str(path.resolve(strict=False))

@@ -100,6 +100,7 @@ def main() -> None:
     logger.info("Worker model: %s", config.worker_model)
     logger.info("Target: %s", config.target_command)
     logger.info("Max attempts: %d", config.max_attempts)
+    logger.info("Minimum attempts before finish: %d", config.min_attempts_before_finish)
     logger.info("Timeout: %ds", config.target_timeout)
     logger.info("Branch: %s", config.git_branch)
     logger.info("Worktree: %s", config.worktree_root)

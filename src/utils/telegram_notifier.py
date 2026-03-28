@@ -254,6 +254,64 @@ class TelegramNotifier:
         except Exception as e:
             logger.error(f"发送图片失败: {e}")
             return None
+
+    async def send_file(
+        self,
+        file_path: Path,
+        caption: str = "",
+        chat_id: Optional[str] = None,
+        *,
+        duration: Optional[int] = None,
+    ) -> Optional[int]:
+        """
+        发送文件；视频优先按视频发送，其余文件按文档发送。
+
+        Args:
+            file_path: 文件路径
+            caption: 说明文字
+            chat_id: 目标聊天 ID（可选）
+            duration: 媒体时长（毫秒，可选）
+
+        Returns:
+            消息 ID，发送失败返回 None
+        """
+        if self.bot is None:
+            logger.warning("Bot 未初始化，无法发送文件")
+            return None
+
+        target_chat = chat_id or self.chat_id
+        if not target_chat:
+            logger.warning("未指定 chat_id，无法发送文件")
+            return None
+
+        if not file_path.exists():
+            logger.error(f"文件不存在: {file_path}")
+            return None
+
+        suffix = file_path.suffix.lower()
+        try:
+            media = FSInputFile(str(file_path))
+            if suffix in {".mp4", ".mov", ".mkv", ".webm"}:
+                kwargs = {
+                    "chat_id": target_chat,
+                    "video": media,
+                    "caption": caption or None,
+                    "supports_streaming": True,
+                }
+                if duration is not None and duration > 0:
+                    kwargs["duration"] = max(int(duration / 1000), 1)
+                message = await self.bot.send_video(**kwargs)
+            else:
+                message = await self.bot.send_document(
+                    chat_id=target_chat,
+                    document=media,
+                    caption=caption or None,
+                )
+            logger.debug(f"文件已发送: {file_path.name}")
+            return message.message_id
+        except Exception as e:
+            logger.error(f"发送文件失败: {e}")
+            return None
     
     async def wait_for_reply(self) -> str:
         """

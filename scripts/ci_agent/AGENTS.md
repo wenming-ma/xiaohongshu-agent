@@ -76,6 +76,7 @@ There are five agent roles in this workflow:
 - Before a long exploratory branch, before declaring done, and before requesting rollback, `controller` should update controller memory with the latest strategic state.
 - `controller` should request rollback explicitly when the current attempt should be discarded; Python will execute the rollback safely.
 - `controller` should request done explicitly when the current validated state is good enough; Python will perform legality checks and finalize the session.
+- A done request before the minimum outer-attempt threshold is treated as a progress checkpoint, not an immediate exit. Python will notify the user and continue the loop.
 
 ## Validator Rules
 

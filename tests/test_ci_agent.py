@@ -118,6 +118,7 @@ def test_cluster_config_defaults_to_session_scoped_cache_paths(tmp_path: Path) -
     assert config.model == "openai:gpt-5.4"
     assert config.worker_model == "MiniMax-M2.7"
     assert config.worker_base_url == "https://api.minimaxi.com/v1"
+    assert config.min_attempts_before_finish == 10
     assert config.state_file == repo / ".cache" / "ci_agent" / "sessions" / "session123" / "state.json"
     assert config.log_dir == repo / ".cache" / "ci_agent" / "logs" / "session123"
     assert config.worktree_root == repo / ".cache" / "ci_agent" / "worktrees" / "session123"
@@ -278,6 +279,10 @@ class StagedRuntime:
 
     async def run_controller_cycle(self, prompt: str, *, attempt_number: int) -> ControllerCycleOutcome:
         self.calls += 1
+        output_dir = self.config.worktree_root / "artifacts"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        video_path = output_dir / "result_dubbed.mp4"
+        video_path.write_bytes(b"fake-video")
         if self.calls == 1:
             target = self.config.worktree_root / "app.txt"
             target.write_text("faster\n", encoding="utf-8")
@@ -289,7 +294,7 @@ class StagedRuntime:
                 label="post-speed-validation",
                 exit_code=0,
                 duration_seconds=0.8,
-                stdout="ok",
+                stdout="ok\n",
                 stderr="",
                 verdict="PROGRESS",
                 reason="The target stayed green and runtime improved.",
@@ -316,7 +321,7 @@ class StagedRuntime:
             label="steady-state-validation",
             exit_code=0,
             duration_seconds=0.8,
-            stdout="ok",
+            stdout="ok\n",
             stderr="",
             verdict="PASS",
             reason="The current state is green and good enough to stop.",
@@ -328,6 +333,8 @@ class StagedRuntime:
             objective="Stop after the current speed improvement.",
             reason="Further optimization is low value relative to the current stable result.",
             fix_summary="No additional code changes were needed.",
+            output_dir=str(output_dir),
+            review_video_path=str(video_path),
             latest_validator_record=record,
             workers=[
                 WorkerInvocation(worker_type="controller", prompt_summary=prompt, final_text="Stop here."),
@@ -337,6 +344,93 @@ class StagedRuntime:
 
     def note_rollback(self, *, attempt_number: int, rollback_to: str, reason: str) -> None:
         raise AssertionError("StagedRuntime should not roll back in this test")
+
+
+class MissingReviewPathRuntime:
+    def __init__(self, config: ClusterConfig):
+        self.config = config
+        self.calls = 0
+
+    async def run_controller_cycle(self, prompt: str, *, attempt_number: int) -> ControllerCycleOutcome:
+        self.calls += 1
+        output_dir = self.config.worktree_root / "artifacts"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        video_path = output_dir / "result_dubbed.mp4"
+        video_path.write_bytes(b"fake-video")
+        record = _validator_record(
+            self.config,
+            attempt_number=attempt_number,
+            label="steady-state-validation",
+            exit_code=0,
+            duration_seconds=0.8,
+            stdout="ok\n",
+            stderr="",
+            verdict="PASS",
+            reason="The current state is green and good enough to stop.",
+            execution_record="Validated the current worktree again and it remains green.",
+        )
+        if self.calls == 1:
+            return ControllerCycleOutcome(
+                action="DONE",
+                objective_stage="QUALITY",
+                objective="Stop without enough evidence.",
+                reason="This done request is missing the artifact path and should be rejected.",
+                fix_summary="No code changes.",
+                latest_validator_record=record,
+                workers=[
+                    WorkerInvocation(worker_type="controller", prompt_summary=prompt, final_text="Attempt to stop without a review path."),
+                    WorkerInvocation(worker_type="validator", prompt_summary="Confirm the current state.", final_text="Green and stable."),
+                ],
+            )
+        return ControllerCycleOutcome(
+            action="DONE",
+            objective_stage="QUALITY",
+            objective="Stop after providing the artifact path.",
+            reason="A completed review artifact is now attached to the done request.",
+            fix_summary="No code changes.",
+            output_dir=str(output_dir),
+            review_video_path=str(video_path),
+            latest_validator_record=record,
+            workers=[
+                WorkerInvocation(worker_type="controller", prompt_summary=prompt, final_text="Stop with the review path."),
+                WorkerInvocation(worker_type="validator", prompt_summary="Confirm the current state.", final_text="Green and stable."),
+            ],
+        )
+
+    def note_rollback(self, *, attempt_number: int, rollback_to: str, reason: str) -> None:
+        raise AssertionError("MissingReviewPathRuntime should not roll back in this test")
+
+
+class FakeNotifier:
+    def __init__(self, replies: list[str] | None = None) -> None:
+        self.messages: list[str] = []
+        self.files: list[tuple[str, str]] = []
+        self._replies = list(replies or [])
+
+    async def send_message(self, text: str, chat_id: str | None = None, parse_mode: str | None = None) -> str | None:
+        self.messages.append(text)
+        return "msg-1"
+
+    async def send_file(
+        self,
+        file_path: Path,
+        caption: str = "",
+        chat_id: str | None = None,
+        *,
+        duration: int | None = None,
+    ) -> str | None:
+        self.files.append((str(file_path), caption))
+        if caption:
+            self.messages.append(caption)
+        return "file-1"
+
+    async def wait_for_reply(self) -> str:
+        if self._replies:
+            return self._replies.pop(0)
+        return "APPROVED"
+
+    def clear_queue(self) -> None:
+        return None
 
 
 def test_same_error_rolls_back_only_isolated_worktree(tmp_path: Path) -> None:
@@ -379,16 +473,53 @@ def test_controller_advances_from_continue_to_done(tmp_path: Path) -> None:
         sleep_between_attempts=0,
     )
     runtime = StagedRuntime(config)
-    orchestrator = Orchestrator(config, agent_runtime=runtime)  # type: ignore[arg-type]
+    notifier = FakeNotifier(replies=["继续优化节奏"] * 8 + ["APPROVED"])
+    orchestrator = Orchestrator(config, agent_runtime=runtime, notifier=notifier)  # type: ignore[arg-type]
 
     success = asyncio.run(orchestrator.run())
 
     assert success is True
     assert orchestrator.state.status == "success"
     assert orchestrator.state.best_success_duration_seconds == 0.8
-    assert len(orchestrator.state.attempts) == 2
+    assert len(orchestrator.state.attempts) == 10
     assert orchestrator.state.attempts[0].controller_action == "CONTINUE"
     assert orchestrator.state.attempts[0].objective_stage == "SPEED"
     assert orchestrator.state.attempts[0].validator_verdict == "PROGRESS"
-    assert orchestrator.state.attempts[1].controller_action == "DONE"
-    assert orchestrator.state.attempts[1].validator_verdict == "PASS"
+    assert orchestrator.state.attempts[-1].controller_action == "DONE"
+    assert orchestrator.state.attempts[-1].validator_verdict == "PASS"
+    assert len(notifier.messages) == 27
+    assert len(notifier.files) == 9
+    assert "Controller 请求结束" in notifier.messages[0]
+    assert "继续迭代，至少跑到第 10 轮" in notifier.messages[0]
+    assert "Attempt: 10/10" in notifier.messages[-3]
+    assert orchestrator.state.attempts[-1].video_path.endswith("result_dubbed.mp4")
+    assert orchestrator.state.current_user_feedback == "APPROVED"
+    assert orchestrator.state.attempts[-1].user_feedback == "APPROVED"
+
+
+def test_done_request_without_review_video_path_is_rejected(tmp_path: Path) -> None:
+    repo = _create_repo(tmp_path)
+    cache_root = repo / ".cache" / "ci_agent"
+    config = ClusterConfig.from_env(
+        project_root=repo,
+        cache_root=cache_root,
+        session_id="session123",
+        target_command="python -c \"print('ok')\"",
+        max_attempts=2,
+        min_attempts_before_finish=1,
+        sleep_between_attempts=0,
+    )
+    runtime = MissingReviewPathRuntime(config)
+    notifier = FakeNotifier(replies=["APPROVED"])
+    orchestrator = Orchestrator(config, agent_runtime=runtime, notifier=notifier)  # type: ignore[arg-type]
+
+    success = asyncio.run(orchestrator.run())
+
+    assert success is True
+    assert len(orchestrator.state.attempts) == 2
+    assert orchestrator.state.attempts[0].controller_action == "DONE"
+    assert "review_video_path" in orchestrator.state.attempts[0].controller_reason
+    assert orchestrator.state.attempts[0].video_path == ""
+    assert notifier.files == [(str(config.worktree_root / "artifacts" / "result_dubbed.mp4"), "本轮生成的视频已附上，请检查内容、字幕、中文配音和整体完成度。")]
+    assert "Controller 请求结束" in notifier.messages[0]
+    assert orchestrator.state.attempts[-1].video_path.endswith("result_dubbed.mp4")
