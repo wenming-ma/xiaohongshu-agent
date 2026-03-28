@@ -48,6 +48,8 @@ SEPARATOR_MODEL = "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
 GOOGLE_TTS_ENDPOINT = "https://texttospeech.googleapis.com/v1/text:synthesize"
 VALID_GENDERS = {"SSML_VOICE_GENDER_UNSPECIFIED", "MALE", "FEMALE", "NEUTRAL"}
 VALID_TTS_PROVIDERS = {"fish", "google", "s2cpp", "auto"}
+MIN_NATURAL_ATEMPO = 0.85
+MAX_NATURAL_ATEMPO = 1.20
 
 
 class GoogleTTSFatalError(RuntimeError):
@@ -60,6 +62,17 @@ class FishTTSFatalError(RuntimeError):
 
 class S2CppTTSFatalError(RuntimeError):
     """s2.cpp TTS 不可重试错误（配置、请求参数问题）。"""
+
+
+def _is_retryable_s2cpp_http_error(status_code: int, detail: str) -> bool:
+    """只对白名单内的 s2.cpp 服务端失败做重试，避免把坏请求无限重放。"""
+    normalized = (detail or "").lower()
+    if status_code == 400:
+        return any(
+            marker in normalized
+            for marker in ("synthesis failed", "internal error", "engine busy")
+        )
+    return status_code >= 500
 
 
 def _get_tts_provider() -> str:
@@ -1014,6 +1027,8 @@ async def _s2cpp_tts_synthesize(
 
     if response.status_code != 200:
         detail = _extract_http_detail(response)
+        if _is_retryable_s2cpp_http_error(response.status_code, detail):
+            raise RuntimeError(f"HTTP {response.status_code}: {detail[:500]}")
         if response.status_code in {400, 401, 403, 404, 422}:
             raise S2CppTTSFatalError(f"HTTP {response.status_code}: {detail[:500]}")
         raise RuntimeError(f"HTTP {response.status_code}: {detail[:500]}")
@@ -1076,12 +1091,12 @@ async def _generate_dubbed_segments_s2cpp(
     voice: str = "",
 ) -> tuple[list[SrtSegment], dict[int, Path]]:
     base_url = os.getenv("S2CPP_TTS_BASE_URL", "http://127.0.0.1:3030").strip().rstrip("/")
-    retries = max(_get_env_int("S2CPP_TTS_RETRIES", 3), 1)
+    retries = max(_get_env_int("S2CPP_TTS_RETRIES", 5), 1)
     timeout_seconds = max(_get_env_float("S2CPP_TTS_TIMEOUT_SECONDS", 240.0), 5.0)
     concurrency = max(_get_env_int("S2CPP_TTS_CONCURRENCY", 1), 1)
     semaphore = asyncio.Semaphore(concurrency)
 
-    merge_segments = _get_env_bool("S2CPP_TTS_MERGE_SEGMENTS", True)
+    merge_segments = _get_env_bool("S2CPP_TTS_MERGE_SEGMENTS", False)
     max_gap = max(_get_env_float("S2CPP_TTS_MERGE_MAX_GAP", 1.2), 0.0)
     max_duration = max(_get_env_float("S2CPP_TTS_MERGE_MAX_DURATION", 12.0), 0.5)
     max_chars = max(_get_env_int("S2CPP_TTS_MERGE_MAX_CHARS", 120), 10)
@@ -1524,6 +1539,32 @@ async def _google_tts_synthesize(
         raise RuntimeError("Google TTS 输出音频为空")
 
 
+def _resolve_tempo_filter(current_seconds: float, target_seconds: float) -> str | None:
+    if current_seconds <= 0 or target_seconds <= 0:
+        return None
+
+    tempo = current_seconds / target_seconds
+    clamped_tempo = min(max(tempo, MIN_NATURAL_ATEMPO), MAX_NATURAL_ATEMPO)
+    return f"atempo={clamped_tempo:.6f}"
+
+
+def _plan_concat_silence(
+    segments: list[tuple[SrtSegment, float]],
+    total_duration: float,
+) -> tuple[list[float], float]:
+    silences: list[float] = []
+    cursor = 0.0
+
+    for seg, audio_duration in segments:
+        desired_start = max(seg.start, 0.0)
+        actual_start = max(desired_start, cursor)
+        silences.append(max(0.0, actual_start - cursor))
+        cursor = actual_start + max(audio_duration, 0.0)
+
+    tail_gap = max(total_duration - cursor, 0.0)
+    return silences, tail_gap
+
+
 async def _adjust_duration(input_path: Path, output_path: Path, target_seconds: float) -> None:
     """用 ffmpeg atempo 调整音频时长"""
     current = await _get_duration(input_path)
@@ -1531,22 +1572,14 @@ async def _adjust_duration(input_path: Path, output_path: Path, target_seconds: 
         shutil.copy2(input_path, output_path)
         return
 
-    tempo = current / target_seconds
-
-    # atempo 范围 0.5-100.0，超出需要链式调用
-    filters = []
-    remaining = tempo
-    while remaining > 2.0:
-        filters.append("atempo=2.0")
-        remaining /= 2.0
-    while remaining < 0.5:
-        filters.append("atempo=0.5")
-        remaining /= 0.5
-    filters.append(f"atempo={remaining:.6f}")
+    tempo_filter = _resolve_tempo_filter(current, target_seconds)
+    if tempo_filter is None:
+        shutil.copy2(input_path, output_path)
+        return
 
     cmd = [
         "ffmpeg", "-y", "-i", str(input_path),
-        "-filter:a", ",".join(filters),
+        "-filter:a", tempo_filter,
         "-acodec", "pcm_s16le",
         str(output_path),
     ]
@@ -1564,7 +1597,7 @@ async def _concat_segments_with_silence(
     output_path: Path,
     total_duration: float,
 ) -> None:
-    """按字幕时间戳拼接配音段，段间填充静音"""
+    """按字幕时间戳拼接配音段，允许超长段顺延，避免过短段提前开口。"""
     if not segments:
         raise RuntimeError("没有可用的配音段")
 
@@ -1575,31 +1608,23 @@ async def _concat_segments_with_silence(
     for i, (seg, audio_path) in enumerate(segments):
         inputs.extend(["-i", str(audio_path)])
 
-    # 构建 filter_complex：在每段前插入静音（对齐到字幕时间戳）
+    audio_durations = await asyncio.gather(*[_get_duration(audio_path) for _, audio_path in segments])
+    silence_durations, tail_gap = _plan_concat_silence(
+        [(seg, duration) for (seg, _), duration in zip(segments, audio_durations)],
+        total_duration,
+    )
+
+    # 构建 filter_complex：每段最早不早于原字幕开始，若前段超长则顺延
     concat_inputs = []
-    for i, (seg, _) in enumerate(segments):
-        # 当前段开始时间
-        if i == 0 and seg.start > 0.01:
-            # 第一段前的静音
+    for i, silence_duration in enumerate(silence_durations):
+        if silence_duration > 0.01:
             filter_parts.append(
-                f"aevalsrc=0:d={seg.start:.3f}:s=44100:c=mono[sil{i}]"
+                f"aevalsrc=0:d={silence_duration:.3f}:s=44100:c=mono[sil{i}]"
             )
             concat_inputs.append(f"[sil{i}]")
-
-        elif i > 0:
-            prev_seg = segments[i - 1][0]
-            gap = seg.start - prev_seg.end
-            if gap > 0.01:
-                filter_parts.append(
-                    f"aevalsrc=0:d={gap:.3f}:s=44100:c=mono[sil{i}]"
-                )
-                concat_inputs.append(f"[sil{i}]")
-
         concat_inputs.append(f"[{i}:a]")
 
     # 尾部静音（如果配音比视频短）
-    last_seg = segments[-1][0]
-    tail_gap = total_duration - last_seg.end
     if tail_gap > 0.5:
         filter_parts.append(
             f"aevalsrc=0:d={tail_gap:.3f}:s=44100:c=mono[siltail]"

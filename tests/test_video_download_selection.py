@@ -2,6 +2,7 @@ import asyncio
 
 import pydantic_ai
 
+import src.agents.video_post.download.agent as download_agent_module
 from src.agents.video_post.download.agent import DownloadAgent
 from src.agents.video_post.schemas import (
     DownloadResult,
@@ -85,7 +86,9 @@ def test_pick_best_soft_preference_can_promote_dubbable_candidate(monkeypatch) -
             raise RuntimeError("forced failure")
 
     monkeypatch.setattr(pydantic_ai, "Agent", _FailingAgent)
+    monkeypatch.setattr(download_agent_module, "Agent", _FailingAgent)
     monkeypatch.setattr(providers, "get_text_model", lambda: "fake-model")
+    monkeypatch.setattr(download_agent_module, "get_text_model", lambda: "fake-model")
 
     agent = DownloadAgent()
     non_dubbable_slightly_higher_base = _build_result(
@@ -124,7 +127,9 @@ def test_pick_best_soft_preference_is_not_hard_constraint(monkeypatch) -> None:
             raise RuntimeError("forced failure")
 
     monkeypatch.setattr(pydantic_ai, "Agent", _FailingAgent)
+    monkeypatch.setattr(download_agent_module, "Agent", _FailingAgent)
     monkeypatch.setattr(providers, "get_text_model", lambda: "fake-model")
+    monkeypatch.setattr(download_agent_module, "get_text_model", lambda: "fake-model")
 
     agent = DownloadAgent()
     clearly_better_no_transcript = _build_result(

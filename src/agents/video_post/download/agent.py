@@ -5,16 +5,33 @@ from pathlib import Path
 from typing import Any, List
 
 import logfire
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent
 
 from ....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import VideoSource, DownloadResult, Platform
 from ....utils.logger import get_logger
-from ....utils.subtitle_generator import WhisperTranscriber, WhisperSubtitleGenerator, pick_subtitle_style, release_whisper_model
-from ....utils.font_selector import FontSelectorAgent, get_font_info, get_fonts_dir
+from ....utils.providers import get_text_model
+from ....utils.subtitle_generator import (
+    SubtitleTranslationReview,
+    TranslationBatch,
+    WhisperSubtitleGenerator,
+    WhisperTranscriber,
+    release_whisper_model,
+)
+from .prompts import (
+    download_font_selector_system_prompt,
+    download_font_selector_user_prompt,
+    download_pick_system_prompt,
+    download_pick_user_prompt,
+    download_subtitle_review_system_prompt,
+    download_subtitle_translation_system_prompt,
+)
 
 logger = get_logger(__name__)
 
 BEST_QUALITY_FORMAT = "bestvideo*+bestaudio/best"
+FONTS_DIR = Path(__file__).resolve().parents[3] / "assets" / "fonts"
 
 PLATFORM_OPTS = {
     Platform.YOUTUBE: {
@@ -38,6 +55,85 @@ MIN_FILE_SIZE = 100 * 1024  # 100KB
 MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB
 DOWNLOAD_TIMEOUT = 1200  # 20 minutes
 DEFAULT_PRESELECT_TOP_K = 3
+DEFAULT_FONT_FILE = "ZCOOLKuaiLe-Regular.ttf"
+
+FONT_CATALOG = [
+    {
+        "file_name": "KNBobohei-Bold.ttf",
+        "font_family": "KN Bobohei",
+        "display_name": "荆南波波黑",
+        "style": "卡通俏皮，笔画带波浪感，适合搞笑、萌宠、可爱向内容",
+    },
+    {
+        "file_name": "KNMaiyuan-Regular.ttf",
+        "font_family": "KN Maiyuan",
+        "display_name": "荆南麦圆体",
+        "style": "萌系圆润，笔画两端饱满，适合儿童、亲子、萌系内容",
+    },
+    {
+        "file_name": "ZCOOLKuaiLe-Regular.ttf",
+        "font_family": "ZCOOL KuaiLe",
+        "display_name": "站酷快乐体",
+        "style": "活泼有趣，笔画灵活跳跃，适合轻松娱乐、美食探店",
+    },
+    {
+        "file_name": "ZCOOLQingKeHuangYou-Regular.ttf",
+        "font_family": "ZCOOL QingKe HuangYou",
+        "display_name": "站酷庆科黄油体",
+        "style": "全圆角处理，笨拙可爱，适合美食、甜品、温馨生活",
+    },
+    {
+        "file_name": "LXGWWenKai-Medium.ttf",
+        "font_family": "LXGW WenKai Medium",
+        "display_name": "霞鹜文楷",
+        "style": "文艺雅致的楷体风格，适合文化、读书、旅行、人文纪实",
+    },
+    {
+        "file_name": "Yozai-Medium.ttf",
+        "font_family": "Yozai Medium",
+        "display_name": "悠哉字体",
+        "style": "悠游自在的手写风，适合日常vlog、慢生活、手帐风格",
+    },
+    {
+        "file_name": "Xiaolai-Regular.ttf",
+        "font_family": "小賴字體",
+        "display_name": "小赖字体",
+        "style": "天然呆萌的手写风格，适合二次元、动漫、可爱日常",
+    },
+    {
+        "file_name": "SmileySans-Oblique.ttf",
+        "font_family": "Smiley Sans Oblique",
+        "display_name": "得意黑",
+        "style": "窄体斜字设计感强，融合手绘美术字造型，适合潮流、时尚、创意、科技",
+    },
+    {
+        "file_name": "DouyinSansBold.ttf",
+        "font_family": "DouyinSans",
+        "display_name": "抖音美好体",
+        "style": "简洁现代的品牌字体，适合知识分享、科普、测评、正式内容",
+    },
+    {
+        "file_name": "LXGWMarkerGothic-Regular.ttf",
+        "font_family": "LXGW Marker Gothic",
+        "display_name": "霞鹜漫黑",
+        "style": "马克笔手写风格，活泼个性，适合手工DIY、绘画、创意教程",
+    },
+]
+_CATALOG_BY_FILE = {font["file_name"]: font for font in FONT_CATALOG}
+_FONT_LIST_TEXT = "\n".join(
+    f'- **{font["display_name"]}** (file: `{font["file_name"]}`): {font["style"]}'
+    for font in FONT_CATALOG
+)
+
+
+class VideoPick(BaseModel):
+    best_index: int = Field(description="最佳视频的序号（从 0 开始）")
+    reason: str = Field(description="选择理由")
+
+
+class FontSelection(BaseModel):
+    font_file: str = Field(description="选中的字体文件名")
+    reason: str = Field(description="选择理由")
 
 
 class _YtDlpLogger:
@@ -71,7 +167,30 @@ class DownloadAgent(BaseAgent):
         pass
 
     def init_agent(self) -> None:
-        pass
+        model = get_text_model()
+        self.video_picker = Agent(
+            model=model,
+            output_type=VideoPick,
+            system_prompt=(download_pick_system_prompt(),),
+        )
+        self.font_selector = Agent(
+            model=model,
+            output_type=FontSelection,
+            system_prompt=(
+                download_font_selector_system_prompt(font_list_text=_FONT_LIST_TEXT),
+            ),
+        )
+        self.subtitle_translation_agent = Agent(
+            model=model,
+            output_type=TranslationBatch,
+            system_prompt=(download_subtitle_translation_system_prompt(),),
+        )
+        self.subtitle_translation_reviewer = Agent(
+            model=model,
+            output_type=SubtitleTranslationReview,
+            system_prompt=(download_subtitle_review_system_prompt(),),
+        )
+        self._apply_font_selection(_default_font_selection())
 
     async def forward(
         self,
@@ -272,19 +391,6 @@ class DownloadAgent(BaseAgent):
         """仅提取转录文本（用于打分），不生成字幕和烧录"""
         video_path = Path(result.local_path)
 
-        ytdlp_srt = self._find_ytdlp_subtitle(video_path)
-        if ytdlp_srt:
-            try:
-                transcript_text = self._parse_srt_text(ytdlp_srt)
-                from ..schemas import TranscriptionResult
-                result.transcription = TranscriptionResult(
-                    success=True, transcript=transcript_text, language="zh",
-                )
-                logger.info(f"SRT 转录: {len(transcript_text)} 字符")
-                return result
-            except Exception as e:
-                logger.warning(f"SRT 解析失败: {e}")
-
         try:
             transcriber = WhisperTranscriber()
             transcription = await transcriber.transcribe(video_path)
@@ -351,10 +457,6 @@ class DownloadAgent(BaseAgent):
 
     async def _pick_best(self, candidates: list[DownloadResult], topic: str) -> DownloadResult:
         """规则打分 + LLM 评估内容质量，选出最佳视频"""
-        from pydantic import BaseModel, Field
-        from pydantic_ai import Agent
-        from ....utils.providers import get_text_model
-
         # Step 1: 规则打分 + 可配音软优先加权
         scored = []
         for c in candidates:
@@ -378,10 +480,6 @@ class DownloadAgent(BaseAgent):
             logger.warning("候选均无有效转录，将按常规综合分选择（本次可能跳过 AI 配音）")
 
         # Step 2: LLM 从候选中选出最佳
-        class VideoPick(BaseModel):
-            best_index: int = Field(description="最佳视频的序号（从 0 开始）")
-            reason: str = Field(description="选择理由")
-
         videos_desc = []
         for i, (total_score, base_score, dubbing_bonus, c) in enumerate(scored):
             transcript_preview = ""
@@ -400,21 +498,14 @@ class DownloadAgent(BaseAgent):
                 f"    转录预览: {transcript_preview or '无转录'}"
             )
 
-        prompt = (
-            f"话题: {topic}\n\n"
-            f"以下是 {len(scored)} 个候选视频，请选出最适合在小红书发布的一个。\n"
-            f"考虑因素：内容丰富度、信息价值、小红书用户兴趣匹配度、转录质量、可配音性。\n"
-            "策略要求：可配音视频为软优先（内容质量接近时优先），但若无转录视频明显更优可以选择。\n\n"
-            + "\n\n".join(videos_desc)
+        prompt = download_pick_user_prompt(
+            topic=topic,
+            candidate_count=len(scored),
+            videos_desc="\n\n".join(videos_desc),
         )
 
         try:
-            picker = Agent(
-                model=get_text_model(),
-                output_type=VideoPick,
-                system_prompt="你是小红书内容选品专家。从候选视频中选出最适合发布的一个。优先选择内容完整、信息丰富、适合中国年轻用户的视频。",
-            )
-            result = await picker.run(prompt)
+            result = await self.video_picker.run(prompt)
             pick = result.output
 
             idx = pick.best_index
@@ -483,61 +574,24 @@ class DownloadAgent(BaseAgent):
     async def _select_font(self, source: VideoSource) -> None:
         """使用 LLM Agent 根据视频内容选择最佳字幕字体"""
         try:
-            selector = FontSelectorAgent()
-            selection = await selector.select_font(
+            prompt = download_font_selector_user_prompt(
                 topic=getattr(self, '_topic', ''),
                 video_title=source.title,
                 video_description=source.description,
             )
-            self._font_file = selection.font_file
-            logger.info(f"字体选择: {selection.font_file} — {selection.reason}")
+            result = await self.font_selector.run(prompt)
+            selection = result.output
+            resolved_selection = self._validate_font_selection(selection)
+            self._apply_font_selection(resolved_selection)
+            logger.info(f"字体选择: {resolved_selection.font_file} — {resolved_selection.reason}")
         except Exception as e:
-            self._font_file = ""
+            self._apply_font_selection(_default_font_selection())
             logger.warning(f"字体选择失败，使用默认字体: {e}")
 
     async def _transcribe(self, result: DownloadResult) -> DownloadResult:
         video_path = Path(result.local_path)
         output_dir = video_path.parent
         subtitled_path = output_dir / f"{video_path.stem}_subtitled{video_path.suffix}"
-
-        # 优先检查 yt-dlp 下载的字幕 — 有则跳过 Whisper
-        ytdlp_srt = self._find_ytdlp_subtitle(video_path)
-
-        if ytdlp_srt:
-            logger.info(f"发现 yt-dlp 字幕文件: {ytdlp_srt.name}，跳过 Whisper 转录")
-
-            # 从 SRT 解析文本作为 transcript
-            try:
-                transcript_text = self._parse_srt_text(ytdlp_srt)
-                from ..schemas import TranscriptionResult
-                result.transcription = TranscriptionResult(
-                    success=True,
-                    transcript=transcript_text,
-                    language="zh",
-                )
-                logger.info(f"SRT 解析转录成功: {len(transcript_text)} 字符")
-            except Exception as e:
-                logger.warning(f"SRT 解析失败，回退到 Whisper: {e}")
-                ytdlp_srt = None  # 回退到下面的 Whisper 分支
-
-            if ytdlp_srt:
-                # 烧录字幕
-                try:
-                    await self._burn_existing_subtitle(video_path, ytdlp_srt, subtitled_path)
-                    from ..schemas import SubtitleResult
-                    result.subtitle = SubtitleResult(
-                        success=True,
-                        language="zh",
-                        translated=True,
-                        srt_path=str(ytdlp_srt),
-                        tts_srt_path=str(ytdlp_srt),
-                        video_with_subs=str(subtitled_path),
-                    )
-                    result.local_path = str(subtitled_path)
-                    logger.info(f"平台字幕烧录成功: {subtitled_path}")
-                except Exception as e:
-                    logger.warning(f"字幕烧录异常（不影响下载结果）: {e}")
-                return result
 
         # 无 yt-dlp 字幕 → Whisper 转录
         has_existing_transcript = (
@@ -564,13 +618,18 @@ class DownloadAgent(BaseAgent):
 
         # Whisper 字幕生成 + 烧录
         try:
-            subtitle_gen = WhisperSubtitleGenerator()
+            subtitle_gen = WhisperSubtitleGenerator(
+                translation_agent=self.subtitle_translation_agent,
+                translation_reviewer=self.subtitle_translation_reviewer,
+            )
             subtitle_result_obj = await subtitle_gen.generate_and_burn(
                 video_path=video_path,
                 output_path=subtitled_path,
                 target_language="zh",
                 topic=getattr(self, '_topic', ''),
                 font_file=getattr(self, '_font_file', ''),
+                font_name=getattr(self, '_font_name', ''),
+                font_path=getattr(self, '_font_path', None),
             )
 
             from ..schemas import SubtitleResult, SubtitleSegment
@@ -603,99 +662,29 @@ class DownloadAgent(BaseAgent):
 
         return result
 
-    @staticmethod
-    def _parse_srt_text(srt_path: Path) -> str:
-        """从 SRT/VTT 文件中提取纯文本"""
-        import re
-        content = srt_path.read_text(encoding="utf-8", errors="replace")
-        # 去掉序号行、时间码行、VTT 头部，只保留文本
-        lines = []
-        for line in content.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            if re.match(r"^\d+$", line):
-                continue
-            if re.match(r"[\d:,.]+ --> [\d:,.]+" , line):
-                continue
-            if line.startswith("WEBVTT") or line.startswith("Kind:") or line.startswith("Language:"):
-                continue
-            # 去掉 HTML 标签（如 <c>）
-            line = re.sub(r"<[^>]+>", "", line)
-            if line:
-                lines.append(line)
-        return " ".join(lines)
+    def _validate_font_selection(self, selection: FontSelection) -> FontSelection:
+        font_info = _CATALOG_BY_FILE.get(selection.font_file)
+        if font_info is None:
+            logger.warning(f"LLM 选择了未知字体: {selection.font_file}，回退默认")
+            return _default_font_selection()
 
-    def _find_ytdlp_subtitle(self, video_path: Path) -> Path | None:
-        """查找 yt-dlp 下载的中文字幕文件（优先中文，其次英文）"""
-        base = video_path.stem
-        parent = video_path.parent
+        font_path = FONTS_DIR / selection.font_file
+        if not font_path.exists():
+            logger.warning(f"字体文件不存在: {selection.font_file}，回退默认")
+            return _default_font_selection()
 
-        # 按优先级查找中文字幕
-        for lang in ["zh-Hans", "zh-Hant", "zh"]:
-            srt = parent / f"{base}.{lang}.srt"
-            if srt.exists():
-                return srt
-            vtt = parent / f"{base}.{lang}.vtt"
-            if vtt.exists():
-                return vtt
+        return selection
 
-        return None
+    def _apply_font_selection(self, selection: FontSelection) -> None:
+        font_info = _CATALOG_BY_FILE.get(selection.font_file)
+        if font_info is None:
+            fallback = _default_font_selection()
+            font_info = _CATALOG_BY_FILE[fallback.font_file]
+            selection = fallback
 
-    async def _burn_existing_subtitle(self, video_path: Path, srt_path: Path, output_path: Path) -> None:
-        """将已有字幕文件烧录到视频中（使用临时目录 + cwd 规避 ffmpeg 路径转义问题）"""
-        import shutil
-        import subprocess
-        import tempfile
-
-        style = pick_subtitle_style(getattr(self, '_topic', ''))
-        font_file = getattr(self, '_font_file', '')
-        font_info = get_font_info(font_file) if font_file else None
-        font_name = font_info["font_family"] if font_info else "Microsoft YaHei"
-
-        # 把 SRT 和字体复制到临时目录，ffmpeg 以 cwd=tmp_dir 运行，
-        # 用相对路径 sub.srt 彻底规避 Windows 路径冒号转义问题
-        tmp_dir = Path(tempfile.mkdtemp(prefix="subs_"))
-        try:
-            shutil.copy2(srt_path, tmp_dir / "sub.srt")
-            env = None
-            if font_info:
-                shutil.copy2(get_fonts_dir() / font_file, tmp_dir / font_file)
-                import os
-                fonts_conf = tmp_dir / "fonts.conf"
-                fonts_conf.write_text(
-                    f'<?xml version="1.0"?>\n<fontconfig><dir>{tmp_dir}</dir></fontconfig>\n',
-                    encoding="utf-8",
-                )
-                env = os.environ.copy()
-                env["FONTCONFIG_FILE"] = str(fonts_conf)
-
-            sub_filter = f"subtitles=sub.srt:force_style='FontName={font_name},FontSize=18,Bold=1,PrimaryColour={style['PrimaryColour']},OutlineColour={style['OutlineColour']},BackColour=&H80000000,Outline=2,Shadow=1,BorderStyle=1,MarginV=30'"
-            cmd = [
-                "ffmpeg", "-hwaccel", "cuda", "-i", str(video_path),
-                "-vf", sub_filter,
-                "-c:v", "h264_nvenc", "-preset", "p4", "-cq", "20",
-                "-c:a", "copy",
-                "-y", str(output_path),
-            ]
-
-            logger.info(f"烧录字幕到视频（字体: {font_name}）...")
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                cwd=str(tmp_dir),
-                env=env,
-            )
-            _, stderr = await process.communicate()
-
-            if process.returncode != 0:
-                raise RuntimeError(f"ffmpeg 字幕烧录失败: {stderr.decode()[-500:]}")
-
-            if not output_path.exists() or output_path.stat().st_size == 0:
-                raise RuntimeError("烧录后的视频文件为空")
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+        self._font_file = selection.font_file
+        self._font_name = font_info["font_family"]
+        self._font_path = FONTS_DIR / selection.font_file
 
     async def _download_with_ytdlp(self, source: VideoSource, output_dir: Path) -> Path:
         import yt_dlp
@@ -730,27 +719,6 @@ class DownloadAgent(BaseAgent):
                         break
                 if video_path is None:
                     video_path = Path(filename)
-
-            if source.platform == Platform.YOUTUBE:
-                try:
-                    sub_opts = {
-                        "outtmpl": output_template,
-                        "quiet": True,
-                        "no_warnings": True,
-                        "skip_download": True,
-                        "writesubtitles": True,
-                        "writeautomaticsub": True,
-                        "subtitleslangs": ["zh-Hans", "zh-Hant", "zh", "en"],
-                        "subtitlesformat": "srt",
-                        "socket_timeout": 15,
-                        "logger": _YtDlpLogger(),
-                    }
-                    with yt_dlp.YoutubeDL(sub_opts) as ydl:
-                        ydl.extract_info(source.url, download=True)
-                    logger.info("字幕下载成功")
-                except Exception as e:
-                    logger.warning(f"字幕下载失败（不影响视频下载）: {e}")
-
             return video_path
 
         loop = asyncio.get_running_loop()
@@ -761,3 +729,10 @@ class DownloadAgent(BaseAgent):
             )
         except asyncio.TimeoutError:
             raise TimeoutError(f"视频下载超时 ({DOWNLOAD_TIMEOUT}s): {source.url[:80]}")
+
+
+def _default_font_selection() -> FontSelection:
+    return FontSelection(
+        font_file=DEFAULT_FONT_FILE,
+        reason="默认回退字体",
+    )

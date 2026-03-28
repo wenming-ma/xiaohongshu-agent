@@ -1,9 +1,10 @@
 import asyncio
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from threading import Lock
 
 # 设置离线模式和禁用警告
@@ -17,9 +18,7 @@ if _venv_nvidia_bin.exists():
 
 from faster_whisper import WhisperModel
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent
 
-from ..utils.providers import get_text_model
 from ..utils.logger import get_logger
 from .tts_tags import DEFAULT_TONE_TAG, build_tts_text, normalize_tone_tag
 
@@ -38,6 +37,16 @@ SUBTITLE_CONFIG = {
     "FONT_SIZE": 18,
     "ENABLE_TRANSLATION": True,
 }
+
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_CHINESE_CHAR_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
+_FOREIGN_CHAR_RE = re.compile(r"[A-Za-z\u3040-\u30ff\u31f0-\u31ff\uac00-\ud7af\u0400-\u04ff]")
+_TTS_SPLIT_RE = re.compile(r"(?<=[。！？；，、：,.!?;:])\s*")
+_MAX_TTS_SEGMENT_CHARS = 22
+_MAX_TTS_CHARS_PER_SECOND = 6.5
+_MIN_TTS_SEGMENT_DURATION = 0.35
+_FOREIGN_RATIO_THRESHOLD = 0.15
+_FOREIGN_MIN_CHARS = 2
 
 # ASS 颜色格式: &H00BBGGRR（注意 BGR 顺序）
 SUBTITLE_STYLES = {
@@ -131,6 +140,94 @@ def release_whisper_model() -> None:
                 pass
 
 
+def _normalize_subtitle_text(text: str) -> str:
+    cleaned = _HTML_TAG_RE.sub("", text or "")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
+def _visible_text_length(text: str) -> int:
+    return len(re.sub(r"\s+", "", _normalize_subtitle_text(text)))
+
+
+def _split_text_for_tts(text: str, max_chars: int = _MAX_TTS_SEGMENT_CHARS) -> list[str]:
+    normalized = _normalize_subtitle_text(text)
+    if not normalized:
+        return []
+
+    chunks = [part.strip() for part in _TTS_SPLIT_RE.split(normalized) if part.strip()]
+    if not chunks:
+        chunks = [normalized]
+
+    results: list[str] = []
+    for chunk in chunks:
+        if _visible_text_length(chunk) <= max_chars:
+            results.append(chunk)
+            continue
+
+        words = chunk.split(" ")
+        if len(words) > 1:
+            current_words: list[str] = []
+            for word in words:
+                candidate = " ".join([*current_words, word]).strip()
+                if current_words and _visible_text_length(candidate) > max_chars:
+                    results.append(" ".join(current_words).strip())
+                    current_words = [word]
+                else:
+                    current_words.append(word)
+            if current_words:
+                results.append(" ".join(current_words).strip())
+            continue
+
+        cursor = 0
+        while cursor < len(chunk):
+            next_cursor = min(cursor + max_chars, len(chunk))
+            results.append(chunk[cursor:next_cursor].strip())
+            cursor = next_cursor
+
+    return [item for item in results if item]
+
+
+def _allocate_tts_durations(parts: list[str], total_duration: float) -> list[float]:
+    if not parts:
+        return []
+
+    total_duration = max(total_duration, _MIN_TTS_SEGMENT_DURATION * len(parts))
+
+    weights = [max(_visible_text_length(part), 1) for part in parts]
+    total_weight = sum(weights) or len(parts)
+    durations = [total_duration * weight / total_weight for weight in weights]
+
+    shortfall = 0.0
+    for index, value in enumerate(durations):
+        if value < _MIN_TTS_SEGMENT_DURATION:
+            shortfall += _MIN_TTS_SEGMENT_DURATION - value
+            durations[index] = _MIN_TTS_SEGMENT_DURATION
+
+    if shortfall > 0:
+        adjustable = [
+            idx for idx, value in enumerate(durations)
+            if value > _MIN_TTS_SEGMENT_DURATION + 1e-6
+        ]
+        while shortfall > 1e-6 and adjustable:
+            adjustable_total = sum(
+                durations[idx] - _MIN_TTS_SEGMENT_DURATION for idx in adjustable
+            )
+            if adjustable_total <= 1e-6:
+                break
+            next_adjustable: list[int] = []
+            for idx in adjustable:
+                available = durations[idx] - _MIN_TTS_SEGMENT_DURATION
+                reduction = min(shortfall * (available / adjustable_total), available)
+                durations[idx] -= reduction
+                shortfall -= reduction
+                if durations[idx] > _MIN_TTS_SEGMENT_DURATION + 1e-6:
+                    next_adjustable.append(idx)
+            adjustable = next_adjustable
+
+    return durations
+
+
 def pick_subtitle_style(topic: str) -> dict:
     """根据话题关键词选择字幕配色方案"""
     topic_lower = topic.lower()
@@ -199,6 +296,12 @@ class TranslationLine(BaseModel):
 
 class TranslationBatch(BaseModel):
     lines: list[TranslationLine]
+
+
+class SubtitleTranslationReview(BaseModel):
+    passed: bool = False
+    issues: list[str] = []
+    summary: str = ""
 
 
 class WhisperTranscriber:
@@ -279,20 +382,27 @@ class WhisperTranscriber:
 
 class WhisperSubtitleGenerator:
 
-    def __init__(self):
-        self.translation_agent: Optional[Agent] = None
+    def __init__(
+        self,
+        *,
+        translation_agent: Any | None = None,
+        translation_reviewer: Any | None = None,
+    ):
+        self.translation_agent = translation_agent
+        self.translation_reviewer = translation_reviewer
 
     def _load_whisper_model(self):
         self.model = _get_shared_whisper_model()
 
-    def _init_translation_agent(self):
+    def _require_translation_agent(self) -> Any:
         if self.translation_agent is None:
-            model = get_text_model()
-            self.translation_agent = Agent(
-                model=model,
-                output_type=TranslationBatch,
-                system_prompt="你是小红书风格的字幕翻译专家。翻译风格要求：口语化、轻松活泼，像年轻人日常聊天；适当使用 emoji 增加趣味感（不要过度）；保留语气词和情感表达；翻译要简短精练，适合视频字幕阅读。支持英语、日语、韩语、法语、西班牙语等所有语言到中文的翻译。",
-            )
+            raise RuntimeError("字幕翻译 agent 未配置")
+        return self.translation_agent
+
+    def _require_translation_reviewer(self) -> Any:
+        if self.translation_reviewer is None:
+            raise RuntimeError("字幕翻译审核 agent 未配置")
+        return self.translation_reviewer
 
     async def generate_and_burn(
         self,
@@ -301,9 +411,12 @@ class WhisperSubtitleGenerator:
         target_language: str = "zh",
         topic: str = "",
         font_file: str = "",
+        font_name: str = "",
+        font_path: Path | None = None,
     ) -> SubtitleResult:
         try:
             logger.info(f"开始生成字幕: {video_path.name}")
+            _ = font_file
 
             audio_path = await self._extract_audio(video_path)
 
@@ -316,10 +429,16 @@ class WhisperSubtitleGenerator:
                 audio_path.unlink(missing_ok=True)
 
             translated = False
-            if detected_lang != "zh" and target_language == "zh" and SUBTITLE_CONFIG["ENABLE_TRANSLATION"]:
-                logger.info(f"检测到 {detected_lang}，开始翻译成中文...")
-                segments = await self._translate_to_chinese(segments, source_language=detected_lang)
-                translated = True
+            if target_language == "zh":
+                translate_first = detected_lang != "zh" and SUBTITLE_CONFIG["ENABLE_TRANSLATION"]
+                if translate_first:
+                    logger.info(f"检测到 {detected_lang}，开始翻译成中文...")
+                segments = await self._translate_segments_for_chinese_tts(
+                    segments,
+                    source_language=detected_lang,
+                    translate_first=translate_first,
+                )
+                translated = translate_first
 
             if not segments:
                 logger.warning("无字幕片段，跳过烧录")
@@ -332,16 +451,20 @@ class WhisperSubtitleGenerator:
 
             srt_path = output_path.with_suffix(".srt")
             tts_srt_path = output_path.with_name(f"{output_path.stem}_tts.srt")
+            tts_segments = self._build_tts_segments(segments)
             self._generate_srt(segments, srt_path, include_tone_tags=False)
             logger.info(f"屏显 SRT 文件生成: {srt_path}")
+            self._generate_srt(tts_segments, tts_srt_path, include_tone_tags=True)
+            logger.info(f"TTS SRT 文件生成: {tts_srt_path}")
 
-            if any(seg.tone_tag for seg in segments):
-                self._generate_srt(segments, tts_srt_path, include_tone_tags=True)
-                logger.info(f"TTS SRT 文件生成: {tts_srt_path}")
-            else:
-                tts_srt_path = srt_path
-
-            await self._burn_subtitles(video_path, srt_path, output_path, topic=topic, font_file=font_file)
+            await self._burn_subtitles(
+                video_path,
+                srt_path,
+                output_path,
+                topic=topic,
+                font_name=font_name,
+                font_path=font_path,
+            )
             logger.info(f"字幕烧录完成: {output_path}")
 
             return SubtitleResult(
@@ -478,97 +601,312 @@ class WhisperSubtitleGenerator:
             logger.warning(f"说话人识别失败（不影响字幕生成）: {e}")
             return segments
 
-    async def _translate_to_chinese(self, segments: list[SubtitleSegment], source_language: str = "en") -> list[SubtitleSegment]:
-        self._init_translation_agent()
+    async def _rewrite_segments_to_chinese(
+        self,
+        segments: list[SubtitleSegment],
+        *,
+        source_language: str,
+        mode: str,
+        current_segments: list[SubtitleSegment] | None = None,
+        feedback: str = "",
+    ) -> list[SubtitleSegment]:
+        translation_agent = self._require_translation_agent()
 
-        LANG_NAMES = {
+        lang_names = {
             "en": "英文", "ja": "日文", "ko": "韩文", "fr": "法文",
             "es": "西班牙文", "de": "德文", "pt": "葡萄牙文", "ru": "俄文",
             "th": "泰文", "vi": "越南文", "ar": "阿拉伯文", "it": "意大利文",
+            "mixed": "混合语言",
         }
-        lang_name = LANG_NAMES.get(source_language, f"{source_language} 语言")
+        lang_name = lang_names.get(source_language, f"{source_language} 语言")
 
-        batch_size = 15
+        batch_size = 10 if mode == "revise" else 15
         max_concurrency = 5
         semaphore = asyncio.Semaphore(max_concurrency)
 
         batches: list[list[SubtitleSegment]] = []
-        for i in range(0, len(segments), batch_size):
-            batches.append(segments[i:i + batch_size])
+        for index in range(0, len(segments), batch_size):
+            batches.append(segments[index:index + batch_size])
 
         results_by_index: dict[int, list[SubtitleSegment]] = {}
         done_count = 0
-
         has_multiple_speakers = len(set(seg.speaker_id for seg in segments)) > 1
 
-        async def _translate_batch(batch_idx: int, batch: list[SubtitleSegment]) -> None:
+        async def _rewrite_batch(batch_idx: int, batch: list[SubtitleSegment]) -> None:
             nonlocal done_count
+            current_batch = current_segments[batch_idx * batch_size:(batch_idx + 1) * batch_size] if current_segments else None
             if has_multiple_speakers:
-                texts = [f"{j+1}. [说话人{seg.speaker_id}] {seg.text}" for j, seg in enumerate(batch)]
+                texts = [f"{line_idx + 1}. [说话人{seg.speaker_id}] {seg.text}" for line_idx, seg in enumerate(batch)]
             else:
-                texts = [f"{j+1}. {seg.text}" for j, seg in enumerate(batch)]
+                texts = [f"{line_idx + 1}. {seg.text}" for line_idx, seg in enumerate(batch)]
 
             speaker_instruction = ""
             if has_multiple_speakers:
                 speaker_instruction = (
-                    "- 每行开头有 [说话人N] 标记，这是上下文信息，翻译时不要输出这个标记\n"
-                    "- 不同说话人用不同的语气风格\n"
+                    "- 每行开头的 [说话人N] 只是上下文，不要出现在输出里\n"
+                    "- 说话人不同可以保留不同语气\n"
                 )
 
-            prompt = (
-                f"将以下{lang_name}字幕翻译成中文。\n\n"
-                "要求：\n"
-                "- 口语化、轻松活泼，像朋友聊天，不要书面语\n"
-                "- 适当加 emoji 增加趣味性（每 3-5 条加一个，别每条都加）\n"
-                "- 语气词可以保留（比如'哇''嘿''嗯'）\n"
-                "- 保持简短，字幕不宜太长\n"
-                f"{speaker_instruction}"
-                "- 为每条字幕单独给一个语气 tag，供 Fish/S2 TTS 使用\n"
-                "- tag 只允许简短英文短语：1 到 3 个单词，只能包含英文字母和空格\n"
-                "- tag 要能直接放进 [tag] 形式里，例如 neutral, friendly, excited, serious, whisper\n"
-                "- 不要输出方括号，不要输出中文 tag，不要输出长句 tag\n"
-                "- 如果语气不明显，用 neutral\n\n"
-                "按结构化结果输出，每条包含 index、tone_tag、text。\n"
-            ) + "\n".join(texts)
+            if mode == "revise" and current_batch is not None:
+                if has_multiple_speakers:
+                    current_texts = [
+                        f"{line_idx + 1}. [说话人{seg.speaker_id}] {seg.text}"
+                        for line_idx, seg in enumerate(current_batch)
+                    ]
+                else:
+                    current_texts = [f"{line_idx + 1}. {seg.text}" for line_idx, seg in enumerate(current_batch)]
+
+                task_intro = f"请基于原始{lang_name}字幕、当前中文字幕和审核反馈，输出一版修订后的完整中文字幕。"
+                requirements = (
+                    "- 必须逐条输出完整结果，不能只输出修改建议\n"
+                    "- 每一条都必须是自然、简短、适合中文 TTS 朗读的中文\n"
+                    "- 可以保留少量已经融入中文表达的常见英文单词，如 app、API、Wi-Fi、iPhone、OK\n"
+                    "- 不要保留完整外语短句、大段外语片段或明显不自然的混写\n"
+                    "- 尽量保留当前版本已经正确的内容，只修复审核指出的问题\n"
+                    "- 不要输出 emoji、括号说明或解释性文字\n"
+                )
+                prompt = (
+                    f"{task_intro}\n\n"
+                    "审核反馈：\n"
+                    f"{feedback or '请修复所有非中文和不自然表达。'}\n\n"
+                    "原始字幕：\n"
+                    + "\n".join(texts)
+                    + "\n\n当前中文字幕：\n"
+                    + "\n".join(current_texts)
+                    + "\n\n修订要求：\n"
+                    + requirements
+                    + speaker_instruction
+                    + "- 为每条字幕单独给一个语气 tag，供 Fish/S2 TTS 使用\n"
+                    + "- tag 只允许简短英文短语：1 到 3 个单词，只能包含英文字母和空格\n"
+                    + "- tag 要能直接放进 [tag] 形式里，例如 neutral, friendly, excited, serious, whisper\n"
+                    + "- 不要输出方括号，不要输出中文 tag，不要输出长句 tag\n"
+                    + "- 如果语气不明显，用 neutral\n"
+                    + "- 按结构化结果输出，每条包含 index、tone_tag、text\n"
+                )
+            else:
+                task_intro = f"将以下{lang_name}字幕翻译成中文。"
+                requirements = (
+                    "- 口语化、轻松活泼，像朋友聊天，不要书面语\n"
+                    "- 适当保留语气词，保持简短，适合视频字幕阅读\n"
+                    "- 输出必须以中文为主\n"
+                    "- 可以保留少量已经融入中文表达的常见英文单词，如 app、API、Wi-Fi、iPhone、OK\n"
+                    "- 不要保留原语言整句或大段外语片段\n"
+                )
+                prompt = (
+                    f"{task_intro}\n\n"
+                    "要求：\n"
+                    f"{requirements}"
+                    f"{speaker_instruction}"
+                    "- 为每条字幕单独给一个语气 tag，供 Fish/S2 TTS 使用\n"
+                    "- tag 只允许简短英文短语：1 到 3 个单词，只能包含英文字母和空格\n"
+                    "- tag 要能直接放进 [tag] 形式里，例如 neutral, friendly, excited, serious, whisper\n"
+                    "- 不要输出方括号，不要输出中文 tag，不要输出长句 tag\n"
+                    "- 如果语气不明显，用 neutral\n"
+                    "- 按结构化结果输出，每条包含 index、tone_tag、text\n\n"
+                ) + "\n".join(texts)
 
             async with semaphore:
-                result = await self.translation_agent.run(prompt)
+                result = await translation_agent.run(prompt)
 
             translated_lines = {line.index: line for line in result.output.lines}
-            batch_result = []
-            for j, seg in enumerate(batch):
-                line_index = j + 1
-                translated_line = translated_lines.get(line_index)
-                if translated_line is not None:
-                    translated_text = translated_line.text.strip() or seg.text.strip()
-                    tone_tag = normalize_tone_tag(translated_line.tone_tag)
-                    batch_result.append(SubtitleSegment(
-                        start=seg.start, end=seg.end,
+            batch_result: list[SubtitleSegment] = []
+            for line_idx, seg in enumerate(batch, start=1):
+                translated_line = translated_lines.get(line_idx)
+                translated_text = (
+                    _normalize_subtitle_text(translated_line.text)
+                    if translated_line is not None
+                    else ""
+                )
+                if not translated_text:
+                    if current_batch is not None and line_idx - 1 < len(current_batch):
+                        translated_text = _normalize_subtitle_text(current_batch[line_idx - 1].text)
+                    else:
+                        translated_text = _normalize_subtitle_text(seg.text)
+
+                tone_source = translated_line.tone_tag if translated_line is not None else seg.tone_tag
+                tone_tag = normalize_tone_tag(tone_source or seg.tone_tag or DEFAULT_TONE_TAG)
+                batch_result.append(
+                    SubtitleSegment(
+                        start=seg.start,
+                        end=seg.end,
                         text=translated_text,
                         speaker_id=seg.speaker_id,
                         tone_tag=tone_tag,
-                    ))
-                else:
-                    batch_result.append(
-                        SubtitleSegment(
-                            start=seg.start,
-                            end=seg.end,
-                            text=seg.text,
-                            speaker_id=seg.speaker_id,
-                            tone_tag=DEFAULT_TONE_TAG,
-                        )
                     )
+                )
+
             results_by_index[batch_idx] = batch_result
             done_count += 1
-            logger.info(f"翻译进度: {done_count}/{len(batches)} 批 ({min((done_count) * batch_size, len(segments))}/{len(segments)})")
+            label = "修订" if mode == "revise" else "翻译"
+            logger.info(
+                f"{label}进度: {done_count}/{len(batches)} 批 "
+                f"({min(done_count * batch_size, len(segments))}/{len(segments)})"
+            )
 
-        await asyncio.gather(*[_translate_batch(idx, batch) for idx, batch in enumerate(batches)])
+        await asyncio.gather(*[_rewrite_batch(idx, batch) for idx, batch in enumerate(batches)])
 
-        translated_segments = []
+        rewritten_segments: list[SubtitleSegment] = []
         for idx in range(len(batches)):
-            translated_segments.extend(results_by_index[idx])
+            rewritten_segments.extend(results_by_index[idx])
+        return rewritten_segments
 
-        return translated_segments
+    async def _review_translated_segments(
+        self,
+        source_segments: list[SubtitleSegment],
+        translated_segments: list[SubtitleSegment],
+        source_language: str,
+    ) -> SubtitleTranslationReview:
+        translation_reviewer = self._require_translation_reviewer()
+
+        lang_names = {
+            "en": "英文", "ja": "日文", "ko": "韩文", "fr": "法文",
+            "es": "西班牙文", "de": "德文", "pt": "葡萄牙文", "ru": "俄文",
+            "th": "泰文", "vi": "越南文", "ar": "阿拉伯文", "it": "意大利文",
+            "mixed": "混合语言", "zh": "中文字幕",
+        }
+        lang_name = lang_names.get(source_language or "mixed", f"{source_language} 字幕")
+        has_multiple_speakers = len(set(seg.speaker_id for seg in translated_segments)) > 1
+
+        if has_multiple_speakers:
+            source_lines = [
+                f"{idx + 1}. [说话人{seg.speaker_id}] {seg.text}"
+                for idx, seg in enumerate(source_segments)
+            ]
+            translated_lines = [
+                f"{idx + 1}. [说话人{seg.speaker_id}] {seg.text}"
+                for idx, seg in enumerate(translated_segments)
+            ]
+        else:
+            source_lines = [f"{idx + 1}. {seg.text}" for idx, seg in enumerate(source_segments)]
+            translated_lines = [f"{idx + 1}. {seg.text}" for idx, seg in enumerate(translated_segments)]
+
+        prompt = (
+            f"请审核以下{lang_name}转中文后的字幕结果。\n\n"
+            "审核标准：\n"
+            "- 每一行都必须是自然、完整、可直接朗读的中文\n"
+            "- 允许少量已经融入中文表达的英文单词，如 app、API、Wi-Fi、iPhone、OK\n"
+            "- 不能残留完整外语短句、大段外语片段、或明显破坏中文口播自然度的混写\n"
+            "- 不能出现明显不适合中文 TTS 的表达\n"
+            "- 语义应尽量忠实原文，不要漏译关键信息\n"
+            "- 只有全部通过时，`passed` 才能为 true\n"
+            "- 如果不通过，issues 必须给出可执行反馈，并尽量指出具体行号\n\n"
+            "原始字幕：\n"
+            + "\n".join(source_lines)
+            + "\n\n当前中文字幕：\n"
+            + "\n".join(translated_lines)
+        )
+        result = await translation_reviewer.run(prompt)
+        return result.output
+
+    @staticmethod
+    def _build_translation_review_feedback(review: SubtitleTranslationReview) -> str:
+        lines = [review.summary.strip() or "字幕中文审核未通过，请根据问题修订。"]
+        for issue in review.issues:
+            cleaned = issue.strip()
+            if cleaned:
+                lines.append(f"- {cleaned}")
+        return "\n".join(lines)
+
+    async def _translate_segments_for_chinese_tts(
+        self,
+        segments: list[SubtitleSegment],
+        *,
+        source_language: str,
+        translate_first: bool = True,
+    ) -> list[SubtitleSegment]:
+        normalized_source = [
+            SubtitleSegment(
+                start=seg.start,
+                end=seg.end,
+                text=_normalize_subtitle_text(seg.text),
+                speaker_id=seg.speaker_id,
+                tone_tag=normalize_tone_tag(seg.tone_tag or DEFAULT_TONE_TAG),
+            )
+            for seg in segments
+        ]
+        current_segments = (
+            await self._rewrite_segments_to_chinese(
+                normalized_source,
+                source_language=source_language or "mixed",
+                mode="translate",
+            )
+            if translate_first
+            else normalized_source
+        )
+
+        max_rounds = 3
+        last_review: SubtitleTranslationReview | None = None
+        for round_index in range(max_rounds):
+            last_review = await self._review_translated_segments(
+                normalized_source,
+                current_segments,
+                source_language=source_language or "mixed",
+            )
+            if last_review.passed:
+                return [
+                    SubtitleSegment(
+                        start=seg.start,
+                        end=seg.end,
+                        text=_normalize_subtitle_text(seg.text),
+                        speaker_id=seg.speaker_id,
+                        tone_tag=normalize_tone_tag(seg.tone_tag or DEFAULT_TONE_TAG),
+                    )
+                    for seg in current_segments
+                ]
+
+            feedback = self._build_translation_review_feedback(last_review)
+            logger.warning(f"字幕中文审核未通过 (第{round_index + 1}轮): {last_review.summary or feedback}")
+            current_segments = await self._rewrite_segments_to_chinese(
+                normalized_source,
+                source_language=source_language or "mixed",
+                mode="revise",
+                current_segments=current_segments,
+                feedback=feedback,
+            )
+
+        raise RuntimeError(
+            "字幕中文审核未通过，达到最大修订轮数: "
+            f"{self._build_translation_review_feedback(last_review or SubtitleTranslationReview())}"
+        )
+
+    def _build_tts_segments(self, segments: list[SubtitleSegment]) -> list[SubtitleSegment]:
+        tts_segments: list[SubtitleSegment] = []
+        cursor = 0.0
+
+        for seg in segments:
+            text = _normalize_subtitle_text(seg.text)
+            if not text:
+                continue
+
+            duration = max(seg.end - seg.start, 0.0)
+            density = (_visible_text_length(text) / duration) if duration > 1e-6 else float("inf")
+            parts = _split_text_for_tts(text)
+            should_split = (
+                len(parts) > 1
+                or _visible_text_length(text) > _MAX_TTS_SEGMENT_CHARS
+                or density > _MAX_TTS_CHARS_PER_SECOND
+            )
+            effective_parts = parts if should_split else [text]
+            part_durations = _allocate_tts_durations(effective_parts, duration)
+
+            part_cursor = max(seg.start, cursor)
+            for part, part_duration in zip(effective_parts, part_durations):
+                start = part_cursor
+                end = start + part_duration
+                tts_segments.append(
+                    SubtitleSegment(
+                        start=start,
+                        end=end,
+                        text=part,
+                        speaker_id=seg.speaker_id,
+                        tone_tag=normalize_tone_tag(seg.tone_tag or DEFAULT_TONE_TAG),
+                    )
+                )
+                part_cursor = end
+
+            cursor = part_cursor
+
+        return tts_segments
 
     def _generate_srt(
         self,
@@ -596,14 +934,20 @@ class WhisperSubtitleGenerator:
         ms = int((seconds % 1) * 1000)
         return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
-    async def _burn_subtitles(self, video_path: Path, srt_path: Path, output_path: Path, topic: str = "", font_file: str = "") -> None:
+    async def _burn_subtitles(
+        self,
+        video_path: Path,
+        srt_path: Path,
+        output_path: Path,
+        topic: str = "",
+        font_name: str = "",
+        font_path: Path | None = None,
+    ) -> None:
         import shutil
         import tempfile
-        from .font_selector import get_font_info, get_fonts_dir
 
         style = pick_subtitle_style(topic)
-        font_info = get_font_info(font_file) if font_file else None
-        font_name = font_info["font_family"] if font_info else SUBTITLE_CONFIG["FONT_NAME"]
+        resolved_font_name = font_name or SUBTITLE_CONFIG["FONT_NAME"]
 
         # 把 SRT 和字体复制到临时目录，ffmpeg 以 cwd=tmp_dir 运行，
         # 用相对路径 sub.srt 彻底规避 Windows 路径冒号转义问题
@@ -611,8 +955,8 @@ class WhisperSubtitleGenerator:
         try:
             shutil.copy2(srt_path, tmp_dir / "sub.srt")
             env = None
-            if font_info:
-                shutil.copy2(get_fonts_dir() / font_file, tmp_dir / font_file)
+            if font_path and font_path.exists():
+                shutil.copy2(font_path, tmp_dir / font_path.name)
                 import os
                 fonts_conf = tmp_dir / "fonts.conf"
                 fonts_conf.write_text(
@@ -622,7 +966,7 @@ class WhisperSubtitleGenerator:
                 env = os.environ.copy()
                 env["FONTCONFIG_FILE"] = str(fonts_conf)
 
-            sub_filter = f"subtitles=sub.srt:force_style='FontName={font_name},FontSize={SUBTITLE_CONFIG['FONT_SIZE']},Bold=1,PrimaryColour={style['PrimaryColour']},OutlineColour={style['OutlineColour']},BackColour=&H80000000,Outline=2,Shadow=1,BorderStyle=1,MarginV=30'"
+            sub_filter = f"subtitles=sub.srt:force_style='FontName={resolved_font_name},FontSize={SUBTITLE_CONFIG['FONT_SIZE']},Bold=1,PrimaryColour={style['PrimaryColour']},OutlineColour={style['OutlineColour']},BackColour=&H80000000,Outline=2,Shadow=1,BorderStyle=1,MarginV=30'"
             cmd = [
                 "ffmpeg", "-hwaccel", "cuda", "-i", str(video_path),
                 "-vf", sub_filter,
@@ -631,7 +975,7 @@ class WhisperSubtitleGenerator:
                 "-y", str(output_path),
             ]
 
-            logger.info(f"开始烧录字幕到视频（字体: {font_name}）...")
+            logger.info(f"开始烧录字幕到视频（字体: {resolved_font_name}）...")
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=subprocess.PIPE,
