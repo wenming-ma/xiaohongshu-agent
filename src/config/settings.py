@@ -14,6 +14,34 @@ def _bool_env(name: str, default: bool = False) -> bool:
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _resolve_minimax_anthropic_base_url() -> str:
+    explicit = os.getenv("MINIMAX_ANTHROPIC_BASE_URL")
+    if explicit:
+        return explicit
+
+    legacy = os.getenv("MINIMAX_BASE_URL")
+    if legacy:
+        lowered = legacy.lower()
+        if "anthropic" in lowered or "claude" in lowered:
+            return legacy
+
+    return "https://api.minimaxi.com/anthropic"
+
+
+def _resolve_minimax_openai_base_url() -> str:
+    explicit = os.getenv("MINIMAX_OPENAI_BASE_URL")
+    if explicit:
+        return explicit
+
+    legacy = os.getenv("MINIMAX_BASE_URL")
+    if legacy:
+        lowered = legacy.lower()
+        if "anthropic" not in lowered and "claude" not in lowered:
+            return legacy
+
+    return "https://api.minimaxi.com/v1"
+
+
 class RetryConfig:
     MAX_RETRIES = 12
     INITIAL_DELAY = 2.0
@@ -74,7 +102,8 @@ class APIConfig:
         {"api_key_env": "ANTHROPIC_API_KEY"},
     ]
     MINIMAX_MODEL = os.getenv("MINIMAX_MODEL", "MiniMax-M2.7")
-    MINIMAX_BASE_URL = os.getenv("MINIMAX_BASE_URL", "https://api.minimaxi.com/anthropic")
+    MINIMAX_ANTHROPIC_BASE_URL = _resolve_minimax_anthropic_base_url()
+    MINIMAX_OPENAI_BASE_URL = _resolve_minimax_openai_base_url()
     GOOGLE_MODEL = os.getenv("GOOGLE_MODEL", "gemini-2.5-flash")
     MODEL_PROVIDER = os.getenv("MODEL_PROVIDER", "minimax")
     GEMINI_URL = os.getenv("GEMINI_URL", "https://gemini.google.com/app")

@@ -5,9 +5,12 @@ from pathlib import Path
 
 from scripts.ci_agent.agent_runtime import (
     ControllerCycleOutcome,
+    DoneRequest,
+    RollbackRequest,
     ValidationCommandRunner,
     ValidationRunReport,
     ValidatorRecord,
+    _resolve_cycle_action,
 )
 from scripts.ci_agent.config import ClusterConfig
 from scripts.ci_agent.orchestrator import Orchestrator
@@ -112,11 +115,34 @@ def test_cluster_config_defaults_to_session_scoped_cache_paths(tmp_path: Path) -
     )
 
     assert config.model == "openai:gpt-5.4"
+    assert config.worker_model == "MiniMax-M2.7"
+    assert config.worker_base_url == "https://api.minimaxi.com/v1"
     assert config.state_file == repo / ".cache" / "ci_agent" / "sessions" / "session123" / "state.json"
     assert config.log_dir == repo / ".cache" / "ci_agent" / "logs" / "session123"
     assert config.worktree_root == repo / ".cache" / "ci_agent" / "worktrees" / "session123"
     assert config.validator_memory_file == repo / ".cache" / "ci_agent" / "memory" / "session123" / "validator.md"
     assert config.git_branch == "ci-agent/session123"
+
+
+def test_cluster_config_prefers_minimax_openai_base_url(tmp_path: Path, monkeypatch) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".env").write_text(
+        "MINIMAX_ANTHROPIC_BASE_URL=https://api.minimaxi.com/anthropic\n"
+        "MINIMAX_OPENAI_BASE_URL=https://api.minimaxi.com/v1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("MINIMAX_BASE_URL", raising=False)
+    monkeypatch.delenv("MINIMAX_OPENAI_BASE_URL", raising=False)
+    monkeypatch.delenv("MINIMAX_ANTHROPIC_BASE_URL", raising=False)
+
+    config = ClusterConfig.from_env(
+        project_root=repo,
+        cache_root=repo / ".cache" / "ci_agent",
+        session_id="session123",
+    )
+
+    assert config.worker_base_url == "https://api.minimaxi.com/v1"
 
 
 def test_worktree_is_created_without_moving_main_branch(tmp_path: Path) -> None:
@@ -160,6 +186,19 @@ def test_validation_command_runner_writes_logs_and_duration(tmp_path: Path) -> N
     assert Path(report.stderr_log_path).exists()
     assert Path(report.stdout_log_path).read_text(encoding="utf-8") == report.stdout
     assert Path(report.stderr_log_path).read_text(encoding="utf-8") == report.stderr
+
+
+def test_rollback_action_requires_explicit_request() -> None:
+    assert _resolve_cycle_action(None, None) == "CONTINUE"
+    assert _resolve_cycle_action(None, DoneRequest(reason="good enough")) == "DONE"
+    assert _resolve_cycle_action(RollbackRequest(head="abc123", reason="discard"), None) == "ROLLBACK"
+    assert (
+        _resolve_cycle_action(
+            RollbackRequest(head="abc123", reason="discard"),
+            DoneRequest(reason="good enough"),
+        )
+        == "ROLLBACK"
+    )
 
 
 class RollbackRuntime:

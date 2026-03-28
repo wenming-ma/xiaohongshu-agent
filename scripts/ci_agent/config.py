@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
+from langchain_openai import ChatOpenAI
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CACHE_ROOT = PROJECT_ROOT / ".cache" / "ci_agent"
@@ -14,7 +15,10 @@ RUNBOOK_FILE = PROJECT_ROOT / "scripts" / "ci_agent" / "AGENTS.md"
 @dataclass(frozen=True)
 class ClusterConfig:
     session_id: str = ""
+    # Backward-compatible: `model` is the controller model.
     model: str = "openai:gpt-5.4"
+    worker_model: str = "MiniMax-M2.7"
+    worker_base_url: str = "https://api.minimaxi.com/v1"
     target_command: str = ""
     target_timeout: int = 600
 
@@ -63,6 +67,11 @@ class ClusterConfig:
             "session_id": session_id,
             "project_root": project_root,
             "cache_root": cache_root,
+            "worker_model": os.environ.get("MINIMAX_MODEL", "MiniMax-M2.7"),
+            "worker_base_url": os.environ.get(
+                "MINIMAX_OPENAI_BASE_URL",
+                os.environ.get("MINIMAX_BASE_URL", "https://api.minimaxi.com/v1"),
+            ),
             "state_file": cache_root / "sessions" / session_id / "state.json",
             "log_dir": cache_root / "logs" / session_id,
             "worktree_root": cache_root / "worktrees" / session_id,
@@ -90,3 +99,14 @@ class ClusterConfig:
         env.setdefault("CI_AGENT_WORKTREE_ROOT", str(self.worktree_root))
         env.setdefault("CI_AGENT_ANALYSIS_ROOT", str(self.cache_root / "analysis" / self.session_id))
         return env
+
+    def build_worker_model(self) -> ChatOpenAI:
+        api_key = os.environ.get("MINIMAX_API_KEY")
+        if not api_key:
+            msg = "MINIMAX_API_KEY is not set"
+            raise RuntimeError(msg)
+        return ChatOpenAI(
+            model=self.worker_model,
+            api_key=api_key,
+            base_url=self.worker_base_url,
+        )

@@ -5,7 +5,7 @@ MiniMax Model 工厂
 使用 pydantic-ai 的 Anthropic 兼容层（MiniMax 官方 Anthropic 端点）：
 - 支持 MiniMax-M2.7 模型
 - 支持 Tool Use & Interleaved Thinking
-- Base URL: https://api.minimax.io/anthropic
+- Base URL: https://api.minimaxi.com/anthropic
 """
 import os
 import logging
@@ -47,13 +47,16 @@ def get_minimax_model(
 
         client = AsyncAnthropic(
             api_key=api_key,
-            base_url=APIConfig.MINIMAX_BASE_URL,
+            base_url=APIConfig.MINIMAX_ANTHROPIC_BASE_URL,
             timeout=300.0,
             max_retries=20,
         )
 
         _shared_provider = AnthropicProvider(anthropic_client=client)
-        logger.info(f"MiniMax Provider 初始化完成: {APIConfig.MINIMAX_BASE_URL}")
+        logger.info(
+            "MiniMax Provider 初始化完成(anthropic): %s",
+            APIConfig.MINIMAX_ANTHROPIC_BASE_URL,
+        )
 
     return AnthropicModel(model_name, provider=_shared_provider)
 
