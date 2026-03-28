@@ -33,23 +33,34 @@ from .prompts import (
 logger = get_logger(__name__)
 
 BEST_QUALITY_FORMAT = "bestvideo*+bestaudio/best"
+TARGET_DOWNLOAD_SHORT_EDGE = 1080
+DEFAULT_FORMAT_SORT = [
+    f"res:{TARGET_DOWNLOAD_SHORT_EDGE}",
+    "vcodec:h264",
+    "acodec:aac",
+]
 FONTS_DIR = Path(__file__).resolve().parents[3] / "assets" / "fonts"
 
 PLATFORM_OPTS = {
     Platform.YOUTUBE: {
         "format": BEST_QUALITY_FORMAT,
+        "format_sort": DEFAULT_FORMAT_SORT,
     },
     Platform.X: {
         "format": BEST_QUALITY_FORMAT,
+        "format_sort": DEFAULT_FORMAT_SORT,
     },
     Platform.INSTAGRAM: {
         "format": BEST_QUALITY_FORMAT,
+        "format_sort": DEFAULT_FORMAT_SORT,
     },
     Platform.FACEBOOK: {
         "format": BEST_QUALITY_FORMAT,
+        "format_sort": DEFAULT_FORMAT_SORT,
     },
     Platform.TIKTOK: {
         "format": BEST_QUALITY_FORMAT,
+        "format_sort": DEFAULT_FORMAT_SORT,
     },
 }
 
@@ -698,9 +709,12 @@ class DownloadAgent(BaseAgent):
 
         platform_opts = PLATFORM_OPTS.get(source.platform, {})
         format_spec = platform_opts.get("format", "best[ext=mp4]/best")
+        format_sort = platform_opts.get("format_sort", DEFAULT_FORMAT_SORT)
 
         ydl_opts = {
             "format": format_spec,
+            "format_sort": format_sort,
+            "format_sort_force": True,
             "outtmpl": output_template,
             "quiet": True,
             "no_warnings": True,

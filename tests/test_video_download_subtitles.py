@@ -4,7 +4,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import src.agents.video_post.download.agent as download_agent_module
-from src.agents.video_post.download.agent import DownloadAgent
+from src.agents.video_post.download.agent import (
+    DEFAULT_FORMAT_SORT,
+    DownloadAgent,
+)
 from src.agents.video_post.schemas import (
     DownloadResult,
     EngagementMetrics,
@@ -73,6 +76,8 @@ def test_download_with_ytdlp_does_not_request_subtitles(monkeypatch, tmp_path: P
     assert "writeautomaticsub" not in opts
     assert "subtitleslangs" not in opts
     assert "subtitlesformat" not in opts
+    assert opts["format_sort"] == DEFAULT_FORMAT_SORT
+    assert opts["format_sort_force"] is True
 
 
 def test_transcribe_text_only_ignores_existing_sidecar_subtitles(monkeypatch, tmp_path: Path) -> None:

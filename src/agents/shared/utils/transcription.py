@@ -10,28 +10,88 @@ from faster_whisper import WhisperModel
 
 from ....utils.logger import get_logger
 
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
+PROJECT_CACHE = PROJECT_ROOT / ".cache"
+HF_HOME_DIR = PROJECT_CACHE / "huggingface"
+HF_HUB_CACHE_DIR = HF_HOME_DIR / "hub"
+TRANSCRIPTION_MODEL_REPO_ID = "Systran/faster-whisper-large-v3"
+LOCAL_TRANSCRIPTION_MODEL_ROOT = HF_HUB_CACHE_DIR / "models--Systran--faster-whisper-large-v3"
+LOCAL_TRANSCRIPTION_MODEL_PATH = LOCAL_TRANSCRIPTION_MODEL_ROOT / "faster-whisper-large-v3"
+LOCAL_TRANSCRIPTION_MODEL_SNAPSHOTS_DIR = LOCAL_TRANSCRIPTION_MODEL_ROOT / "snapshots"
+
 # 设置离线模式和禁用警告
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
 # 添加 CUDA cuBLAS DLL 路径到 PATH
-_venv_nvidia_bin = Path(__file__).parent.parent.parent / ".venv" / "Lib" / "site-packages" / "nvidia" / "cublas" / "bin"
+_venv_nvidia_bin = PROJECT_ROOT / ".venv" / "Lib" / "site-packages" / "nvidia" / "cublas" / "bin"
 if _venv_nvidia_bin.exists():
     os.environ["PATH"] = str(_venv_nvidia_bin) + os.pathsep + os.environ.get("PATH", "")
 
 logger = get_logger(__name__)
 
-PROJECT_CACHE = Path(__file__).parent.parent.parent / ".cache" / "huggingface" / "hub"
-LOCAL_TRANSCRIPTION_MODEL_PATH = PROJECT_CACHE / "models--Systran--faster-whisper-large-v3" / "faster-whisper-large-v3"
-
 TRANSCRIPTION_CONFIG = {
-    "MODEL_PATH": str(LOCAL_TRANSCRIPTION_MODEL_PATH),
     "DEVICE": "cuda",
     "COMPUTE_TYPE": "float16",
 }
 
 _shared_transcription_model: Optional[WhisperModel] = None
 _shared_transcription_model_lock = Lock()
+
+
+def _prepare_transcription_cache_env() -> None:
+    HF_HUB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    cache_env = {
+        "XDG_CACHE_HOME": str(PROJECT_CACHE),
+        "HF_HOME": str(HF_HOME_DIR),
+        "HF_HUB_CACHE": str(HF_HUB_CACHE_DIR),
+        "TRANSFORMERS_CACHE": str(HF_HUB_CACHE_DIR),
+        "HF_HUB_OFFLINE": "1",
+        "HF_HUB_DISABLE_SYMLINKS_WARNING": "1",
+    }
+    for key, value in cache_env.items():
+        os.environ[key] = value
+
+    try:
+        import huggingface_hub.constants as hf_constants
+
+        if hasattr(hf_constants, "HF_HOME"):
+            hf_constants.HF_HOME = str(HF_HOME_DIR)
+        if hasattr(hf_constants, "HF_HUB_CACHE"):
+            hf_constants.HF_HUB_CACHE = str(HF_HUB_CACHE_DIR)
+    except Exception:
+        pass
+
+
+def _is_transcription_model_dir(path: Path) -> bool:
+    required_files = (
+        "config.json",
+        "model.bin",
+        "preprocessor_config.json",
+        "tokenizer.json",
+    )
+    return path.is_dir() and all((path / filename).exists() for filename in required_files)
+
+
+def _resolve_transcription_model_source() -> tuple[str, str | None]:
+    if _is_transcription_model_dir(LOCAL_TRANSCRIPTION_MODEL_PATH):
+        return str(LOCAL_TRANSCRIPTION_MODEL_PATH), None
+
+    if LOCAL_TRANSCRIPTION_MODEL_SNAPSHOTS_DIR.is_dir():
+        snapshot_dirs = sorted(
+            (
+                path
+                for path in LOCAL_TRANSCRIPTION_MODEL_SNAPSHOTS_DIR.iterdir()
+                if _is_transcription_model_dir(path)
+            ),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        if snapshot_dirs:
+            return str(snapshot_dirs[0]), None
+
+    return TRANSCRIPTION_MODEL_REPO_ID, str(HF_HUB_CACHE_DIR)
 
 
 def get_transcription_model() -> WhisperModel:
@@ -41,11 +101,15 @@ def get_transcription_model() -> WhisperModel:
 
     with _shared_transcription_model_lock:
         if _shared_transcription_model is None:
+            _prepare_transcription_cache_env()
+            model_source, download_root = _resolve_transcription_model_source()
             logger.info("加载音频转录模型（本地离线模式）...")
+            logger.info(f"转录模型源: {model_source}")
             _shared_transcription_model = WhisperModel(
-                TRANSCRIPTION_CONFIG["MODEL_PATH"],
+                model_source,
                 device=TRANSCRIPTION_CONFIG["DEVICE"],
                 compute_type=TRANSCRIPTION_CONFIG["COMPUTE_TYPE"],
+                download_root=download_root,
                 local_files_only=True,
             )
             logger.info("音频转录模型加载完成")

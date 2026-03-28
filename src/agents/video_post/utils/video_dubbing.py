@@ -36,7 +36,7 @@ from .tts_tags import (
 logger = get_logger(__name__)
 
 # 项目路径与统一缓存路径
-PROJECT_ROOT = Path(__file__).parent.parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
 PROJECT_CACHE = PROJECT_ROOT / ".cache"
 HF_HUB_CACHE_DIR = PROJECT_CACHE / "huggingface" / "hub"
 MODELSCOPE_CACHE_DIR = PROJECT_CACHE / "modelscope"
