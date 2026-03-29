@@ -290,7 +290,7 @@ class SubtitleGenerator:
                 end=segment.end,
                 text=_normalize_subtitle_text(segment.text),
                 speaker_id=segment.speaker_id,
-                tone_tag=_resolve_tone_tag(segment),
+                tone_tag=DEFAULT_TONE_TAG,
             )
             for segment in transcription.segments
         ], detected_lang
