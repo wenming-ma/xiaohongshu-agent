@@ -192,7 +192,7 @@ class ReferenceImageConfig:
 
 
 class ASRConfig:
-    PROVIDER = os.getenv("ASR_PROVIDER", "faster_whisper")
+    PROVIDER = os.getenv("ASR_PROVIDER", "qwen")
 
 
 class SubtitleConfig:

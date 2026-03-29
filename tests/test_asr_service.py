@@ -1,11 +1,17 @@
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import src.agents.shared.utils.asr.service as service_module
 from src.agents.shared.utils.asr.alignment.base import AlignmentResult
-from src.agents.shared.utils.asr.model_sources import COHERE_ASR_MODEL_SPEC, resolve_model_source_from_root
+from src.agents.shared.utils.asr.model_sources import (
+    COHERE_ASR_MODEL_SPEC,
+    QWEN_ASR_MODEL_SPEC,
+    resolve_model_source_from_root,
+)
 from src.agents.shared.utils.asr.providers.cohere import CohereAsrProvider
+from src.agents.shared.utils.asr.providers.qwen import QwenAsrProvider
 from src.agents.video_post.schemas import SubtitleSegment, TranscriptionResult
 
 
@@ -58,6 +64,16 @@ def test_get_asr_service_uses_configured_provider(monkeypatch) -> None:
     service = service_module.get_asr_service()
 
     assert service.provider_name == "cohere"
+    service_module.release_asr_resources()
+
+
+def test_get_asr_service_defaults_to_qwen(monkeypatch) -> None:
+    service_module.release_asr_resources()
+    monkeypatch.setattr(service_module.ASRConfig, "PROVIDER", "qwen")
+
+    service = service_module.get_asr_service()
+
+    assert service.provider_name == "qwen"
     service_module.release_asr_resources()
 
 
@@ -123,4 +139,55 @@ def test_resolve_model_source_from_root_supports_snapshot_only_layout(tmp_path: 
     )
 
     assert result == str(newer_snapshot)
+    assert download_root is None
+
+
+def test_qwen_provider_returns_timestamped_segments(monkeypatch, tmp_path: Path) -> None:
+    audio_path = tmp_path / "sample.wav"
+    audio_path.write_bytes(b"audio")
+    provider = QwenAsrProvider()
+
+    fake_result = SimpleNamespace(
+        language="English",
+        text="hello world.",
+        time_stamps=[
+            SimpleNamespace(text="hello", start_time=0.0, end_time=0.4),
+            SimpleNamespace(text="world.", start_time=0.45, end_time=1.1),
+        ],
+    )
+    fake_model = SimpleNamespace(
+        transcribe=lambda **kwargs: (
+            [fake_result]
+            if kwargs["audio"] == [str(audio_path)]
+            and kwargs["language"] is None
+            and kwargs["return_time_stamps"] is True
+            else []
+        )
+    )
+    monkeypatch.setattr(provider, "_load_model", lambda: fake_model)
+
+    result = provider.transcribe_audio(audio_path)
+
+    assert result.success is True
+    assert result.language == "en"
+    assert result.transcript == "hello world."
+    assert len(result.segments) == 1
+    assert result.segments[0].start == 0.0
+    assert result.segments[0].end == 1.1
+    assert result.segments[0].text == "hello world."
+
+
+def test_resolve_model_source_from_root_supports_qwen_snapshot_layout(tmp_path: Path) -> None:
+    model_root = tmp_path / "models--Qwen--Qwen3-ASR-1.7B"
+    snapshot_dir = model_root / "snapshots" / "current"
+    _write_stub_files(snapshot_dir, QWEN_ASR_MODEL_SPEC.required_files)
+
+    result, download_root = resolve_model_source_from_root(
+        model_root,
+        repo_id=QWEN_ASR_MODEL_SPEC.repo_id,
+        required_files=QWEN_ASR_MODEL_SPEC.required_files,
+        cache_dir=tmp_path,
+    )
+
+    assert result == str(snapshot_dir)
     assert download_root is None

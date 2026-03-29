@@ -9,11 +9,14 @@ from .model_sources import (
     HF_HUB_CACHE_DIR,
     PROJECT_CACHE,
     PROJECT_ROOT,
+    QWEN_ASR_MODEL_SPEC,
+    QWEN_FORCED_ALIGNER_MODEL_SPEC,
     resolve_model_source,
     resolve_model_source_from_root,
 )
 from .providers.cohere import CohereAsrProvider
 from .providers.faster_whisper import FasterWhisperAsrProvider
+from .providers.qwen import QwenAsrProvider
 from .service import AudioTranscriber, AsrService, get_asr_service, release_asr_resources
 
 __all__ = [
@@ -26,8 +29,11 @@ __all__ = [
     "HF_HUB_CACHE_DIR",
     "PROJECT_CACHE",
     "PROJECT_ROOT",
+    "QWEN_ASR_MODEL_SPEC",
+    "QWEN_FORCED_ALIGNER_MODEL_SPEC",
     "CohereAsrProvider",
     "FasterWhisperAsrProvider",
+    "QwenAsrProvider",
     "extract_audio_track",
     "get_asr_service",
     "redistribute_transcript_to_segments",

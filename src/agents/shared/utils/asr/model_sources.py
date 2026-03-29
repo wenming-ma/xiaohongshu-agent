@@ -34,6 +34,20 @@ COHERE_ASR_MODEL_SPEC = ModelSpec(
     required_files=("config.json", "model.safetensors", "preprocessor_config.json", "tokenizer.json"),
 )
 
+QWEN_ASR_MODEL_SPEC = ModelSpec(
+    provider_name="qwen",
+    repo_id="Qwen/Qwen3-ASR-1.7B",
+    cache_root_name="models--Qwen--Qwen3-ASR-1.7B",
+    required_files=("config.json",),
+)
+
+QWEN_FORCED_ALIGNER_MODEL_SPEC = ModelSpec(
+    provider_name="qwen_forced_aligner",
+    repo_id="Qwen/Qwen3-ForcedAligner-0.6B",
+    cache_root_name="models--Qwen--Qwen3-ForcedAligner-0.6B",
+    required_files=("config.json",),
+)
+
 
 def prepare_hf_cache_env() -> None:
     HF_HUB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
