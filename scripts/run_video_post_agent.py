@@ -159,18 +159,22 @@ successfully.
 ## Your Workflow
 
 1. Call the `run_video_post` tool with start_index={start_index} and \
-limit={limit if limit > 0 else 0} to run the batch pipeline.
-2. Read the output carefully. Check the exit code:
-   - Exit code 0: All topics succeeded. You are done.
+limit={limit if limit > 0 else 0} to run the pipeline for ONE topic at a time.
+2. Read the ENTIRE output carefully — not just the exit code. Check for:
+   - Exit code 0: The topic finished, but there may still be issues (see step 3).
    - Exit code 1: Some topics failed. Read the failure details.
    - Exit code 2: The batch crashed. Read the crash error.
-3. If there are failures or crashes:
-   a. Analyze the error messages and tracebacks.
-   b. Read the relevant source files to understand the bug.
-   c. Fix the code by editing the files.
-   d. Re-run the tool to verify your fix works.
-   e. Repeat until exit code is 0.
-4. If the failure log files are mentioned in the output (e.g.,
+3. **Even when exit code is 0**, review the full process log for:
+   - Warnings, errors, or exceptions that were caught and skipped
+   - Steps that silently fell back to defaults or were skipped entirely
+   - Missing or empty outputs in intermediate steps (e.g., empty subtitles,
+     missing audio segments, skipped TTS lines, failed downloads)
+   - Any "retry", "fallback", "skip", "failed" keywords in the logs
+   If you find such issues, investigate the root cause, fix the code, and
+   re-run the same topic to verify the fix.
+4. Only after a truly clean run (exit code 0 AND no concerning warnings/errors
+   in the process log), move to the next topic by incrementing start_index.
+5. If the failure log files are mentioned in the output (e.g.,
    video_post_failures_*.jsonl, video_post_crash_*.json), read them for
    additional error context.
 
@@ -186,7 +190,10 @@ limit={limit if limit > 0 else 0} to run the batch pipeline.
 - If you encounter the same error repeatedly after fixing, try a different
   approach or read more context from the codebase.
 - Do NOT modify `workshop/video_post/topics.json`.
-- After a successful run (exit code 0), summarize what you did and end.
+- Process ONE topic at a time (limit=1). After a clean run, increment
+  start_index and process the next topic. Continue until all topics are done.
+- A "clean run" means exit code 0 AND no skipped errors or concerning warnings.
+- After all topics are processed, summarize what you did and end.
 - If after extensive attempts you cannot fix an issue, explain what you tried
   and what the remaining problem is, then stop.
 
