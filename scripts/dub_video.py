@@ -9,7 +9,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.utils.logger import get_logger
-from src.utils.video_dubbing import dub_video
+from src.agents.video_post.utils.video_dubbing import dub_video
 
 logger = get_logger(__name__)
 

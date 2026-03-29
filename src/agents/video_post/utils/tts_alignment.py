@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import re
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
 from threading import Lock
-from typing import Any, Protocol
+from typing import Protocol
 
 from ...shared.utils.asr.model_sources import (
     QWEN_FORCED_ALIGNER_MODEL_SPEC,
@@ -14,6 +13,7 @@ from ...shared.utils.asr.model_sources import (
     resolve_model_source,
 )
 from ....utils.logger import get_logger
+from .tts.schemas import TtsSynthesisRequest, TtsSynthesisResult
 
 logger = get_logger(__name__)
 
@@ -70,34 +70,6 @@ def _normalize_qwen_language(language: str) -> str:
     if not normalized:
         return "Chinese"
     return _LANGUAGE_TO_QWEN.get(normalized, "Chinese")
-
-
-@dataclass(slots=True)
-class NativeTimingEvent:
-    start: float
-    end: float
-    text: str
-
-
-@dataclass(slots=True)
-class TtsSynthesisRequest:
-    text: str
-    language: str = "zh"
-    voice: str = ""
-    tone_tag: str = ""
-    target_start: float = 0.0
-    target_end: float = 0.0
-    target_duration_seconds: float = 0.0
-
-
-@dataclass(slots=True)
-class TtsSynthesisResult:
-    audio_path: Path
-    raw_duration_seconds: float = 0.0
-    native_timing_events: tuple[NativeTimingEvent, ...] = ()
-    timing_source: str = "none"
-    provider_name: str = ""
-    provider_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

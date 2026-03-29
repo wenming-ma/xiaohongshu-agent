@@ -11,38 +11,24 @@
 """
 
 import asyncio
-import base64
-import json
 import os
 import re
 import shutil
 import subprocess
 import tempfile
-import time
-import uuid
 from functools import lru_cache
 from pathlib import Path
 
-import httpx
-from dotenv import load_dotenv
-
 from ...shared.utils.asr.model_sources import HF_HUB_CACHE_DIR, prepare_hf_cache_env
 from ....utils.logger import get_logger
+from .tts import TtsSynthesisContext, TtsSynthesisRequest, TtsSynthesisResult, create_tts_service
 from .tts_alignment import (
-    AlignedToken,
     AlignmentResult,
     TtsAligner,
-    TtsSynthesisRequest,
-    TtsSynthesisResult,
     TtsTimingDecision,
     create_tts_aligner,
 )
-from .tts_tags import (
-    DEFAULT_TONE_TAG,
-    normalize_tone_tag,
-    prepare_provider_tts_text,
-    strip_tone_tag,
-)
+from .tts_tags import normalize_tone_tag
 
 logger = get_logger(__name__)
 
@@ -55,49 +41,12 @@ AUDIO_SEPARATOR_MODEL_DIR = PROJECT_CACHE / "audio-separator" / "models"
 
 # 人声分离模型（自动下载）
 SEPARATOR_MODEL = "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
-GOOGLE_TTS_ENDPOINT = "https://texttospeech.googleapis.com/v1/text:synthesize"
-VALID_GENDERS = {"SSML_VOICE_GENDER_UNSPECIFIED", "MALE", "FEMALE", "NEUTRAL"}
-VALID_TTS_PROVIDERS = {"fish", "google", "s2cpp", "auto"}
 MIN_NATURAL_ATEMPO = 0.95
 MAX_NATURAL_ATEMPO = 1.05
 MIN_SOFT_STRETCH_RATIO = 0.97
 MAX_SOFT_STRETCH_RATIO = 1.03
 MAX_CARRYOVER_SECONDS = 0.30
 MAX_CARRYOVER_RATIO = 0.08
-
-
-class GoogleTTSFatalError(RuntimeError):
-    """Google TTS 不可重试错误（鉴权、配置、请求参数问题）。"""
-
-
-class FishTTSFatalError(RuntimeError):
-    """Fish TTS 不可重试错误（配置、请求参数问题）。"""
-
-
-class S2CppTTSFatalError(RuntimeError):
-    """s2.cpp TTS 不可重试错误（配置、请求参数问题）。"""
-
-
-def _is_retryable_s2cpp_http_error(status_code: int, detail: str) -> bool:
-    """只对白名单内的 s2.cpp 服务端失败做重试，避免把坏请求无限重放。"""
-    normalized = (detail or "").lower()
-    if status_code == 400:
-        return any(
-            marker in normalized
-            for marker in ("synthesis failed", "internal error", "engine busy")
-        )
-    return status_code >= 500
-
-
-def _get_tts_provider() -> str:
-    raw = os.getenv("VIDEO_DUB_TTS_PROVIDER", "fish").strip().lower()
-    if raw not in VALID_TTS_PROVIDERS:
-        logger.warning(
-            f"VIDEO_DUB_TTS_PROVIDER={raw!r} 非法，回退 fish "
-            f"(可选: {', '.join(sorted(VALID_TTS_PROVIDERS))})"
-        )
-        return "fish"
-    return raw
 
 
 def _prepare_model_cache_env() -> None:
@@ -119,105 +68,9 @@ def _cache_env_vars() -> dict[str, str]:
     }
 
 
-def _get_google_tts_api_key() -> str:
-    def _find_key() -> str:
-        keys = [
-            os.getenv("GOOGLE_TTS_API_KEY", "").strip(),
-            os.getenv("GOOGLE_API_KEY", "").strip(),
-            os.getenv("GEMINI_API_KEY", "").strip(),
-        ]
-        for key in keys:
-            if key:
-                return key
-        return ""
-
-    key = _find_key()
-    if key:
-        return key
-
-    # 兼容直接用脚本运行（未提前 export 环境变量）的场景。
-    load_dotenv()
-    key = _find_key()
-    if key:
-        return key
-
-    raise RuntimeError(
-        "未设置 Google TTS API Key。请设置以下任一环境变量：\n"
-        "  GOOGLE_TTS_API_KEY（推荐）\n"
-        "  GOOGLE_API_KEY\n"
-        "  GEMINI_API_KEY"
-    )
-
-
-def _get_env_float(name: str, default: float) -> float:
-    raw = os.getenv(name, "").strip()
-    if not raw:
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        logger.warning(f"{name}={raw!r} 不是有效浮点数，回退默认值 {default}")
-        return default
-
-
-def _get_env_int(name: str, default: int) -> int:
-    raw = os.getenv(name, "").strip()
-    if not raw:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        logger.warning(f"{name}={raw!r} 不是有效整数，回退默认值 {default}")
-        return default
-
-
-def _get_env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name, "").strip().lower()
-    if not raw:
-        return default
-    if raw in {"1", "true", "yes", "y", "on"}:
-        return True
-    if raw in {"0", "false", "no", "n", "off"}:
-        return False
-    logger.warning(f"{name}={raw!r} 不是有效布尔值，回退默认值 {default}")
-    return default
-
-
 @lru_cache(maxsize=1)
 def _get_tts_aligner() -> TtsAligner:
     return create_tts_aligner()
-
-
-def _build_google_tts_voice_payload() -> dict[str, str]:
-    language_code = os.getenv("GOOGLE_TTS_LANGUAGE_CODE", "zh-CN").strip() or "zh-CN"
-    voice_name = os.getenv("GOOGLE_TTS_VOICE_NAME", "").strip()
-    gender = os.getenv("GOOGLE_TTS_SSML_GENDER", "FEMALE").strip().upper()
-    if gender not in VALID_GENDERS:
-        logger.warning(f"GOOGLE_TTS_SSML_GENDER={gender!r} 非法，回退 FEMALE")
-        gender = "FEMALE"
-
-    voice: dict[str, str] = {
-        "languageCode": language_code,
-        "ssmlGender": gender,
-    }
-    if voice_name:
-        voice["name"] = voice_name
-    return voice
-
-
-def _build_google_tts_audio_config_payload() -> dict[str, object]:
-    speaking_rate = min(max(_get_env_float("GOOGLE_TTS_SPEAKING_RATE", 1.0), 0.25), 4.0)
-    pitch = min(max(_get_env_float("GOOGLE_TTS_PITCH", 0.0), -20.0), 20.0)
-    volume_gain_db = min(max(_get_env_float("GOOGLE_TTS_VOLUME_GAIN_DB", 0.0), -96.0), 16.0)
-    sample_rate_hz = _get_env_int("GOOGLE_TTS_SAMPLE_RATE_HZ", 44100)
-
-    return {
-        "audioEncoding": "LINEAR16",
-        "speakingRate": speaking_rate,
-        "pitch": pitch,
-        "volumeGainDb": volume_gain_db,
-        "sampleRateHertz": sample_rate_hz,
-    }
 
 
 async def dub_video(
@@ -385,52 +238,6 @@ def _srt_time_to_seconds(time_str: str) -> float:
     return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
 
 
-def _merge_srt_segments(
-    segments: list[SrtSegment],
-    max_gap: float,
-    max_duration: float,
-    max_chars: int,
-) -> list[SrtSegment]:
-    """将相邻短字幕段合并，减少 TTS 请求次数。"""
-    if not segments:
-        return []
-    merged: list[SrtSegment] = []
-    cur = SrtSegment(
-        index=segments[0].index,
-        start=segments[0].start,
-        end=segments[0].end,
-        text=segments[0].text,
-        speaker_id=segments[0].speaker_id,
-        tone_tag=segments[0].tone_tag,
-    )
-    for seg in segments[1:]:
-        gap = seg.start - cur.end
-        candidate_duration = seg.end - cur.start
-        candidate_chars = len(cur.text) + 1 + len(seg.text)
-        if (
-            gap <= max_gap
-            and candidate_duration <= max_duration
-            and candidate_chars <= max_chars
-            and seg.speaker_id == cur.speaker_id
-        ):
-            cur.end = seg.end
-            cur.text = f"{cur.text} {seg.text}".strip()
-            if seg.tone_tag and seg.tone_tag != cur.tone_tag:
-                cur.tone_tag = DEFAULT_TONE_TAG
-        else:
-            merged.append(cur)
-            cur = SrtSegment(
-                index=seg.index,
-                start=seg.start,
-                end=seg.end,
-                text=seg.text,
-                speaker_id=seg.speaker_id,
-                tone_tag=seg.tone_tag,
-            )
-    merged.append(cur)
-    return merged
-
-
 # ─── 音频处理 ────────────────────────────────────────────────
 
 async def _extract_audio(video_path: Path, output_path: Path) -> None:
@@ -512,6 +319,41 @@ async def _separate_vocals(audio_path: Path, output_dir: Path) -> tuple[Path, Pa
 
 # ─── TTS 配音生成 ───────────────────────────────────────────
 
+def _segment_to_tts_request(segment: SrtSegment, voice: str = "") -> TtsSynthesisRequest:
+    return TtsSynthesisRequest(
+        segment_index=segment.index,
+        text=segment.text,
+        language="zh",
+        voice=voice,
+        tone_tag=segment.tone_tag,
+        speaker_id=segment.speaker_id,
+        target_start=segment.start,
+        target_end=segment.end,
+        target_duration_seconds=segment.duration,
+    )
+
+
+def _request_to_segment(request: TtsSynthesisRequest) -> SrtSegment:
+    return SrtSegment(
+        index=request.segment_index,
+        start=request.target_start,
+        end=request.target_end,
+        text=request.text,
+        speaker_id=request.speaker_id,
+        tone_tag=request.tone_tag,
+    )
+
+
+def _display_tts_provider_name(provider_name: str) -> str:
+    if provider_name == "s2cpp":
+        return "s2.cpp"
+    if provider_name == "google":
+        return "Google"
+    if provider_name == "fish":
+        return "Fish"
+    return provider_name
+
+
 async def _generate_dubbed_segments(
     segments: list[SrtSegment],
     work_dir: Path,
@@ -522,82 +364,25 @@ async def _generate_dubbed_segments(
     if not segments:
         raise RuntimeError("字幕为空，无法生成配音")
 
-    provider = _get_tts_provider()
-    logger.info(f"TTS Provider: {provider}")
-
-    if provider == "google":
-        success_map = await _generate_dubbed_segments_google(segments, work_dir)
-        return await _postprocess_dubbed_segments(
-            success_map=success_map,
-            segments=segments,
-            work_dir=work_dir,
-            empty_error="Google TTS 未生成任何可用配音段",
-        )
-
-    if provider == "fish":
-        success_map = await _generate_dubbed_segments_fish(
-            segments=segments,
-            work_dir=work_dir,
-            reference_audio_path=reference_audio_path,
-        )
-        return await _postprocess_dubbed_segments(
-            success_map=success_map,
-            segments=segments,
-            work_dir=work_dir,
-            empty_error="Fish TTS 未生成任何可用配音段",
-        )
-
-    if provider == "s2cpp":
-        effective_segments, success_map = await _generate_dubbed_segments_s2cpp(
-            segments=segments,
+    requests = [_segment_to_tts_request(segment=segment, voice=voice) for segment in segments]
+    service = create_tts_service()
+    logger.info("TTS Provider: %s", service.provider_name)
+    batch_result = await service.synthesize_many(
+        requests=requests,
+        context=TtsSynthesisContext(
             work_dir=work_dir,
             reference_audio_path=reference_audio_path,
             voice=voice,
-        )
-        return await _postprocess_dubbed_segments(
-            success_map=success_map,
-            segments=effective_segments,
-            work_dir=work_dir,
-            empty_error="s2.cpp TTS 未生成任何可用配音段",
-        )
-
-    # auto: 优先 fish，失败后回退 s2.cpp，再回退 google
-    try:
-        success_map = await _generate_dubbed_segments_fish(
-            segments=segments,
-            work_dir=work_dir,
-            reference_audio_path=reference_audio_path,
-        )
-        return await _postprocess_dubbed_segments(
-            success_map=success_map,
-            segments=segments,
-            work_dir=work_dir,
-            empty_error="Fish TTS 未生成任何可用配音段",
-        )
-    except Exception as exc:
-        logger.warning(f"Fish TTS 失败，auto 模式回退 Google TTS: {exc}")
-        try:
-            effective_segments, success_map = await _generate_dubbed_segments_s2cpp(
-                segments=segments,
-                work_dir=work_dir,
-                reference_audio_path=reference_audio_path,
-                voice=voice,
-            )
-            return await _postprocess_dubbed_segments(
-                success_map=success_map,
-                segments=effective_segments,
-                work_dir=work_dir,
-                empty_error="s2.cpp TTS 未生成任何可用配音段",
-            )
-        except Exception as exc2:
-            logger.warning(f"s2.cpp TTS 失败，auto 模式回退 Google TTS: {exc2}")
-            success_map = await _generate_dubbed_segments_google(segments, work_dir)
-            return await _postprocess_dubbed_segments(
-                success_map=success_map,
-                segments=segments,
-                work_dir=work_dir,
-                empty_error="Google TTS 未生成任何可用配音段",
-            )
+        ),
+    )
+    effective_segments = [_request_to_segment(request) for request in batch_result.requests]
+    empty_error = f"{_display_tts_provider_name(batch_result.provider_name)} TTS 未生成任何可用配音段"
+    return await _postprocess_dubbed_segments(
+        success_map=batch_result.success_map,
+        segments=effective_segments,
+        work_dir=work_dir,
+        empty_error=empty_error,
+    )
 
 
 async def _postprocess_dubbed_segments(
@@ -616,10 +401,12 @@ async def _postprocess_dubbed_segments(
             continue
 
         request = TtsSynthesisRequest(
+            segment_index=seg.index,
             text=seg.text,
             voice="",
             tone_tag=seg.tone_tag,
             language="zh",
+            speaker_id=seg.speaker_id,
             target_start=seg.start,
             target_end=seg.end,
             target_duration_seconds=seg.duration,
@@ -657,942 +444,6 @@ async def _postprocess_dubbed_segments(
     if not results:
         raise RuntimeError(empty_error)
     return results
-
-
-async def _generate_dubbed_segments_google(
-    segments: list[SrtSegment],
-    work_dir: Path,
-) -> dict[int, TtsSynthesisResult]:
-    api_key = _get_google_tts_api_key()
-    voice_payload = _build_google_tts_voice_payload()
-    audio_payload = _build_google_tts_audio_config_payload()
-    retries = max(_get_env_int("GOOGLE_TTS_RETRIES", 3), 1)
-    timeout_seconds = max(_get_env_float("GOOGLE_TTS_TIMEOUT_SECONDS", 45.0), 5.0)
-    concurrency = max(_get_env_int("GOOGLE_TTS_CONCURRENCY", 4), 1)
-    semaphore = asyncio.Semaphore(concurrency)
-
-    logger.info(
-        "Google TTS 配置: "
-        f"language={voice_payload.get('languageCode')}, "
-        f"voice={voice_payload.get('name', '<auto>')}, "
-        f"gender={voice_payload.get('ssmlGender')}, "
-        f"concurrency={concurrency}"
-    )
-
-    async with httpx.AsyncClient() as client:
-        tasks = [
-            asyncio.create_task(
-                _synthesize_google_tts_segment_with_retry(
-                    client=client,
-                    api_key=api_key,
-                    segment=seg,
-                    index=i,
-                    raw_output=work_dir / f"seg_{i:04d}_raw.wav",
-                    voice_payload=voice_payload,
-                    audio_payload=audio_payload,
-                    timeout_seconds=timeout_seconds,
-                    retries=retries,
-                    semaphore=semaphore,
-                )
-            )
-            for i, seg in enumerate(segments)
-        ]
-
-        success_map: dict[int, TtsSynthesisResult] = {}
-        completed = 0
-        total = len(tasks)
-        for done in asyncio.as_completed(tasks):
-            idx, output_path = await done
-            completed += 1
-            if output_path is not None:
-                success_map[idx] = TtsSynthesisResult(
-                    audio_path=output_path,
-                    provider_name="google",
-                    timing_source="none",
-                )
-            if completed % 10 == 0 or completed == total:
-                logger.info(f"Google TTS 生成进度: {completed}/{total}")
-
-    return success_map
-
-
-async def _generate_dubbed_segments_fish(
-    segments: list[SrtSegment],
-    work_dir: Path,
-    reference_audio_path: Path,
-) -> dict[int, TtsSynthesisResult]:
-    base_url = os.getenv("FISH_TTS_BASE_URL", "http://127.0.0.1:8080").strip().rstrip("/")
-    retries = max(_get_env_int("FISH_TTS_RETRIES", 3), 1)
-    timeout_seconds = max(_get_env_float("FISH_TTS_TIMEOUT_SECONDS", 180.0), 5.0)
-    concurrency = max(_get_env_int("FISH_TTS_CONCURRENCY", 1), 1)
-    semaphore = asyncio.Semaphore(concurrency)
-
-    logger.info(
-        "Fish TTS 配置: "
-        f"base_url={base_url}, "
-        f"concurrency={concurrency}, "
-        f"timeout={timeout_seconds}s"
-    )
-
-    async with httpx.AsyncClient() as client:
-        await _check_fish_tts_health(client, base_url, timeout_seconds)
-        reference_id, delete_after = await _prepare_fish_reference(
-            client=client,
-            base_url=base_url,
-            reference_audio_path=reference_audio_path,
-            segments=segments,
-            work_dir=work_dir,
-            timeout_seconds=timeout_seconds,
-        )
-
-        try:
-            tasks = [
-                asyncio.create_task(
-                    _synthesize_fish_tts_segment_with_retry(
-                        client=client,
-                        base_url=base_url,
-                        segment=seg,
-                        index=i,
-                        raw_output=work_dir / f"seg_{i:04d}_raw.wav",
-                        reference_id=reference_id,
-                        timeout_seconds=timeout_seconds,
-                        retries=retries,
-                        semaphore=semaphore,
-                    )
-                )
-                for i, seg in enumerate(segments)
-            ]
-
-            success_map: dict[int, TtsSynthesisResult] = {}
-            completed = 0
-            total = len(tasks)
-            for done in asyncio.as_completed(tasks):
-                idx, output_path = await done
-                completed += 1
-                if output_path is not None:
-                    success_map[idx] = TtsSynthesisResult(
-                        audio_path=output_path,
-                        provider_name="fish",
-                        timing_source="none",
-                    )
-                if completed % 10 == 0 or completed == total:
-                    logger.info(f"Fish TTS 生成进度: {completed}/{total}")
-        finally:
-            if delete_after:
-                await _delete_fish_reference(
-                    client=client,
-                    base_url=base_url,
-                    reference_id=reference_id,
-                    timeout_seconds=timeout_seconds,
-                )
-
-    return success_map
-
-
-def _resolve_env_path(raw_path: str) -> Path:
-    path = Path(raw_path).expanduser()
-    if not path.is_absolute():
-        path = (PROJECT_ROOT / path).resolve()
-    return path
-
-
-_S2CPP_REFERENCES_DIR = PROJECT_ROOT / "submodules" / "s2.cpp_check" / "references"
-
-VOICE_REGISTRY: dict[str, dict] = {
-    "liuyifei": {"desc": "温柔知性女声，适合旅行、生活方式、美妆、文艺类内容"},
-    "dingzhen": {"desc": "纯朴自然男声，适合户外、旅行、自然风光、乡村生活类内容"},
-    "zhoujielun": {"desc": "个性随性男声，适合音乐、潮流、运动、年轻人文化类内容"},
-    "mabaoguo": {"desc": "中年幽默男声，适合搞笑、武术、健身、娱乐吐槽类内容"},
-}
-DEFAULT_VOICE = "liuyifei"
-
-
-def _get_voice_ref_paths(voice: str) -> tuple[Path, Path]:
-    voice_dir = _S2CPP_REFERENCES_DIR / voice
-    wavs = sorted(voice_dir.glob("*_30s.wav"))
-    txts = sorted(voice_dir.glob("*_30s.txt"))
-    if not wavs or not txts:
-        raise FileNotFoundError(f"音色 {voice} 缺少参考文件: {voice_dir}")
-    return wavs[0], txts[0]
-
-
-async def select_voice_async(topic: str, transcript: str = "") -> str:
-    from pydantic_ai import Agent
-    from ....utils.providers import get_text_model
-
-    options = "\n".join(f"- {k}: {v['desc']}" for k, v in VOICE_REGISTRY.items())
-    prompt = (
-        f"根据以下视频内容，从可选音色中选择最合适的配音音色。\n\n"
-        f"视频主题: {topic}\n"
-        f"视频内容摘要: {transcript[:300]}\n\n"
-        f"可选音色:\n{options}\n\n"
-        f"只输出音色名称（如 liuyifei），不要任何解释。"
-    )
-    agent = Agent(model=get_text_model(), output_type=str)
-    result = await agent.run(prompt)
-    voice = result.output.strip().lower()
-    if voice in VOICE_REGISTRY:
-        logger.info(f"AI 选择配音音色: {voice} ({VOICE_REGISTRY[voice]['desc']})")
-        return voice
-    logger.warning(f"AI 返回未知音色 '{voice}'，使用默认: {DEFAULT_VOICE}")
-    return DEFAULT_VOICE
-
-
-async def assign_voices_to_speakers(
-    topic: str, transcript: str, speaker_ids: list[int],
-) -> dict[int, str]:
-    if len(speaker_ids) <= 1:
-        voice = await select_voice_async(topic, transcript)
-        return {sid: voice for sid in speaker_ids}
-
-    from pydantic_ai import Agent
-    from ....utils.providers import get_text_model
-
-    options = "\n".join(f"- {k}: {v['desc']}" for k, v in VOICE_REGISTRY.items())
-    prompt = (
-        f"一个视频中有 {len(speaker_ids)} 个说话人（编号: {speaker_ids}）。\n"
-        f"视频主题: {topic}\n"
-        f"内容摘要: {transcript[:300]}\n\n"
-        f"请为每个说话人选择最合适的配音音色，不同说话人尽量用不同音色。\n\n"
-        f"可选音色:\n{options}\n\n"
-        f"每行输出格式: 说话人编号=音色名称\n"
-        f"示例:\n0=liuyifei\n1=dingzhen\n"
-    )
-    agent = Agent(model=get_text_model(), output_type=str)
-    result = await agent.run(prompt)
-
-    mapping: dict[int, str] = {}
-    for line in result.output.strip().split("\n"):
-        if "=" in line:
-            parts = line.split("=", 1)
-            try:
-                sid = int(parts[0].strip())
-                voice = parts[1].strip().lower()
-                if voice in VOICE_REGISTRY and sid in speaker_ids:
-                    mapping[sid] = voice
-            except ValueError:
-                continue
-
-    for sid in speaker_ids:
-        if sid not in mapping:
-            mapping[sid] = DEFAULT_VOICE
-
-    logger.info(f"说话人音色分配: {mapping}")
-    return mapping
-
-
-def _build_s2cpp_reference_text(segments: list[SrtSegment], voice: str = "") -> str:
-    configured = _normalize_tts_text(strip_tone_tag(os.getenv("S2CPP_TTS_REFERENCE_TEXT", "")))
-    if configured:
-        return configured[:1200]
-
-    voice = voice or DEFAULT_VOICE
-    try:
-        _, txt_path = _get_voice_ref_paths(voice)
-        text = _normalize_tts_text(strip_tone_tag(txt_path.read_text(encoding="utf-8", errors="ignore")))
-        if text:
-            return text[:1200]
-    except FileNotFoundError:
-        pass
-
-    fallback = _build_fish_reference_text(segments)
-    logger.warning("未找到音色参考文本，回退使用字幕内容片段作为 reference_text")
-    return fallback
-
-
-async def _prepare_s2cpp_reference_audio(
-    reference_audio_path: Path,
-    work_dir: Path,
-    voice: str = "",
-) -> Path | None:
-    voice = voice or DEFAULT_VOICE
-    try:
-        wav_path, _ = _get_voice_ref_paths(voice)
-        return wav_path
-    except FileNotFoundError:
-        pass
-
-    configured = os.getenv("S2CPP_TTS_REFERENCE_AUDIO_PATH", "").strip()
-    if configured:
-        path = _resolve_env_path(configured)
-        if not path.exists():
-            raise RuntimeError(f"S2CPP_TTS_REFERENCE_AUDIO_PATH 不存在: {path}")
-        return path
-
-    auto_clip = _get_env_bool("S2CPP_TTS_AUTO_REFERENCE_CLIP", True)
-    if not auto_clip:
-        return None
-
-    clip = work_dir / "s2cpp_reference.wav"
-    start_seconds = max(_get_env_float("S2CPP_TTS_REFERENCE_START_SECONDS", 0.0), 0.0)
-    duration_seconds = max(_get_env_float("S2CPP_TTS_REFERENCE_DURATION_SECONDS", 30.0), 1.0)
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-ss",
-        f"{start_seconds:.3f}",
-        "-t",
-        f"{duration_seconds:.3f}",
-        "-i",
-        str(reference_audio_path),
-        "-acodec",
-        "pcm_s16le",
-        "-ar",
-        "44100",
-        "-ac",
-        "1",
-        str(clip),
-    ]
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    )
-    _, stderr = await proc.communicate()
-    if proc.returncode != 0 or not clip.exists() or clip.stat().st_size == 0:
-        raise RuntimeError(f"s2.cpp 参考音频截取失败: {stderr.decode(errors='ignore')[-500:]}")
-    return clip
-
-
-_s2cpp_server_proc: subprocess.Popen | None = None
-
-_S2CPP_EXE = PROJECT_ROOT / "submodules" / "s2.cpp_check" / "build-cuda" / "Release" / "s2.exe"
-_S2CPP_DLL_DIR = PROJECT_ROOT / "submodules" / "s2.cpp_check" / "build-cuda" / "bin" / "Release"
-_S2CPP_MODEL = PROJECT_ROOT / "submodules" / "s2.cpp_check" / "models" / "s2-pro-q8_0.gguf"
-_S2CPP_TOKENIZER = PROJECT_ROOT / "submodules" / "s2.cpp_check" / "models" / "tokenizer.json"
-
-
-async def _ensure_s2cpp_server(base_url: str, timeout_s: float = 180.0) -> None:
-    global _s2cpp_server_proc
-
-    try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(base_url, timeout=5.0)
-            if r.status_code < 500:
-                return
-    except Exception:
-        pass
-
-    if not _S2CPP_EXE.exists():
-        raise FileNotFoundError(f"s2.exe 不存在: {_S2CPP_EXE}")
-
-    parsed = base_url.rstrip("/").rsplit(":", 1)
-    port = int(parsed[-1]) if len(parsed) > 1 and parsed[-1].isdigit() else 3030
-    host = "127.0.0.1"
-
-    cuda_device = int(os.getenv("S2CPP_CUDA_DEVICE", "0"))
-    env = os.environ.copy()
-    env["PATH"] = f"{_S2CPP_DLL_DIR}{os.pathsep}{env.get('PATH', '')}"
-
-    cmd = [
-        str(_S2CPP_EXE), "-m", str(_S2CPP_MODEL), "-t", str(_S2CPP_TOKENIZER),
-        "-c", str(cuda_device), "--server", "-H", host, "-P", str(port),
-    ]
-    logger.info(f"自动启动 s2.cpp server (port={port}, cuda={cuda_device})...")
-    _s2cpp_server_proc = subprocess.Popen(
-        cmd, cwd=str(PROJECT_ROOT / "submodules" / "s2.cpp_check"),
-        env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
-
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
-        try:
-            async with httpx.AsyncClient() as client:
-                r = await client.get(base_url, timeout=3.0)
-                if r.status_code < 500:
-                    logger.info("s2.cpp server 已就绪")
-                    return
-        except Exception:
-            pass
-        if _s2cpp_server_proc.poll() is not None:
-            raise RuntimeError(f"s2.cpp server 启动失败 (exit={_s2cpp_server_proc.returncode})")
-        await asyncio.sleep(1.0)
-    raise RuntimeError(f"s2.cpp server 启动超时 ({timeout_s}s)")
-
-
-async def _check_s2cpp_tts_health(
-    client: httpx.AsyncClient,
-    base_url: str,
-    timeout_seconds: float,
-) -> None:
-    await _ensure_s2cpp_server(base_url)
-    response = await client.get(base_url, timeout=timeout_seconds)
-    if response.status_code >= 500:
-        detail = _extract_http_detail(response)
-        raise RuntimeError(
-            f"s2.cpp 服务不可用: HTTP {response.status_code}: {detail[:500]}"
-        )
-
-
-def _build_s2cpp_tts_params(target_duration_seconds: float) -> dict[str, object]:
-    configured_max_new_tokens = _get_env_int("S2CPP_TTS_MAX_NEW_TOKENS", 0)
-    if configured_max_new_tokens > 0:
-        max_new_tokens = max(configured_max_new_tokens, 64)
-    else:
-        tokens_per_second = min(
-            max(_get_env_float("S2CPP_TTS_TOKENS_PER_SECOND", 24.0), 8.0), 80.0
-        )
-        duration = max(target_duration_seconds, 1.0)
-        estimated_tokens = int(duration * tokens_per_second)
-        max_new_tokens = min(max(estimated_tokens, 80), 512)
-
-    return {
-        "max_new_tokens": max_new_tokens,
-        "temperature": min(max(_get_env_float("S2CPP_TTS_TEMPERATURE", 0.72), 0.1), 1.5),
-        "top_p": min(max(_get_env_float("S2CPP_TTS_TOP_P", 0.82), 0.1), 1.0),
-        "top_k": max(_get_env_int("S2CPP_TTS_TOP_K", 30), 1),
-        "min_tokens_before_end": max(_get_env_int("S2CPP_TTS_MIN_TOKENS_BEFORE_END", 0), 0),
-        "n_threads": max(_get_env_int("S2CPP_TTS_THREADS", 4), 1),
-        "verbose": _get_env_bool("S2CPP_TTS_VERBOSE", False),
-    }
-
-
-async def _s2cpp_tts_synthesize(
-    client: httpx.AsyncClient,
-    base_url: str,
-    text: str,
-    output_path: Path,
-    reference_audio_path: Path | None,
-    reference_text: str,
-    target_duration_seconds: float,
-    timeout_seconds: float,
-) -> None:
-    data: dict[str, str] = {
-        "text": text,
-        "params": json.dumps(
-            _build_s2cpp_tts_params(target_duration_seconds), ensure_ascii=False
-        ),
-    }
-    if reference_audio_path is not None:
-        data["reference_text"] = reference_text
-        with reference_audio_path.open("rb") as audio_file:
-            response = await client.post(
-                f"{base_url}/generate",
-                data=data,
-                files={"reference": ("reference.wav", audio_file, "audio/wav")},
-                timeout=timeout_seconds,
-            )
-    else:
-        response = await client.post(
-            f"{base_url}/generate",
-            data=data,
-            timeout=timeout_seconds,
-        )
-
-    if response.status_code != 200:
-        detail = _extract_http_detail(response)
-        if _is_retryable_s2cpp_http_error(response.status_code, detail):
-            raise RuntimeError(f"HTTP {response.status_code}: {detail[:500]}")
-        if response.status_code in {400, 401, 403, 404, 422}:
-            raise S2CppTTSFatalError(f"HTTP {response.status_code}: {detail[:500]}")
-        raise RuntimeError(f"HTTP {response.status_code}: {detail[:500]}")
-
-    output_path.write_bytes(response.content)
-    if not output_path.exists() or output_path.stat().st_size == 0:
-        raise RuntimeError("s2.cpp TTS 输出音频为空")
-
-
-async def _synthesize_s2cpp_tts_segment_with_retry(
-    client: httpx.AsyncClient,
-    base_url: str,
-    segment: SrtSegment,
-    index: int,
-    raw_output: Path,
-    reference_audio_path: Path | None,
-    reference_text: str,
-    timeout_seconds: float,
-    retries: int,
-    semaphore: asyncio.Semaphore,
-) -> tuple[int, Path | None]:
-    text = _prepare_segment_tts_text(segment, provider="s2cpp")
-    if not text:
-        return index, None
-
-    for attempt in range(1, retries + 1):
-        try:
-            async with semaphore:
-                await _s2cpp_tts_synthesize(
-                    client=client,
-                    base_url=base_url,
-                    text=text,
-                    output_path=raw_output,
-                    reference_audio_path=reference_audio_path,
-                    reference_text=reference_text,
-                    target_duration_seconds=segment.duration,
-                    timeout_seconds=timeout_seconds,
-                )
-            return index, raw_output
-        except S2CppTTSFatalError as exc:
-            logger.error(f"段 {index} s2.cpp TTS 致命错误: {exc}")
-            return index, None
-        except Exception as exc:
-            if attempt >= retries:
-                logger.error(f"段 {index} s2.cpp TTS 失败（已重试 {retries} 次）: {exc!r}")
-                return index, None
-            wait_seconds = min(2 ** (attempt - 1), 8)
-            logger.warning(
-                f"段 {index} s2.cpp TTS 失败（{attempt}/{retries}）: {exc!r}，"
-                f"{wait_seconds}s 后重试"
-            )
-            await asyncio.sleep(wait_seconds)
-    return index, None
-
-
-async def _generate_dubbed_segments_s2cpp(
-    segments: list[SrtSegment],
-    work_dir: Path,
-    reference_audio_path: Path,
-    voice: str = "",
-) -> tuple[list[SrtSegment], dict[int, TtsSynthesisResult]]:
-    base_url = os.getenv("S2CPP_TTS_BASE_URL", "http://127.0.0.1:3030").strip().rstrip("/")
-    retries = max(_get_env_int("S2CPP_TTS_RETRIES", 5), 1)
-    timeout_seconds = max(_get_env_float("S2CPP_TTS_TIMEOUT_SECONDS", 240.0), 5.0)
-    concurrency = max(_get_env_int("S2CPP_TTS_CONCURRENCY", 1), 1)
-    semaphore = asyncio.Semaphore(concurrency)
-
-    merge_segments = _get_env_bool("S2CPP_TTS_MERGE_SEGMENTS", False)
-    max_gap = max(_get_env_float("S2CPP_TTS_MERGE_MAX_GAP", 1.2), 0.0)
-    max_duration = max(_get_env_float("S2CPP_TTS_MERGE_MAX_DURATION", 12.0), 0.5)
-    max_chars = max(_get_env_int("S2CPP_TTS_MERGE_MAX_CHARS", 120), 10)
-    effective_segments = (
-        _merge_srt_segments(segments, max_gap=max_gap, max_duration=max_duration, max_chars=max_chars)
-        if merge_segments
-        else segments
-    )
-
-    logger.info(
-        "s2.cpp TTS 配置: "
-        f"base_url={base_url}, "
-        f"concurrency={concurrency}, "
-        f"timeout={timeout_seconds}s, "
-        f"segments={len(segments)}->{len(effective_segments)}"
-    )
-
-    speaker_ids = sorted(set(seg.speaker_id for seg in effective_segments))
-    if len(speaker_ids) > 1:
-        transcript = " ".join(strip_tone_tag(seg.text)[:30] for seg in effective_segments[:10])
-        speaker_voice_map = await assign_voices_to_speakers(
-            topic="", transcript=transcript, speaker_ids=speaker_ids,
-        )
-    else:
-        v = voice or DEFAULT_VOICE
-        speaker_voice_map = {sid: v for sid in speaker_ids}
-
-    voice_refs: dict[str, tuple[Path | None, str]] = {}
-    for v_name in set(speaker_voice_map.values()):
-        ref_clip = await _prepare_s2cpp_reference_audio(reference_audio_path, work_dir, voice=v_name)
-        ref_text = _build_s2cpp_reference_text(effective_segments, voice=v_name)
-        voice_refs[v_name] = (ref_clip, ref_text)
-        if ref_clip:
-            logger.info(f"s2.cpp TTS 音色 {v_name} 参考音频: {ref_clip}")
-
-    async with httpx.AsyncClient() as client:
-        await _check_s2cpp_tts_health(client, base_url, timeout_seconds)
-
-        tasks = []
-        for i, seg in enumerate(effective_segments):
-            seg_voice = speaker_voice_map.get(seg.speaker_id, DEFAULT_VOICE)
-            ref_clip, ref_text = voice_refs.get(seg_voice, (None, ""))
-            tasks.append(asyncio.create_task(
-                _synthesize_s2cpp_tts_segment_with_retry(
-                    client=client,
-                    base_url=base_url,
-                    segment=seg,
-                    index=i,
-                    raw_output=work_dir / f"seg_{i:04d}_raw.wav",
-                    reference_audio_path=ref_clip,
-                    reference_text=ref_text,
-                    timeout_seconds=timeout_seconds,
-                    retries=retries,
-                    semaphore=semaphore,
-                )
-            ))
-
-        success_map: dict[int, TtsSynthesisResult] = {}
-        completed = 0
-        total = len(tasks)
-        for done in asyncio.as_completed(tasks):
-            idx, output_path = await done
-            completed += 1
-            if output_path is not None:
-                success_map[idx] = TtsSynthesisResult(
-                    audio_path=output_path,
-                    provider_name="s2cpp",
-                    timing_source="none",
-                )
-            if completed % 10 == 0 or completed == total:
-                logger.info(f"s2.cpp TTS 生成进度: {completed}/{total}")
-
-    return effective_segments, success_map
-
-
-def _normalize_tts_text(text: str) -> str:
-    text = re.sub(r"\s+", " ", text).strip()
-    text = re.sub(r"<[^>]+>", "", text)
-    return text
-
-
-def _prepare_segment_tts_text(segment: SrtSegment, provider: str) -> str:
-    return prepare_provider_tts_text(
-        text=segment.text,
-        provider=provider,
-        tone_tag=segment.tone_tag,
-    )
-
-
-def _extract_http_detail(response: httpx.Response) -> str:
-    try:
-        body = response.json()
-        return str(body)
-    except Exception:
-        return response.text
-
-
-def _build_fish_reference_text(segments: list[SrtSegment]) -> str:
-    configured = _normalize_tts_text(strip_tone_tag(os.getenv("FISH_TTS_REFERENCE_TEXT", "")))
-    if configured:
-        return configured[:240]
-
-    collected: list[str] = []
-    total_len = 0
-    for seg in segments:
-        text = _normalize_tts_text(strip_tone_tag(seg.text))
-        if not text:
-            continue
-        collected.append(text)
-        total_len += len(text)
-        if len(collected) >= 3 or total_len >= 180:
-            break
-
-    if collected:
-        return " ".join(collected)
-    return "这是一个中文声音克隆参考样本。"
-
-
-def _build_fish_tts_payload(
-    text: str,
-    reference_id: str | None,
-    target_duration_seconds: float | None = None,
-) -> dict[str, object]:
-    configured_max_new_tokens = _get_env_int("FISH_TTS_MAX_NEW_TOKENS", 0)
-    if configured_max_new_tokens > 0:
-        max_new_tokens = max(configured_max_new_tokens, 64)
-    else:
-        tokens_per_second = min(
-            max(_get_env_float("FISH_TTS_TOKENS_PER_SECOND", 32.0), 10.0), 80.0
-        )
-        duration = max(target_duration_seconds or 0.0, 1.5)
-        estimated_tokens = int(duration * tokens_per_second)
-        max_new_tokens = min(max(estimated_tokens, 96), 512)
-
-    payload: dict[str, object] = {
-        "text": text,
-        "format": "wav",
-        "streaming": False,
-        "chunk_length": max(_get_env_int("FISH_TTS_CHUNK_LENGTH", 200), 100),
-        "max_new_tokens": max_new_tokens,
-        "top_p": min(max(_get_env_float("FISH_TTS_TOP_P", 0.8), 0.1), 1.0),
-        "temperature": min(max(_get_env_float("FISH_TTS_TEMPERATURE", 0.8), 0.1), 1.0),
-        "repetition_penalty": min(
-            max(_get_env_float("FISH_TTS_REPETITION_PENALTY", 1.1), 0.9), 2.0
-        ),
-        "normalize": _get_env_bool("FISH_TTS_NORMALIZE_TEXT", True),
-        "use_memory_cache": "on" if _get_env_bool("FISH_TTS_USE_MEMORY_CACHE", True) else "off",
-    }
-    if reference_id:
-        payload["reference_id"] = reference_id
-    return payload
-
-
-async def _check_fish_tts_health(
-    client: httpx.AsyncClient,
-    base_url: str,
-    timeout_seconds: float,
-) -> None:
-    response = await client.get(f"{base_url}/v1/health", timeout=timeout_seconds)
-    if response.status_code != 200:
-        detail = _extract_http_detail(response)
-        raise RuntimeError(
-            f"Fish TTS 健康检查失败: HTTP {response.status_code}: {detail[:500]}"
-        )
-
-
-async def _extract_reference_clip(
-    input_audio_path: Path,
-    output_path: Path,
-) -> None:
-    start_seconds = max(_get_env_float("FISH_TTS_REFERENCE_START_SECONDS", 1.0), 0.0)
-    duration_seconds = max(_get_env_float("FISH_TTS_REFERENCE_DURATION_SECONDS", 8.0), 1.0)
-
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-ss",
-        f"{start_seconds:.3f}",
-        "-t",
-        f"{duration_seconds:.3f}",
-        "-i",
-        str(input_audio_path),
-        "-acodec",
-        "pcm_s16le",
-        "-ar",
-        "44100",
-        "-ac",
-        "1",
-        str(output_path),
-    ]
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    )
-    _, stderr = await proc.communicate()
-    if proc.returncode != 0 or not output_path.exists() or output_path.stat().st_size == 0:
-        raise RuntimeError(f"参考音频截取失败: {stderr.decode(errors='ignore')[-500:]}")
-
-
-async def _prepare_fish_reference(
-    client: httpx.AsyncClient,
-    base_url: str,
-    reference_audio_path: Path,
-    segments: list[SrtSegment],
-    work_dir: Path,
-    timeout_seconds: float,
-) -> tuple[str | None, bool]:
-    provided_reference_id = os.getenv("FISH_TTS_REFERENCE_ID", "").strip()
-    if provided_reference_id:
-        logger.info(f"Fish TTS 使用已存在参考音色: {provided_reference_id}")
-        return provided_reference_id, False
-
-    auto_register = _get_env_bool("FISH_TTS_AUTO_REGISTER_REFERENCE", True)
-    if not auto_register:
-        logger.warning("未配置 Fish reference_id，且自动注册关闭，将使用无参考配音")
-        return None, False
-
-    reference_clip = work_dir / "fish_reference.wav"
-    await _extract_reference_clip(reference_audio_path, reference_clip)
-
-    generated_reference_id = f"dub_ref_{int(time.time())}_{uuid.uuid4().hex[:8]}"
-    reference_text = _build_fish_reference_text(segments)
-
-    with reference_clip.open("rb") as audio_file:
-        response = await client.post(
-            f"{base_url}/v1/references/add?format=json",
-            data={
-                "id": generated_reference_id,
-                "text": reference_text,
-            },
-            files={"audio": ("reference.wav", audio_file, "audio/wav")},
-            timeout=timeout_seconds,
-        )
-
-    if response.status_code not in {200, 201}:
-        detail = _extract_http_detail(response)
-        raise RuntimeError(
-            f"Fish 参考音色注册失败: HTTP {response.status_code}: {detail[:500]}"
-        )
-
-    delete_after = _get_env_bool("FISH_TTS_DELETE_REFERENCE_AFTER_RUN", True)
-    logger.info(
-        f"Fish reference 已注册: id={generated_reference_id}, "
-        f"delete_after_run={delete_after}"
-    )
-    return generated_reference_id, delete_after
-
-
-async def _delete_fish_reference(
-    client: httpx.AsyncClient,
-    base_url: str,
-    reference_id: str | None,
-    timeout_seconds: float,
-) -> None:
-    if not reference_id:
-        return
-    try:
-        response = await client.request(
-            "DELETE",
-            f"{base_url}/v1/references/delete?format=json",
-            json={"reference_id": reference_id},
-            timeout=timeout_seconds,
-        )
-        if response.status_code >= 300:
-            detail = _extract_http_detail(response)
-            logger.warning(
-                f"Fish reference 删除失败: id={reference_id}, "
-                f"HTTP {response.status_code}: {detail[:300]}"
-            )
-        else:
-            logger.info(f"Fish reference 已删除: {reference_id}")
-    except Exception as exc:
-        logger.warning(f"Fish reference 删除异常: id={reference_id}, error={exc}")
-
-
-async def _synthesize_fish_tts_segment_with_retry(
-    client: httpx.AsyncClient,
-    base_url: str,
-    segment: SrtSegment,
-    index: int,
-    raw_output: Path,
-    reference_id: str | None,
-    timeout_seconds: float,
-    retries: int,
-    semaphore: asyncio.Semaphore,
-) -> tuple[int, Path | None]:
-    text = _prepare_segment_tts_text(segment, provider="fish")
-    if not text:
-        return index, None
-
-    for attempt in range(1, retries + 1):
-        try:
-            async with semaphore:
-                await _fish_tts_synthesize(
-                    client=client,
-                    base_url=base_url,
-                    text=text,
-                    output_path=raw_output,
-                    reference_id=reference_id,
-                    target_duration_seconds=segment.duration,
-                    timeout_seconds=timeout_seconds,
-                )
-            return index, raw_output
-        except FishTTSFatalError as exc:
-            logger.error(f"段 {index} Fish TTS 致命错误: {exc}")
-            return index, None
-        except Exception as exc:
-            if attempt >= retries:
-                logger.error(f"段 {index} Fish TTS 失败（已重试 {retries} 次）: {exc!r}")
-                return index, None
-            wait_seconds = min(2 ** (attempt - 1), 8)
-            logger.warning(
-                f"段 {index} Fish TTS 失败（{attempt}/{retries}）: {exc!r}，"
-                f"{wait_seconds}s 后重试"
-            )
-            await asyncio.sleep(wait_seconds)
-
-    return index, None
-
-
-async def _fish_tts_synthesize(
-    client: httpx.AsyncClient,
-    base_url: str,
-    text: str,
-    output_path: Path,
-    reference_id: str | None,
-    target_duration_seconds: float,
-    timeout_seconds: float,
-) -> None:
-    response = await client.post(
-        f"{base_url}/v1/tts",
-        json=_build_fish_tts_payload(
-            text=text,
-            reference_id=reference_id,
-            target_duration_seconds=target_duration_seconds,
-        ),
-        timeout=timeout_seconds,
-    )
-    if response.status_code != 200:
-        detail = _extract_http_detail(response)
-        if response.status_code in {400, 401, 403, 404, 422}:
-            raise FishTTSFatalError(
-                f"HTTP {response.status_code}: {detail[:500]}"
-            )
-        raise RuntimeError(f"HTTP {response.status_code}: {detail[:500]}")
-
-    output_path.write_bytes(response.content)
-    if not output_path.exists() or output_path.stat().st_size == 0:
-        raise RuntimeError("Fish TTS 输出音频为空")
-
-
-async def _synthesize_google_tts_segment_with_retry(
-    client: httpx.AsyncClient,
-    api_key: str,
-    segment: SrtSegment,
-    index: int,
-    raw_output: Path,
-    voice_payload: dict[str, str],
-    audio_payload: dict[str, object],
-    timeout_seconds: float,
-    retries: int,
-    semaphore: asyncio.Semaphore,
-) -> tuple[int, Path | None]:
-    text = _prepare_segment_tts_text(segment, provider="google")
-    if not text:
-        return index, None
-
-    for attempt in range(1, retries + 1):
-        try:
-            async with semaphore:
-                await _google_tts_synthesize(
-                    client=client,
-                    api_key=api_key,
-                    text=text,
-                    output_path=raw_output,
-                    voice_payload=voice_payload,
-                    audio_payload=audio_payload,
-                    timeout_seconds=timeout_seconds,
-                )
-            return index, raw_output
-        except GoogleTTSFatalError as exc:
-            logger.error(f"段 {index} Google TTS 致命错误: {exc}")
-            return index, None
-        except Exception as exc:
-            if attempt >= retries:
-                logger.error(f"段 {index} Google TTS 失败（已重试 {retries} 次）: {exc}")
-                return index, None
-            wait_seconds = min(2 ** (attempt - 1), 8)
-            logger.warning(
-                f"段 {index} Google TTS 失败（{attempt}/{retries}）: {exc}，"
-                f"{wait_seconds}s 后重试"
-            )
-            await asyncio.sleep(wait_seconds)
-
-    return index, None
-
-
-async def _google_tts_synthesize(
-    client: httpx.AsyncClient,
-    api_key: str,
-    text: str,
-    output_path: Path,
-    voice_payload: dict[str, str],
-    audio_payload: dict[str, object],
-    timeout_seconds: float,
-) -> None:
-    response = await client.post(
-        GOOGLE_TTS_ENDPOINT,
-        params={"key": api_key},
-        json={
-            "input": {"text": text},
-            "voice": voice_payload,
-            "audioConfig": audio_payload,
-        },
-        timeout=timeout_seconds,
-    )
-    try:
-        data = response.json()
-    except Exception:
-        data = {"raw": response.text}
-
-    error_obj = data.get("error") if isinstance(data, dict) else None
-    error_status = ""
-    error_message = ""
-    if isinstance(error_obj, dict):
-        error_status = str(error_obj.get("status", "")).strip()
-        error_message = str(error_obj.get("message", "")).strip()
-
-    if response.status_code != 200:
-        if response.status_code in {400, 401, 403}:
-            detail = error_message or str(data)
-            raise GoogleTTSFatalError(
-                f"HTTP {response.status_code} {error_status}: {detail[:500]}"
-            )
-        raise RuntimeError(
-            f"HTTP {response.status_code} {error_status}: {(error_message or str(data))[:500]}"
-        )
-
-    audio_content = data.get("audioContent")
-    if not audio_content:
-        raise RuntimeError(f"Google TTS 响应缺少 audioContent: {str(data)[:500]}")
-
-    output_path.write_bytes(base64.b64decode(audio_content))
-    if not output_path.exists() or output_path.stat().st_size == 0:
-        raise RuntimeError("Google TTS 输出音频为空")
 
 
 def _resolve_carryover_limit(target_seconds: float) -> float:

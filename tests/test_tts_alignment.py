@@ -1,10 +1,9 @@
 import asyncio
 from pathlib import Path
 
+from src.agents.video_post.utils.tts.schemas import TtsSynthesisRequest, TtsSynthesisResult
 from src.agents.video_post.utils.tts_alignment import (
     BoundaryAwareTtsAligner,
-    TtsSynthesisRequest,
-    TtsSynthesisResult,
 )
 
 
