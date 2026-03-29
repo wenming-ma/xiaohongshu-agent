@@ -8,6 +8,7 @@ from scripts.ci_agent.agent_runtime import (
     ControllerMemoryStore,
     ControllerCycleOutcome,
     DoneRequest,
+    PullRequestRequest,
     RecoveryCycleOutcome,
     RollbackRequest,
     ValidationCommandRunner,
@@ -125,6 +126,7 @@ def test_cluster_config_defaults_to_session_scoped_cache_paths(tmp_path: Path) -
     assert config.controller_timeout_seconds == 300
     assert config.worker_model == "MiniMax-M2.7"
     assert config.worker_base_url == "https://api.minimaxi.com/v1"
+    assert config.pull_request_base_branch == "main"
     assert config.min_attempts_before_finish == 10
     assert config.state_file == repo / ".cache" / "ci_agent" / "sessions" / "session123" / "state.json"
     assert config.log_dir == repo / ".cache" / "ci_agent" / "logs" / "session123"
@@ -547,6 +549,76 @@ class MissingReviewPathRuntime:
         raise AssertionError("MissingReviewPathRuntime should not roll back in this test")
 
 
+class PullRequestRuntime:
+    def __init__(self, config: ClusterConfig):
+        self.config = config
+
+    async def run_controller_cycle(self, prompt: str, *, attempt_number: int) -> ControllerCycleOutcome:
+        target = self.config.worktree_root / "app.txt"
+        target.write_text("review-worthy\n", encoding="utf-8")
+        _git(self.config.worktree_root, "add", "app.txt")
+        _git(self.config.worktree_root, "commit", "-m", "fix(ci): prepare review-worthy improvement")
+        output_dir = self.config.worktree_root / "artifacts"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        video_path = output_dir / "result_dubbed.mp4"
+        video_path.write_bytes(b"fake-video")
+        record = _validator_record(
+            self.config,
+            attempt_number=attempt_number,
+            label="steady-state-validation",
+            exit_code=0,
+            duration_seconds=0.8,
+            stdout="ok\n",
+            stderr="",
+            verdict="PASS",
+            reason="The current state is green and review-worthy.",
+            execution_record="Validated the current worktree again and it remains green.",
+        )
+        return ControllerCycleOutcome(
+            action="DONE",
+            objective_stage="QUALITY",
+            objective="Stop after the current validated result.",
+            reason="The branch is strong enough to stop and request review.",
+            fix_summary="Prepared a coherent review-worthy improvement.",
+            output_dir=str(output_dir),
+            review_video_path=str(video_path),
+            pull_request_request=PullRequestRequest(
+                title="feat(video-post): improve published output handling",
+                body="## Summary\n- keep the successful published outputs reviewable\n- stop only when the branch is ready for review",
+                base_branch="main",
+                draft=True,
+            ),
+            latest_validator_record=record,
+            workers=[
+                WorkerInvocation(worker_type="controller", prompt_summary=prompt, final_text="Stop and request a PR."),
+                WorkerInvocation(worker_type="validator", prompt_summary="Confirm the current state.", final_text="Green and stable."),
+            ],
+        )
+
+    def note_rollback(self, *, attempt_number: int, rollback_to: str, reason: str) -> None:
+        raise AssertionError("PullRequestRuntime should not roll back in this test")
+
+
+class PullRequestCapturingOrchestrator(Orchestrator):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.created_pull_requests: list[tuple[str, str, str, bool]] = []
+
+    def _maybe_create_pull_request(self, record) -> None:  # type: ignore[override]
+        self.created_pull_requests.append(
+            (
+                record.pull_request_title,
+                record.pull_request_body,
+                record.pull_request_base_branch,
+                record.pull_request_draft,
+            )
+        )
+        record.pull_request_url = "https://github.com/wenming-ma/xiaohongshu-agent/pull/123"
+        self.state.pull_request_url = record.pull_request_url
+        self.state.pull_request_error = ""
+        self._clear_pending_pull_request()
+
+
 class FakeNotifier:
     def __init__(self, replies: list[str] | None = None) -> None:
         self.messages: list[str] = []
@@ -786,6 +858,45 @@ def test_done_request_without_review_video_path_is_rejected(tmp_path: Path) -> N
     assert notifier.files == [(str(config.worktree_root / "artifacts" / "result_dubbed.mp4"), "本轮生成的视频已附上，请检查内容、字幕、中文配音和整体完成度。")]
     assert "Controller 请求结束" in notifier.messages[0]
     assert orchestrator.state.attempts[-1].video_path.endswith("result_dubbed.mp4")
+
+
+def test_controller_can_request_pull_request_on_success(tmp_path: Path) -> None:
+    repo = _create_repo(tmp_path)
+    cache_root = repo / ".cache" / "ci_agent"
+    config = ClusterConfig.from_env(
+        project_root=repo,
+        cache_root=cache_root,
+        session_id="session123",
+        target_command="python -c \"print('ok')\"",
+        max_attempts=1,
+        min_attempts_before_finish=1,
+        sleep_between_attempts=0,
+    )
+    runtime = PullRequestRuntime(config)
+    notifier = FakeNotifier(replies=["APPROVED"])
+    orchestrator = PullRequestCapturingOrchestrator(
+        config,
+        agent_runtime=runtime,  # type: ignore[arg-type]
+        notifier=notifier,
+    )
+
+    success = asyncio.run(orchestrator.run())
+
+    assert success is True
+    assert orchestrator.state.status == "success"
+    assert orchestrator.state.pull_request_url.endswith("/pull/123")
+    assert orchestrator.created_pull_requests == [
+        (
+            "feat(video-post): improve published output handling",
+            "## Summary\n- keep the successful published outputs reviewable\n- stop only when the branch is ready for review",
+            "main",
+            True,
+        )
+    ]
+    record = orchestrator.state.attempts[0]
+    assert record.pull_request_requested is True
+    assert record.pull_request_url.endswith("/pull/123")
+    assert orchestrator.state.pending_pull_request_title == ""
 
 
 def test_orchestrator_recovers_and_retries_same_attempt_number(tmp_path: Path) -> None:

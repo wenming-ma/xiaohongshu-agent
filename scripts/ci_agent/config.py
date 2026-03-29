@@ -21,8 +21,9 @@ class ClusterConfig:
     controller_timeout_seconds: int = 300
     worker_model: str = "MiniMax-M2.7"
     worker_base_url: str = "https://api.minimaxi.com/v1"
+    pull_request_base_branch: str = "main"
     target_command: str = ""
-    target_timeout: int = 600
+    target_timeout: int = 1800
 
     # Limits
     max_attempts: int = 20

@@ -42,7 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--publish", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-publish", action="store_true", help="Disable publishing for the target command")
     parser.add_argument("--limit", type=int, default=1, help="Topics limit")
-    parser.add_argument("--timeout", type=int, default=600, help="Script timeout (seconds)")
+    parser.add_argument("--timeout", type=int, default=1800, help="Script timeout (seconds)")
     parser.add_argument("--sleep", type=int, default=5, help="Sleep between attempts")
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser.parse_args()

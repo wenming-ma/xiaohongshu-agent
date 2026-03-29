@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import subprocess
@@ -107,6 +108,7 @@ class Orchestrator:
                         rollback_to=head_before,
                         reason=record.validator_reason or record.controller_reason,
                     )
+                    self._clear_pending_pull_request()
                     if consecutive_rollbacks >= self.config.max_consecutive_rollbacks:
                         logger.error(
                             "Max consecutive rollbacks (%d) reached",
@@ -183,6 +185,12 @@ class Orchestrator:
             validator_memory_path=str(self.config.validator_memory_file),
             workers=outcome.workers,
         )
+        if outcome.pull_request_request is not None:
+            record.pull_request_requested = True
+            record.pull_request_title = outcome.pull_request_request.title
+            record.pull_request_body = outcome.pull_request_request.body
+            record.pull_request_base_branch = outcome.pull_request_request.base_branch
+            record.pull_request_draft = outcome.pull_request_request.draft
         record.output_dir = self._normalize_output_dir(outcome.output_dir)
         record.video_path = self._normalize_video_path(outcome.review_video_path, record.output_dir)
         self._record_validator_details(record, outcome.latest_validator_record)
@@ -210,6 +218,13 @@ class Orchestrator:
         self.state.validator_memory_file = str(self.config.validator_memory_file)
         self.state.current_branch = self.config.git_branch
         self.state.target_command = self.config.target_command
+        if outcome.pull_request_request is not None:
+            self.state.pending_pull_request_title = outcome.pull_request_request.title
+            self.state.pending_pull_request_body = outcome.pull_request_request.body
+            self.state.pending_pull_request_base_branch = outcome.pull_request_request.base_branch
+            self.state.pending_pull_request_draft = outcome.pull_request_request.draft
+        else:
+            self._clear_pending_pull_request()
         if self.state.source_repo_root == "":
             self.state.source_repo_root = str(self.config.project_root)
         if self.state.worktree_root == "":
@@ -233,6 +248,7 @@ class Orchestrator:
             f"Controller memory file: {self.config.controller_memory_file}\n"
             f"Validator memory file: {self.config.validator_memory_file}\n"
             f"Posts root: {self.config.project_root / 'posts'}\n"
+            f"Pull request base branch: {self.config.pull_request_base_branch}\n"
             f"Latest user feedback: {self.state.current_user_feedback or 'none'}\n"
             f"Latest reviewed video path: {self.state.current_review_video_path or 'none'}\n"
             f"Current objective stage: {self.state.current_objective_stage}\n"
@@ -243,6 +259,7 @@ class Orchestrator:
             "Use validator memory as the durable record of validated state. "
             "If that memory is stale or not synced to the current HEAD, send validator first. "
             "Do not trust validator alone when deciding to stop. Before requesting done, inspect the relevant directory under posts root and confirm the successful published outputs are actually present and materially complete. "
+            "If the current branch is review-worthy for main, you may request a pull request. Python will push the branch and create the PR only after legality checks. "
             "If this attempt should be discarded, call the rollback request tool with the rollback target above. "
             "If the current validated state is sufficient to stop, call the done request tool. "
             "If you request done, you must return review_video_path for the completed artifact; Python will reject done requests that omit it. "
@@ -333,12 +350,134 @@ class Orchestrator:
                 await asyncio.sleep(self.config.sleep_between_attempts)
             return None
         if record.exit_code == 0:
+            self._maybe_create_pull_request(record)
             logger.info("Controller ended the loop with a passing validated state")
             self._finish_with_status("success", record)
             return True
         logger.error("Controller stopped but the latest validated state is not passing")
         self._finish_with_status("stuck", record)
         return False
+
+    def _maybe_create_pull_request(self, record: AttemptRecord) -> None:
+        title = record.pull_request_title or self.state.pending_pull_request_title
+        body = record.pull_request_body or self.state.pending_pull_request_body
+        base_branch = record.pull_request_base_branch or self.state.pending_pull_request_base_branch or self.config.pull_request_base_branch
+        draft = record.pull_request_draft or self.state.pending_pull_request_draft
+
+        if not title or not body:
+            return
+        if self.state.pull_request_url:
+            record.pull_request_url = self.state.pull_request_url
+            return
+        if not self._branch_has_reviewable_changes():
+            message = "Pull request request ignored because the CI branch has no reviewable commit delta."
+            logger.info(message)
+            record.pull_request_error = message
+            self.state.pull_request_error = message
+            self._clear_pending_pull_request()
+            return
+
+        existing_url = self._find_existing_pull_request(base_branch)
+        if existing_url:
+            logger.info("Using existing pull request for branch %s: %s", self.config.git_branch, existing_url)
+            record.pull_request_url = existing_url
+            self.state.pull_request_url = existing_url
+            self.state.pull_request_error = ""
+            self._clear_pending_pull_request()
+            return
+
+        try:
+            self._git_checked(self.config.worktree_root, "push", "-u", "origin", self.config.git_branch)
+            args = [
+                "gh",
+                "pr",
+                "create",
+                "--base",
+                base_branch,
+                "--head",
+                self.config.git_branch,
+                "--title",
+                title,
+                "--body",
+                body,
+            ]
+            if draft:
+                args.append("--draft")
+            completed = subprocess.run(
+                args,
+                cwd=str(self.config.project_root),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=True,
+            )
+            url = self._extract_pr_url(completed.stdout)
+            record.pull_request_url = url
+            self.state.pull_request_url = url
+            self.state.pull_request_error = ""
+            self._clear_pending_pull_request()
+            logger.info("Created pull request against %s: %s", base_branch, url or "unknown-url")
+        except subprocess.CalledProcessError as exc:
+            message = (exc.stderr or exc.stdout or str(exc)).strip()
+            logger.exception("Failed to create pull request against %s", base_branch)
+            record.pull_request_error = message
+            self.state.pull_request_error = message
+
+    def _branch_has_reviewable_changes(self) -> bool:
+        source_head = self.state.source_head.strip()
+        if not source_head:
+            return True
+        try:
+            current_head = self._rev_parse(self.config.worktree_root, "HEAD")
+        except subprocess.CalledProcessError:
+            return True
+        return bool(current_head and current_head != source_head)
+
+    def _find_existing_pull_request(self, base_branch: str) -> str:
+        try:
+            completed = subprocess.run(
+                [
+                    "gh",
+                    "pr",
+                    "list",
+                    "--head",
+                    self.config.git_branch,
+                    "--base",
+                    base_branch,
+                    "--json",
+                    "url",
+                    "--limit",
+                    "1",
+                ],
+                cwd=str(self.config.project_root),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=True,
+            )
+            data = json.loads(completed.stdout or "[]")
+            if isinstance(data, list) and data and isinstance(data[0], dict):
+                url = str(data[0].get("url", "")).strip()
+                return url
+        except Exception:
+            logger.debug("Could not query existing pull requests for branch %s", self.config.git_branch, exc_info=True)
+        return ""
+
+    @staticmethod
+    def _extract_pr_url(output: str) -> str:
+        for line in reversed(output.splitlines()):
+            candidate = line.strip()
+            if candidate.startswith("http://") or candidate.startswith("https://"):
+                return candidate
+        return ""
+
+    def _clear_pending_pull_request(self) -> None:
+        self.state.pending_pull_request_title = ""
+        self.state.pending_pull_request_body = ""
+        self.state.pending_pull_request_base_branch = ""
+        self.state.pending_pull_request_draft = False
 
     async def _recover_from_exception(
         self,
@@ -610,6 +749,8 @@ class Orchestrator:
             f"建议下一步: {self._clip(record.validator_next_focus or 'n/a', 180)}\n"
             f"修改文件: {files_line}\n"
             f"Commit: {record.commit_hash or 'none'}\n"
+            f"PR 请求: {(record.pull_request_base_branch or 'none') if record.pull_request_requested else 'none'}\n"
+            f"PR 链接: {record.pull_request_url or self.state.pull_request_url or 'none'}\n"
             f"输出目录: {record.output_dir or 'unknown'}\n"
             f"视频文件: {record.video_path or 'unknown'}\n"
             f"Worktree branch: {self.config.git_branch}"

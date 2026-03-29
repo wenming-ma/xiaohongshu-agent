@@ -35,6 +35,7 @@ AGENT_LABELS = ("controller", "explore", "task", "fixer", "validator", "recovery
 TOOL_AGENT_HINTS = {
     "request_done": "controller",
     "request_rollback": "controller",
+    "request_pull_request": "controller",
     "record_controller_memory": "controller",
     "run_validation_command": "validator",
     "record_validator_memory": "validator",
@@ -107,6 +108,7 @@ class ControllerCycleOutcome(BaseModel):
     fix_summary: str = ""
     output_dir: str = ""
     review_video_path: str = ""
+    pull_request_request: "PullRequestRequest | None" = None
     latest_validator_record: ValidatorRecord
     workers: list[WorkerInvocation] = Field(default_factory=list)
 
@@ -133,6 +135,13 @@ class RollbackRequest(BaseModel):
 
 class DoneRequest(BaseModel):
     reason: str
+
+
+class PullRequestRequest(BaseModel):
+    title: str
+    body: str
+    base_branch: str = "main"
+    draft: bool = True
 
 
 def _clip_log_value(value: str, limit: int = 120) -> str:
@@ -968,12 +977,14 @@ Hard rules:
 - Before calling `request_done`, you must not rely on validator memory alone. Inspect the `posts` directory and the latest output directory to verify the published artifact set is actually present and materially complete for the current repo state.
 - Your structured response must include `output_dir` and `review_video_path` when a completed artifact exists.
 - If you call `request_done`, `review_video_path` must point to the review artifact you want Python to send to the user.
+- If the current branch contains a review-worthy improvement that should be proposed to the main branch, call `request_pull_request` with a concise title and body. Python will decide whether it is legal to create the PR and will perform the remote operations safely.
 - If the current attempt should be discarded, you must call the `request_rollback` tool. Do not encode rollback only in structured output.
 - If the current validated state is good enough to stop, you must call the `request_done` tool. Do not encode done only in structured output.
 
 Decision rules:
 - Call `request_rollback` when the latest validator result shows the same root cause or a regression that should be discarded.
 - Call `request_done` only when the current repo state is good enough to stop improving for now.
+- Call `request_pull_request` only for a review-worthy branch state that should be proposed to `main`.
 - If neither request is made, Python will treat the attempt as `CONTINUE`.
 
 Your final structured response must include the latest validator record from the current repo state.
@@ -1321,6 +1332,7 @@ class DeepAgentRuntime:
         worker_model = self.config.build_worker_model()
         rollback_request: RollbackRequest | None = None
         done_request: DoneRequest | None = None
+        pull_request_request: PullRequestRequest | None = None
 
         @tool(parse_docstring=True)
         def search_web(query: str, max_results: int = 5) -> str:
@@ -1453,6 +1465,25 @@ class DeepAgentRuntime:
             done_request = DoneRequest(reason=reason.strip())
             return "Recorded done request"
 
+        @tool(parse_docstring=True)
+        def request_pull_request(title: str, body: str, draft: bool = True) -> str:
+            """Request that Python push the current branch and open a pull request against main.
+
+            Args:
+                title: Pull request title.
+                body: Pull request body describing the change and evidence.
+                draft: Whether the pull request should be opened as a draft.
+            """
+
+            nonlocal pull_request_request
+            pull_request_request = PullRequestRequest(
+                title=title.strip(),
+                body=body.strip(),
+                base_branch=self.config.pull_request_base_branch,
+                draft=bool(draft),
+            )
+            return f"Recorded pull request request for base {pull_request_request.base_branch}"
+
         explore = create_deep_agent(
             model=worker_model,
             system_prompt=EXPLORE_ROLE,
@@ -1547,7 +1578,7 @@ class DeepAgentRuntime:
                 controller_memory_source,
                 validator_memory_source,
             ],
-            tools=[request_rollback, request_done, record_controller_memory],
+            tools=[request_rollback, request_done, request_pull_request, record_controller_memory],
             response_format=ToolStrategy(schema=ControllerDecision),
             name="ci-agent-controller",
         )
@@ -1591,6 +1622,7 @@ class DeepAgentRuntime:
                 fix_summary=structured.fix_summary,
                 output_dir=structured.output_dir,
                 review_video_path=structured.review_video_path,
+                pull_request_request=pull_request_request,
                 latest_validator_record=latest_record,
                 workers=workers,
             )
@@ -1611,6 +1643,7 @@ class DeepAgentRuntime:
                 fix_summary="",
                 output_dir="",
                 review_video_path="",
+                pull_request_request=pull_request_request,
                 latest_validator_record=latest_record,
                 workers=workers,
             )

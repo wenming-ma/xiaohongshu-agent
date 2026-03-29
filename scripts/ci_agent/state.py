@@ -64,6 +64,13 @@ class AttemptRecord(BaseModel):
     output_dir: str = ""
     video_path: str = ""
     user_feedback: str = ""
+    pull_request_requested: bool = False
+    pull_request_title: str = ""
+    pull_request_body: str = ""
+    pull_request_base_branch: str = ""
+    pull_request_draft: bool = False
+    pull_request_url: str = ""
+    pull_request_error: str = ""
     files_modified: list[str] = Field(default_factory=list)
     committed: bool = False
     commit_hash: str = ""
@@ -84,6 +91,12 @@ class ClusterState(BaseModel):
     current_controller_reason: str = ""
     current_user_feedback: str = ""
     current_review_video_path: str = ""
+    pending_pull_request_title: str = ""
+    pending_pull_request_body: str = ""
+    pending_pull_request_base_branch: str = ""
+    pending_pull_request_draft: bool = False
+    pull_request_url: str = ""
+    pull_request_error: str = ""
     best_success_duration_seconds: float | None = None
     current_branch: str = ""
     original_branch: str = ""
