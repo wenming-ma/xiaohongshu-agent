@@ -4,9 +4,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage
 
 from ....config.settings import ReviewConfig, RetryConfig
 from ....core.base_agent import BaseAgent, ValidationResult
+from ...shared.utils.message_history import truncate_history_by_rounds
 from ....utils.logger import get_logger
 from ....utils.providers import get_text_model
 from ..utils.tts_tags import DEFAULT_TONE_TAG, normalize_tone_tag
@@ -67,15 +69,28 @@ class SubtitleTranslationState:
     current_segments: list[SubtitleSegment] = field(default_factory=list)
     current_review: SubtitleTranslationReview | None = None
     last_feedback: str = ""
+    message_history: list[ModelMessage] = field(default_factory=list)
+    review_history: list[ModelMessage] = field(default_factory=list)
 
     def inject_feedback(self, feedback: str) -> None:
         self.last_feedback = feedback.strip()
+
+    def get_recent_history(self, max_rounds: int) -> list[ModelMessage]:
+        return truncate_history_by_rounds(
+            self.message_history, max_rounds=max_rounds, keep_first_round=False,
+        )
+
+    def get_recent_review_history(self, max_rounds: int) -> list[ModelMessage]:
+        return truncate_history_by_rounds(
+            self.review_history, max_rounds=max_rounds, keep_first_round=False,
+        )
 
 
 class SubtitleTranslationAgent(BaseAgent):
 
     role = "字幕翻译审核专员"
     goal = "输出通过审核、适合中文 TTS 的字幕"
+    MAX_HISTORY_ROUNDS = 3
 
     def __init__(
         self,
@@ -155,7 +170,9 @@ class SubtitleTranslationAgent(BaseAgent):
     async def step(self, state: SubtitleTranslationState, iteration: int) -> list[SubtitleSegment]:
         mode = "translate" if iteration == 0 and state.translate_first else "revise"
         prompt = self._build_step_prompt(state, mode)
-        result = await self.translator.run(prompt)
+        recent_history = state.get_recent_history(self.MAX_HISTORY_ROUNDS)
+        result = await self.translator.run(prompt, message_history=recent_history)
+        state.message_history.extend(result.new_messages())
         fallback_segments = state.current_segments or state.source_segments
         state.current_segments = self._build_segments_from_result(
             source_segments=state.source_segments,
@@ -176,7 +193,9 @@ class SubtitleTranslationAgent(BaseAgent):
             translated_segments=state.current_segments,
             source_language=state.source_language,
         )
-        result = await self.reviewer.run(prompt)
+        recent_review_history = state.get_recent_review_history(self.MAX_HISTORY_ROUNDS)
+        result = await self.reviewer.run(prompt, message_history=recent_review_history)
+        state.review_history.extend(result.new_messages())
         state.current_review = result.output
 
         if state.current_review.passed:
