@@ -21,6 +21,7 @@ logger = get_logger(__name__)
 
 MAX_ITERATIONS = 10
 MAX_HISTORY_ROUNDS = 3
+DEFAULT_MIN_QUALITY_VIDEOS = 10
 
 _INVALID_TOOL_HISTORY_MARKERS = (
     "tool call id is invalid",
@@ -62,7 +63,10 @@ class ResearchAgent(BaseAgent):
 
     def init_validators(self) -> None:
         self.search_validator = VideoSearchValidator(min_videos=5)
-        self.quality_filter = VideoListQualityFilter(pass_score=70.0, min_quality_videos=15)
+        self.quality_filter = VideoListQualityFilter(
+            pass_score=70.0,
+            min_quality_videos=DEFAULT_MIN_QUALITY_VIDEOS,
+        )
         self.max_iterations = MAX_ITERATIONS
         self._accumulated_quality_videos: list[VideoSource] = []
         self._filtered_sources: list[VideoSource] | None = None

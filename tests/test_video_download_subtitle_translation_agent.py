@@ -15,11 +15,14 @@ class _FakeRunner:
         self.outputs = list(outputs)
         self.calls: list[str] = []
 
-    async def run(self, prompt: str):
+    async def run(self, prompt: str, **_: object):
         self.calls.append(prompt)
         if not self.outputs:
             raise AssertionError("unexpected agent call")
-        return SimpleNamespace(output=self.outputs.pop(0))
+        return SimpleNamespace(
+            output=self.outputs.pop(0),
+            new_messages=lambda: [],
+        )
 
 
 class _FakeBatchTranslationAgent:
@@ -115,6 +118,41 @@ def test_subtitle_translation_agent_raises_after_ten_failed_reviews(monkeypatch)
 
     assert len(agent.translator.calls) == 10
     assert len(agent.reviewer.calls) == 10
+
+
+def test_subtitle_translation_agent_missing_revision_line_does_not_restore_stale_text(monkeypatch) -> None:
+    monkeypatch.setattr(SubtitleTranslationAgent, "init_agent", lambda self: None)
+    agent = SubtitleTranslationAgent(max_review_rounds=1)
+    source_segments = [
+        SubtitleSegment(start=float(index), end=float(index + 1), text=f"source {index}", tone_tag="neutral")
+        for index in range(1, 16)
+    ]
+    fallback_segments = [
+        SubtitleSegment(start=float(index), end=float(index + 1), text=f"old {index}", tone_tag="neutral")
+        for index in range(1, 16)
+    ]
+    fallback_segments[14] = SubtitleSegment(
+        start=14.0,
+        end=15.0,
+        text="你得这样做才行",
+        tone_tag="neutral",
+    )
+    translation_batch = TranslationBatch(
+        lines=[
+            TranslationLine(index=index, tone_tag="neutral", text=f"new {index}")
+            for index in range(1, 15)
+        ]
+    )
+
+    result = agent._build_segments_from_result(
+        source_segments=source_segments,
+        translation_batch=translation_batch,
+        fallback_segments=fallback_segments,
+    )
+
+    assert len(result) == 15
+    assert result[13].text == "new 14"
+    assert result[14].text == ""
 
 
 def test_subtitle_generator_keeps_batching_outside_translation_agent() -> None:

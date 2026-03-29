@@ -270,8 +270,8 @@ class SubtitleTranslationAgent(BaseAgent):
                 if translated_line is not None
                 else ""
             )
-            if not translated_text:
-                translated_text = _normalize_subtitle_text(fallback_segment.text)
+            # Keep missing or blank lines empty so review can catch omissions directly
+            # instead of silently restoring stale subtitles from a previous revision.
 
             tone_source = translated_line.tone_tag if translated_line is not None else fallback_segment.tone_tag
             translated_segments.append(
