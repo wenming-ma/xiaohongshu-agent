@@ -5,7 +5,7 @@
 1. 提取视频音频
 2. 分离人声和背景音乐 (audio-separator / RoFormer)
 3. 解析 SRT 字幕，按段调用 TTS（Fish Speech / Google TTS）
-4. 用 ffmpeg atempo 调整每段配音时长匹配字幕时间窗
+4. 先保留自然语速，再只对极小残差做时长修正
 5. 拼接所有配音段 + 混合背景音乐
 6. 替换视频音轨
 """
@@ -20,12 +20,22 @@ import subprocess
 import tempfile
 import time
 import uuid
+from functools import lru_cache
 from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
 
 from ....utils.logger import get_logger
+from .tts_alignment import (
+    AlignedToken,
+    AlignmentResult,
+    TtsAligner,
+    TtsSynthesisRequest,
+    TtsSynthesisResult,
+    TtsTimingDecision,
+    create_tts_aligner,
+)
 from .tts_tags import (
     DEFAULT_TONE_TAG,
     normalize_tone_tag,
@@ -48,8 +58,12 @@ SEPARATOR_MODEL = "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
 GOOGLE_TTS_ENDPOINT = "https://texttospeech.googleapis.com/v1/text:synthesize"
 VALID_GENDERS = {"SSML_VOICE_GENDER_UNSPECIFIED", "MALE", "FEMALE", "NEUTRAL"}
 VALID_TTS_PROVIDERS = {"fish", "google", "s2cpp", "auto"}
-MIN_NATURAL_ATEMPO = 0.85
-MAX_NATURAL_ATEMPO = 1.20
+MIN_NATURAL_ATEMPO = 0.95
+MAX_NATURAL_ATEMPO = 1.05
+MIN_SOFT_STRETCH_RATIO = 0.97
+MAX_SOFT_STRETCH_RATIO = 1.03
+MAX_CARRYOVER_SECONDS = 0.30
+MAX_CARRYOVER_RATIO = 0.08
 
 
 class GoogleTTSFatalError(RuntimeError):
@@ -179,6 +193,11 @@ def _get_env_bool(name: str, default: bool) -> bool:
         return False
     logger.warning(f"{name}={raw!r} 不是有效布尔值，回退默认值 {default}")
     return default
+
+
+@lru_cache(maxsize=1)
+def _get_tts_aligner() -> TtsAligner:
+    return create_tts_aligner()
 
 
 def _build_google_tts_voice_payload() -> dict[str, str]:
@@ -511,7 +530,7 @@ async def _generate_dubbed_segments(
     reference_audio_path: Path,
     voice: str = "",
 ) -> list[tuple[SrtSegment, Path]]:
-    """根据配置选择 TTS 后端，生成逐段配音并匹配字幕时长。"""
+    """根据配置选择 TTS 后端，生成逐段配音并尽量保留自然语速。"""
     if not segments:
         raise RuntimeError("字幕为空，无法生成配音")
 
@@ -594,20 +613,57 @@ async def _generate_dubbed_segments(
 
 
 async def _postprocess_dubbed_segments(
-    success_map: dict[int, Path],
+    success_map: dict[int, TtsSynthesisResult],
     segments: list[SrtSegment],
     work_dir: Path,
     empty_error: str,
 ) -> list[tuple[SrtSegment, Path]]:
     results: list[tuple[SrtSegment, Path]] = []
+    aligner = _get_tts_aligner()
+    indexed_items: list[tuple[int, SrtSegment, TtsSynthesisResult, TtsSynthesisRequest]] = []
     for i, seg in enumerate(segments):
-        raw_path = success_map.get(i)
-        if raw_path is None or not raw_path.exists():
+        synthesis = success_map.get(i)
+        if synthesis is None or not synthesis.audio_path.exists():
             logger.warning(f"段 {i} 配音生成失败，跳过")
             continue
 
+        request = TtsSynthesisRequest(
+            text=seg.text,
+            voice="",
+            tone_tag=seg.tone_tag,
+            language="zh",
+            target_start=seg.start,
+            target_end=seg.end,
+            target_duration_seconds=seg.duration,
+        )
+        indexed_items.append((i, seg, synthesis, request))
+
+    alignment_results: list[AlignmentResult] = await aligner.align_many(
+        [item[2] for item in indexed_items],
+        [item[3] for item in indexed_items],
+    )
+
+    for (i, seg, synthesis, request), alignment in zip(indexed_items, alignment_results):
         final_path = work_dir / f"seg_{i:04d}.wav"
-        await _adjust_duration(raw_path, final_path, seg.duration)
+        decision = await _finalize_synthesized_segment(
+            synthesis=synthesis,
+            request=request,
+            output_path=final_path,
+            alignment=alignment,
+        )
+        logger.info(
+            "配音段 %s 时序策略: provider=%s strategy=%s raw=%.3fs target=%.3fs final=%.3fs "
+            "stretch=%.3f carryover=%.3fs aligner=%s",
+            i,
+            synthesis.provider_name or "<unknown>",
+            decision.strategy_used,
+            synthesis.raw_duration_seconds,
+            seg.duration,
+            decision.final_duration_seconds,
+            decision.stretch_ratio,
+            decision.carryover_seconds,
+            decision.aligner_used or "<none>",
+        )
         results.append((seg, final_path))
 
     if not results:
@@ -618,7 +674,7 @@ async def _postprocess_dubbed_segments(
 async def _generate_dubbed_segments_google(
     segments: list[SrtSegment],
     work_dir: Path,
-) -> dict[int, Path]:
+) -> dict[int, TtsSynthesisResult]:
     api_key = _get_google_tts_api_key()
     voice_payload = _build_google_tts_voice_payload()
     audio_payload = _build_google_tts_audio_config_payload()
@@ -654,14 +710,18 @@ async def _generate_dubbed_segments_google(
             for i, seg in enumerate(segments)
         ]
 
-        success_map: dict[int, Path] = {}
+        success_map: dict[int, TtsSynthesisResult] = {}
         completed = 0
         total = len(tasks)
         for done in asyncio.as_completed(tasks):
             idx, output_path = await done
             completed += 1
             if output_path is not None:
-                success_map[idx] = output_path
+                success_map[idx] = TtsSynthesisResult(
+                    audio_path=output_path,
+                    provider_name="google",
+                    timing_source="none",
+                )
             if completed % 10 == 0 or completed == total:
                 logger.info(f"Google TTS 生成进度: {completed}/{total}")
 
@@ -672,7 +732,7 @@ async def _generate_dubbed_segments_fish(
     segments: list[SrtSegment],
     work_dir: Path,
     reference_audio_path: Path,
-) -> dict[int, Path]:
+) -> dict[int, TtsSynthesisResult]:
     base_url = os.getenv("FISH_TTS_BASE_URL", "http://127.0.0.1:8080").strip().rstrip("/")
     retries = max(_get_env_int("FISH_TTS_RETRIES", 3), 1)
     timeout_seconds = max(_get_env_float("FISH_TTS_TIMEOUT_SECONDS", 180.0), 5.0)
@@ -715,14 +775,18 @@ async def _generate_dubbed_segments_fish(
                 for i, seg in enumerate(segments)
             ]
 
-            success_map: dict[int, Path] = {}
+            success_map: dict[int, TtsSynthesisResult] = {}
             completed = 0
             total = len(tasks)
             for done in asyncio.as_completed(tasks):
                 idx, output_path = await done
                 completed += 1
                 if output_path is not None:
-                    success_map[idx] = output_path
+                    success_map[idx] = TtsSynthesisResult(
+                        audio_path=output_path,
+                        provider_name="fish",
+                        timing_source="none",
+                    )
                 if completed % 10 == 0 or completed == total:
                     logger.info(f"Fish TTS 生成进度: {completed}/{total}")
         finally:
@@ -1089,7 +1153,7 @@ async def _generate_dubbed_segments_s2cpp(
     work_dir: Path,
     reference_audio_path: Path,
     voice: str = "",
-) -> tuple[list[SrtSegment], dict[int, Path]]:
+) -> tuple[list[SrtSegment], dict[int, TtsSynthesisResult]]:
     base_url = os.getenv("S2CPP_TTS_BASE_URL", "http://127.0.0.1:3030").strip().rstrip("/")
     retries = max(_get_env_int("S2CPP_TTS_RETRIES", 5), 1)
     timeout_seconds = max(_get_env_float("S2CPP_TTS_TIMEOUT_SECONDS", 240.0), 5.0)
@@ -1154,14 +1218,18 @@ async def _generate_dubbed_segments_s2cpp(
                 )
             ))
 
-        success_map: dict[int, Path] = {}
+        success_map: dict[int, TtsSynthesisResult] = {}
         completed = 0
         total = len(tasks)
         for done in asyncio.as_completed(tasks):
             idx, output_path = await done
             completed += 1
             if output_path is not None:
-                success_map[idx] = output_path
+                success_map[idx] = TtsSynthesisResult(
+                    audio_path=output_path,
+                    provider_name="s2cpp",
+                    timing_source="none",
+                )
             if completed % 10 == 0 or completed == total:
                 logger.info(f"s2.cpp TTS 生成进度: {completed}/{total}")
 
@@ -1539,6 +1607,10 @@ async def _google_tts_synthesize(
         raise RuntimeError("Google TTS 输出音频为空")
 
 
+def _resolve_carryover_limit(target_seconds: float) -> float:
+    return min(MAX_CARRYOVER_SECONDS, max(target_seconds, 0.0) * MAX_CARRYOVER_RATIO)
+
+
 def _resolve_tempo_filter(current_seconds: float, target_seconds: float) -> str | None:
     if current_seconds <= 0 or target_seconds <= 0:
         return None
@@ -1546,6 +1618,92 @@ def _resolve_tempo_filter(current_seconds: float, target_seconds: float) -> str 
     tempo = current_seconds / target_seconds
     clamped_tempo = min(max(tempo, MIN_NATURAL_ATEMPO), MAX_NATURAL_ATEMPO)
     return f"atempo={clamped_tempo:.6f}"
+
+
+@lru_cache(maxsize=1)
+def _ffmpeg_supports_rubberband() -> bool:
+    try:
+        completed = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-filters"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except Exception:
+        return False
+    output = f"{completed.stdout}\n{completed.stderr}"
+    return " rubberband " in output or "\nrubberband" in output
+
+
+def _resolve_time_stretch_filter(current_seconds: float, target_seconds: float) -> tuple[str | None, str]:
+    tempo_filter = _resolve_tempo_filter(current_seconds, target_seconds)
+    if tempo_filter is None:
+        return None, "copy"
+
+    tempo = current_seconds / target_seconds
+    if _ffmpeg_supports_rubberband():
+        return (
+            "rubberband="
+            f"tempo={tempo:.6f}:transients=smooth:formant=preserved:pitchq=quality",
+            "rubberband",
+        )
+    return tempo_filter, "atempo"
+
+
+def _build_timing_decision(
+    current_seconds: float,
+    target_seconds: float,
+) -> TtsTimingDecision:
+    current = max(current_seconds, 0.0)
+    target = max(target_seconds, 0.0)
+    if current <= 0 or target <= 0:
+        return TtsTimingDecision(
+            strategy_used="copy",
+            stretch_ratio=1.0,
+            carryover_seconds=0.0,
+            target_duration_seconds=target,
+            final_duration_seconds=current,
+        )
+
+    if current <= target:
+        return TtsTimingDecision(
+            strategy_used="pad",
+            stretch_ratio=1.0,
+            carryover_seconds=0.0,
+            target_duration_seconds=target,
+            final_duration_seconds=current,
+        )
+
+    carryover_seconds = current - target
+    carryover_limit = _resolve_carryover_limit(target)
+    stretch_ratio = current / target
+
+    if carryover_seconds <= carryover_limit + 1e-6:
+        return TtsTimingDecision(
+            strategy_used="carryover",
+            stretch_ratio=1.0,
+            carryover_seconds=carryover_seconds,
+            target_duration_seconds=target,
+            final_duration_seconds=current,
+        )
+
+    if MIN_SOFT_STRETCH_RATIO <= stretch_ratio <= MAX_SOFT_STRETCH_RATIO:
+        return TtsTimingDecision(
+            strategy_used="stretch",
+            stretch_ratio=stretch_ratio,
+            carryover_seconds=0.0,
+            target_duration_seconds=target,
+            final_duration_seconds=target,
+        )
+
+    return TtsTimingDecision(
+        strategy_used="carryover_hard",
+        stretch_ratio=1.0,
+        carryover_seconds=carryover_seconds,
+        target_duration_seconds=target,
+        final_duration_seconds=current,
+        used_fallback=stretch_ratio > MAX_NATURAL_ATEMPO,
+    )
 
 
 def _plan_concat_silence(
@@ -1565,14 +1723,110 @@ def _plan_concat_silence(
     return silences, tail_gap
 
 
+async def _trim_segment_silence(input_path: Path, output_path: Path) -> Path:
+    """保守裁掉 TTS 段首尾静音，减少无意义的时长拉伸。"""
+    cmd = [
+        "ffmpeg", "-y", "-i", str(input_path),
+        "-af",
+        "silenceremove="
+        "start_periods=1:start_silence=0.03:start_threshold=-45dB:"
+        "stop_periods=1:stop_silence=0.05:stop_threshold=-45dB",
+        "-acodec", "pcm_s16le",
+        str(output_path),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    await proc.communicate()
+    if proc.returncode != 0 or not output_path.exists():
+        shutil.copy2(input_path, output_path)
+    return output_path
+
+
+async def _trim_audio_to_range(
+    input_path: Path,
+    output_path: Path,
+    *,
+    start_seconds: float,
+    end_seconds: float,
+) -> Path:
+    start = max(start_seconds, 0.0)
+    end = max(end_seconds, start + 0.01)
+    cmd = [
+        "ffmpeg", "-y", "-i", str(input_path),
+        "-af", f"atrim=start={start:.3f}:end={end:.3f},asetpts=PTS-STARTPTS",
+        "-acodec", "pcm_s16le",
+        str(output_path),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    await proc.communicate()
+    if proc.returncode != 0 or not output_path.exists():
+        shutil.copy2(input_path, output_path)
+    return output_path
+
+
+def _resolve_aligned_range(
+    alignment: AlignmentResult,
+    fallback_duration: float,
+) -> tuple[float, float] | None:
+    if not alignment.tokens:
+        return None
+
+    start = max(alignment.tokens[0].start - 0.02, 0.0)
+    end = max(alignment.tokens[-1].end + 0.03, start + 0.01)
+    if fallback_duration > 0:
+        end = min(end, fallback_duration)
+    return start, end
+
+
+async def _finalize_synthesized_segment(
+    synthesis: TtsSynthesisResult,
+    request: TtsSynthesisRequest,
+    output_path: Path,
+    alignment: AlignmentResult,
+) -> TtsTimingDecision:
+    source_duration = await _get_duration(synthesis.audio_path)
+    trimmed_path = output_path.with_name(f"{output_path.stem}_trimmed{output_path.suffix}")
+    aligned_range = _resolve_aligned_range(alignment, source_duration)
+    if aligned_range is not None:
+        trimmed_path = await _trim_audio_to_range(
+            synthesis.audio_path,
+            trimmed_path,
+            start_seconds=aligned_range[0],
+            end_seconds=aligned_range[1],
+        )
+    else:
+        trimmed_path = await _trim_segment_silence(synthesis.audio_path, trimmed_path)
+    raw_duration = await _get_duration(trimmed_path)
+
+    synthesis.raw_duration_seconds = raw_duration
+    decision = _build_timing_decision(raw_duration, request.target_duration_seconds)
+    decision.aligner_used = alignment.aligner_used
+    decision.used_fallback = alignment.used_fallback
+    if alignment.tokens:
+        synthesis.provider_metadata["aligned_token_count"] = len(alignment.tokens)
+
+    if decision.strategy_used == "stretch":
+        await _adjust_duration(trimmed_path, output_path, request.target_duration_seconds)
+    else:
+        shutil.copy2(trimmed_path, output_path)
+
+    final_duration = await _get_duration(output_path)
+    decision.final_duration_seconds = final_duration
+    return decision
+
+
 async def _adjust_duration(input_path: Path, output_path: Path, target_seconds: float) -> None:
-    """用 ffmpeg atempo 调整音频时长"""
+    """仅在极小残差时做时长修正，默认优先保留自然语速。"""
     current = await _get_duration(input_path)
-    if current <= 0 or target_seconds <= 0:
+    decision = _build_timing_decision(current, target_seconds)
+    if decision.strategy_used != "stretch":
         shutil.copy2(input_path, output_path)
         return
 
-    tempo_filter = _resolve_tempo_filter(current, target_seconds)
+    tempo_filter, strategy = _resolve_time_stretch_filter(current, target_seconds)
     if tempo_filter is None:
         shutil.copy2(input_path, output_path)
         return
@@ -1590,6 +1844,14 @@ async def _adjust_duration(input_path: Path, output_path: Path, target_seconds: 
 
     if not output_path.exists():
         shutil.copy2(input_path, output_path)
+        return
+
+    logger.info(
+        "配音段做极小幅时长修正: strategy=%s raw=%.3fs target=%.3fs",
+        strategy,
+        current,
+        target_seconds,
+    )
 
 
 async def _concat_segments_with_silence(
