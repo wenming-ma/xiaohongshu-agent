@@ -16,7 +16,7 @@ from .model_sources import (
     resolve_model_source_from_root,
 )
 from .service import AudioTranscriber, AsrService, get_asr_service, release_asr_resources
-from .types import TranscriptionResult, TranscriptionSegment
+from .schemas import TranscriptionResult, TranscriptionSegment
 
 __all__ = [
     "ASRConfig",

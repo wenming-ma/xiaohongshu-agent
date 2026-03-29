@@ -11,7 +11,7 @@ from .audio import extract_audio_track
 from .providers.base import AsrProvider
 from .registry import create_asr_provider, normalize_provider_name
 from .text_utils import ensure_timestamped_transcription_result
-from .types import TranscriptionResult
+from .schemas import TranscriptionResult
 
 logger = get_logger(__name__)
 

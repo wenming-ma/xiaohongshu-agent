@@ -3,7 +3,7 @@ import asyncio
 import pydantic_ai
 
 import src.agents.video_post.download.agent as download_agent_module
-from src.agents.shared.utils.asr.types import TranscriptionResult
+from src.agents.shared.utils.asr.schemas import TranscriptionResult
 from src.agents.video_post.download.agent import DownloadAgent
 from src.agents.video_post.schemas import (
     DownloadResult,

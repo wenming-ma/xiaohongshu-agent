@@ -3,7 +3,7 @@ from typing import List, Optional, Dict, Any
 
 from pydantic import BaseModel, Field, computed_field
 
-from src.agents.shared.utils.asr.types import TranscriptionResult
+from src.agents.shared.utils.asr.schemas import TranscriptionResult
 
 
 class Platform(str, Enum):

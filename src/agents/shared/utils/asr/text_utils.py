@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .types import TranscriptionResult, TranscriptionSegment
+from .schemas import TranscriptionResult, TranscriptionSegment
 
 NO_SPACE_LANGUAGES = {"zh", "ja", "ko"}
 

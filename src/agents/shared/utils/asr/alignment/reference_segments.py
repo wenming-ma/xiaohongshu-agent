@@ -11,7 +11,7 @@ from ..text_utils import (
     split_transcript_units,
     visible_text_length,
 )
-from ..types import TranscriptionSegment
+from ..schemas import TranscriptionSegment
 from .base import AlignmentResult, TimestampAligner
 
 

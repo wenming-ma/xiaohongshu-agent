@@ -14,7 +14,7 @@ from ..model_sources import (
     resolve_model_source,
 )
 from ..text_utils import build_transcription_result, empty_success_result, normalize_text, visible_text_length
-from ..types import TranscriptionResult, TranscriptionSegment
+from ..schemas import TranscriptionResult, TranscriptionSegment
 from .base import AsrProvider
 
 logger = get_logger(__name__)

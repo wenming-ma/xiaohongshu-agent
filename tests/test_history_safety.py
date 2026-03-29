@@ -25,7 +25,7 @@ from src.agents.image_post.schemas import (
     ResearchResult,
     XHSContent,
 )
-from src.agents.shared.utils.asr.types import TranscriptionResult
+from src.agents.shared.utils.asr.schemas import TranscriptionResult
 from src.agents.video_post.content.agent import ContentAgent as VideoContentAgent
 from src.agents.video_post.content.state import ContentState as VideoContentState
 from src.agents.video_post.research.agent import ResearchAgent as VideoResearchAgent

@@ -14,7 +14,7 @@ from src.agents.shared.utils.asr.model_sources import (
 )
 from src.agents.shared.utils.asr.providers.cohere import CohereAsrProvider
 from src.agents.shared.utils.asr.providers.qwen import QwenAsrProvider
-from src.agents.shared.utils.asr.types import TranscriptionResult, TranscriptionSegment
+from src.agents.shared.utils.asr.schemas import TranscriptionResult, TranscriptionSegment
 
 
 class _FakeProvider:

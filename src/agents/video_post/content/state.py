@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 
 from pydantic_ai.messages import ModelMessage
 
-from ...shared.utils.asr.types import TranscriptionResult
+from ...shared.utils.asr.schemas import TranscriptionResult
 from ...shared.utils.message_history import truncate_history_by_rounds
 from ..schemas import VideoResearchResult, VideoSource, XHSVideoContent, ContentReviewResult
 
