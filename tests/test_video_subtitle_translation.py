@@ -1,128 +1,96 @@
 import asyncio
 from pathlib import Path
-from types import SimpleNamespace
 
 from src.agents.video_post.download.subtitle import (
     SubtitleSegment,
     SubtitleGenerator,
-    SubtitleTranslationReview,
-    TranslationBatch,
-    TranslationLine,
 )
 
 
-class _FakeAgent:
-    def __init__(self, outputs):
-        self._outputs = list(outputs)
-        self.prompts: list[str] = []
+class _FakeTranslationAgent:
+    """Fake that mimics SubtitleTranslationAgent.forward() interface."""
 
-    async def run(self, prompt: str, *args, **kwargs):
-        self.prompts.append(prompt)
-        output = self._outputs.pop(0)
-        return SimpleNamespace(output=output)
+    def __init__(self, results: list[list[SubtitleSegment]]):
+        self._results = list(results)
+        self.calls: list[tuple[int, str, bool]] = []
 
-
-def _batch(*texts: str) -> TranslationBatch:
-    return TranslationBatch(
-        lines=[
-            TranslationLine(index=index + 1, tone_tag="neutral", text=text)
-            for index, text in enumerate(texts)
-        ]
-    )
+    async def forward(
+        self,
+        segments: list[SubtitleSegment],
+        *,
+        source_language: str,
+        translate_first: bool = True,
+    ) -> list[SubtitleSegment]:
+        self.calls.append((len(segments), source_language, translate_first))
+        return self._results.pop(0) if self._results else segments
 
 
-def test_translate_segments_retries_with_review_feedback() -> None:
-    generator = SubtitleGenerator()
-    generator.translation_agent = _FakeAgent(
-        [
-            _batch("keep stirring"),
-            _batch("继续搅拌均匀"),
-        ]
-    )
-    generator.translation_reviewer = _FakeAgent(
-        [
-            SubtitleTranslationReview(
-                passed=False,
-                summary="第1行仍有英文残留",
-                issues=["第1行还保留了英文 keep stirring"],
-            ),
-            SubtitleTranslationReview(passed=True, summary="全部通过"),
-        ]
-    )
+def _segs(*texts: str) -> list[SubtitleSegment]:
+    return [
+        SubtitleSegment(start=float(i), end=float(i) + 1.0, text=t)
+        for i, t in enumerate(texts)
+    ]
 
-    segments = [SubtitleSegment(start=0.0, end=1.5, text="keep stirring")]
-    translated = asyncio.run(
+
+def test_translate_segments_delegates_to_agent() -> None:
+    translated = _segs("继续搅拌均匀")
+    fake = _FakeTranslationAgent([translated])
+    generator = SubtitleGenerator(subtitle_translation_agent=fake)
+
+    result = asyncio.run(
         generator._translate_segments_for_chinese_tts(
-            segments,
+            _segs("keep stirring"),
             source_language="en",
             translate_first=True,
         )
     )
 
-    assert translated[0].text == "继续搅拌均匀"
-    assert len(generator.translation_agent.prompts) == 2
-    assert "审核反馈" in generator.translation_agent.prompts[1]
-    assert len(generator.translation_reviewer.prompts) == 2
+    assert result[0].text == "继续搅拌均匀"
+    assert fake.calls == [(1, "en", True)]
 
 
-def test_translate_segments_reviews_zh_detected_input_and_revises() -> None:
-    generator = SubtitleGenerator()
-    generator.translation_agent = _FakeAgent([_batch("大家慢慢搅拌均匀")])
-    generator.translation_reviewer = _FakeAgent(
-        [
-            SubtitleTranslationReview(
-                passed=False,
-                summary="当前字幕不适合中文口播",
-                issues=["第1行不是自然中文，请改成中文表达"],
-            ),
-            SubtitleTranslationReview(passed=True, summary="全部通过"),
-        ]
-    )
+def test_translate_segments_passes_translate_first_false_for_zh() -> None:
+    translated = _segs("大家慢慢搅拌均匀")
+    fake = _FakeTranslationAgent([translated])
+    generator = SubtitleGenerator(subtitle_translation_agent=fake)
 
-    segments = [SubtitleSegment(start=0.0, end=1.2, text="mix it gently")]
-    translated = asyncio.run(
+    result = asyncio.run(
         generator._translate_segments_for_chinese_tts(
-            segments,
+            _segs("mix it gently"),
             source_language="zh",
             translate_first=False,
         )
     )
 
-    assert translated[0].text == "大家慢慢搅拌均匀"
-    assert len(generator.translation_agent.prompts) == 1
-    assert len(generator.translation_reviewer.prompts) == 2
+    assert result[0].text == "大家慢慢搅拌均匀"
+    assert fake.calls == [(1, "zh", False)]
 
 
-def test_translate_review_accepts_natural_mixed_chinese_and_english_terms() -> None:
-    generator = SubtitleGenerator()
-    generator.translation_agent = _FakeAgent([])
-    generator.translation_reviewer = _FakeAgent(
-        [SubtitleTranslationReview(passed=True, summary="中英混用自然，可通过")]
-    )
+def test_translate_passthrough_preserves_natural_chinese() -> None:
+    original = _segs("这个 app 的通知先打开")
+    fake = _FakeTranslationAgent([original])
+    generator = SubtitleGenerator(subtitle_translation_agent=fake)
 
-    segments = [SubtitleSegment(start=0.0, end=1.2, text="这个 app 的通知先打开")]
-    translated = asyncio.run(
+    result = asyncio.run(
         generator._translate_segments_for_chinese_tts(
-            segments,
+            original,
             source_language="zh",
             translate_first=False,
         )
     )
 
-    assert translated[0].text == "这个 app 的通知先打开"
-    assert len(generator.translation_agent.prompts) == 0
-    assert len(generator.translation_reviewer.prompts) == 1
-    assert "允许少量已经融入中文表达的英文单词" in generator.translation_reviewer.prompts[0]
+    assert result[0].text == "这个 app 的通知先打开"
 
 
 def test_generate_and_burn_always_writes_dedicated_tts_srt(tmp_path: Path) -> None:
-    generator = SubtitleGenerator()
-    generator.translation_agent = _FakeAgent(
-        [_batch("现在开始慢慢搅拌均匀然后继续搅拌到完全顺滑最后再把表面的小气泡轻轻整理掉")]
-    )
-    generator.translation_reviewer = _FakeAgent(
-        [SubtitleTranslationReview(passed=True, summary="全部通过")]
-    )
+    translated = _segs("现在开始慢慢搅拌均匀然后继续搅拌到完全顺滑最后再把表面的小气泡轻轻整理掉")
+    # Override timing to match source segment
+    translated[0].start = 0.0
+    translated[0].end = 2.0
+    translated[0].tone_tag = "neutral"
+
+    fake = _FakeTranslationAgent([translated])
+    generator = SubtitleGenerator(subtitle_translation_agent=fake)
 
     audio_path = tmp_path / "audio.mp3"
     audio_path.write_bytes(b"audio")
