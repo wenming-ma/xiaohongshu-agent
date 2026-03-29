@@ -13,7 +13,7 @@ from pydantic_ai.mcp import MCPServerStdio
 
 from ....config.settings import PathConfig
 from ....utils.logger import get_logger
-from ..utils.transcription import AudioTranscriber
+from ..utils.asr import AudioTranscriber
 from .extract.agent import ExtractAgent
 from .schemas import VideoReadResult
 

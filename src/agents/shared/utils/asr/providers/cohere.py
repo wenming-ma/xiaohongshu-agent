@@ -4,7 +4,6 @@ import gc
 from pathlib import Path
 from threading import Lock
 
-from src.agents.video_post.schemas import SubtitleSegment, TranscriptionResult
 from src.utils.logger import get_logger
 
 from ..alignment.base import TimestampAligner
@@ -16,6 +15,7 @@ from ..model_sources import (
     resolve_model_source,
 )
 from ..text_utils import build_transcription_result, empty_success_result, normalize_text
+from ..types import TranscriptionResult, TranscriptionSegment
 from .base import AsrProvider
 
 logger = get_logger(__name__)
@@ -111,7 +111,7 @@ class CohereAsrProvider(AsrProvider):
         segments = alignment.segments
         if not segments:
             segments = [
-                SubtitleSegment(
+                TranscriptionSegment(
                     start=0.0,
                     end=max(float(alignment.duration_seconds), 0.01),
                     text=transcript,

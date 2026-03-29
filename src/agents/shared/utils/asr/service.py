@@ -4,7 +4,6 @@ import asyncio
 from pathlib import Path
 from threading import Lock
 
-from src.agents.video_post.schemas import TranscriptionResult
 from src.config.settings import ASRConfig
 from src.utils.logger import get_logger
 
@@ -12,6 +11,7 @@ from .audio import extract_audio_track
 from .providers.base import AsrProvider
 from .registry import create_asr_provider, normalize_provider_name
 from .text_utils import ensure_timestamped_transcription_result
+from .types import TranscriptionResult
 
 logger = get_logger(__name__)
 

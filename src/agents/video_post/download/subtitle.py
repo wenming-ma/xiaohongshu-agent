@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ....utils.logger import get_logger
-from ...shared.utils.transcription import extract_audio_track, get_asr_service
+from ...shared.utils.asr import extract_audio_track, get_asr_service
 from ..schemas import SubtitleResult, SubtitleSegment
 from ..utils.tts_tags import DEFAULT_TONE_TAG, build_tts_text, normalize_tone_tag
 from .prompts import (

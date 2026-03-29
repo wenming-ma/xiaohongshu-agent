@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.agents.video_post.schemas import SubtitleSegment
-
 from ..providers.base import AsrProvider
 from ..text_utils import (
     ReferenceSpan,
@@ -13,11 +11,12 @@ from ..text_utils import (
     split_transcript_units,
     visible_text_length,
 )
+from ..types import TranscriptionSegment
 from .base import AlignmentResult, TimestampAligner
 
 
 def _build_reference_spans(
-    reference_segments: list[SubtitleSegment],
+    reference_segments: list[TranscriptionSegment],
     span_count: int,
 ) -> list[ReferenceSpan]:
     if span_count <= 0 or not reference_segments:
@@ -38,9 +37,9 @@ def _build_reference_spans(
 
 def redistribute_transcript_to_segments(
     transcript: str,
-    reference_segments: list[SubtitleSegment],
+    reference_segments: list[TranscriptionSegment],
     language: str,
-) -> list[SubtitleSegment]:
+) -> list[TranscriptionSegment]:
     normalized = normalize_text(transcript)
     if not normalized or not reference_segments:
         return []
@@ -53,7 +52,7 @@ def redistribute_transcript_to_segments(
     spans = _build_reference_spans(reference_segments, span_count)
     counts = allocate_units(len(units), [span.weight for span in spans])
 
-    segments: list[SubtitleSegment] = []
+    segments: list[TranscriptionSegment] = []
     cursor = 0
     for index, span in enumerate(spans):
         count = counts[index]
@@ -63,7 +62,7 @@ def redistribute_transcript_to_segments(
         if not text:
             continue
         segments.append(
-            SubtitleSegment(
+            TranscriptionSegment(
                 start=span.start,
                 end=span.end,
                 text=text,
@@ -111,7 +110,7 @@ class ReferenceSegmentAligner(TimestampAligner):
         )
         if not segments and normalize_text(transcript):
             segments = [
-                SubtitleSegment(
+                TranscriptionSegment(
                     start=0.0,
                     end=max(float(resolved_duration), 0.01),
                     text=normalize_text(transcript),

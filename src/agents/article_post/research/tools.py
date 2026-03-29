@@ -20,7 +20,7 @@ from pydantic_ai import Tool
 
 from ....config.settings import PathConfig
 from ....utils.logger import get_logger
-from ...shared.utils.transcription import AudioTranscriber
+from ...shared.utils.asr import AudioTranscriber
 from ..schemas import SavedSourceIndex, SourceChunk, SourceDigest, SourceExcerpt
 
 logger = get_logger(__name__)

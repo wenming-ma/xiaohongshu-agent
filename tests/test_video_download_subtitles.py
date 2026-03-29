@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import src.agents.video_post.download.agent as download_agent_module
+from src.agents.shared.utils.asr.types import TranscriptionResult
 from src.agents.video_post.download.agent import (
     DEFAULT_FORMAT_SORT,
     MAX_FILE_SIZE,
@@ -17,7 +18,6 @@ from src.agents.video_post.schemas import (
     EngagementMetrics,
     Platform,
     SubtitleResult,
-    TranscriptionResult,
     VideoSource,
 )
 

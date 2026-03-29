@@ -1,12 +1,9 @@
 import importlib
-import os
 from pathlib import Path
 
 import huggingface_hub.constants as hf_constants
 
-import src.agents.shared.utils.asr as asr_package
 from src.agents.shared.utils.asr import model_sources as model_sources_module
-from src.agents.shared.utils import transcription as transcription_module
 from src.agents.video_post.utils import video_dubbing as video_dubbing_module
 
 
@@ -27,8 +24,8 @@ def _write_model_stub(model_dir: Path) -> None:
 def test_cache_roots_resolve_from_huggingface_defaults() -> None:
     expected_hf_hub_cache = Path(hf_constants.HF_HUB_CACHE)
 
-    assert transcription_module.PROJECT_ROOT == PROJECT_ROOT
-    assert transcription_module.HF_HUB_CACHE_DIR == expected_hf_hub_cache
+    assert model_sources_module.PROJECT_ROOT == PROJECT_ROOT
+    assert model_sources_module.HF_HUB_CACHE_DIR == expected_hf_hub_cache
     assert video_dubbing_module.PROJECT_ROOT == PROJECT_ROOT
     assert video_dubbing_module.HF_HUB_CACHE_DIR == expected_hf_hub_cache
 
@@ -43,38 +40,28 @@ def test_model_sources_respect_explicit_hf_cache_env(monkeypatch, tmp_path: Path
         assert reloaded.HF_HUB_CACHE_DIR == tmp_path / "hf-home" / "hub"
 
     importlib.reload(model_sources_module)
-    importlib.reload(asr_package)
-    importlib.reload(transcription_module)
     importlib.reload(video_dubbing_module)
 
-
-def test_resolve_transcription_model_source_prefers_direct_model_dir(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
+def test_resolve_model_source_from_root_prefers_direct_model_dir(tmp_path: Path) -> None:
     model_root = tmp_path / "models--Systran--faster-whisper-large-v3"
-    direct_model_dir = model_root / "faster-whisper-large-v3"
+    direct_model_dir = model_root / model_sources_module.FASTER_WHISPER_MODEL_SPEC.direct_model_dir_name
     _write_model_stub(direct_model_dir)
 
-    monkeypatch.setattr(transcription_module, "HF_HUB_CACHE_DIR", tmp_path)
-    monkeypatch.setattr(transcription_module, "LOCAL_TRANSCRIPTION_MODEL_ROOT", model_root)
-    monkeypatch.setattr(transcription_module, "LOCAL_TRANSCRIPTION_MODEL_PATH", direct_model_dir)
-    monkeypatch.setattr(
-        transcription_module,
-        "LOCAL_TRANSCRIPTION_MODEL_SNAPSHOTS_DIR",
-        model_root / "snapshots",
+    model_source, download_root = model_sources_module.resolve_model_source_from_root(
+        model_root,
+        repo_id=model_sources_module.FASTER_WHISPER_MODEL_SPEC.repo_id,
+        required_files=model_sources_module.FASTER_WHISPER_MODEL_SPEC.required_files,
+        direct_model_dir_name=direct_model_dir.name,
+        cache_dir=tmp_path,
     )
-
-    model_source, download_root = transcription_module._resolve_transcription_model_source()
 
     assert model_source == str(direct_model_dir)
     assert download_root is None
 
 
-def test_resolve_transcription_model_source_uses_latest_snapshot(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
+def test_resolve_model_source_from_root_uses_latest_snapshot(tmp_path: Path) -> None:
+    import os
+
     model_root = tmp_path / "models--Systran--faster-whisper-large-v3"
     snapshots_dir = model_root / "snapshots"
     older_snapshot = snapshots_dir / "older"
@@ -84,45 +71,28 @@ def test_resolve_transcription_model_source_uses_latest_snapshot(
     os.utime(older_snapshot, (1, 1))
     os.utime(newer_snapshot, (2, 2))
 
-    monkeypatch.setattr(transcription_module, "HF_HUB_CACHE_DIR", tmp_path)
-    monkeypatch.setattr(transcription_module, "LOCAL_TRANSCRIPTION_MODEL_ROOT", model_root)
-    monkeypatch.setattr(
-        transcription_module,
-        "LOCAL_TRANSCRIPTION_MODEL_PATH",
-        model_root / "faster-whisper-large-v3",
+    model_source, download_root = model_sources_module.resolve_model_source_from_root(
+        model_root,
+        repo_id=model_sources_module.FASTER_WHISPER_MODEL_SPEC.repo_id,
+        required_files=model_sources_module.FASTER_WHISPER_MODEL_SPEC.required_files,
+        direct_model_dir_name=model_sources_module.FASTER_WHISPER_MODEL_SPEC.direct_model_dir_name,
+        cache_dir=tmp_path,
     )
-    monkeypatch.setattr(
-        transcription_module,
-        "LOCAL_TRANSCRIPTION_MODEL_SNAPSHOTS_DIR",
-        snapshots_dir,
-    )
-
-    model_source, download_root = transcription_module._resolve_transcription_model_source()
 
     assert model_source == str(newer_snapshot)
     assert download_root is None
 
 
-def test_resolve_transcription_model_source_falls_back_to_repo_id(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
+def test_resolve_model_source_from_root_falls_back_to_repo_id(tmp_path: Path) -> None:
     model_root = tmp_path / "models--Systran--faster-whisper-large-v3"
 
-    monkeypatch.setattr(transcription_module, "HF_HUB_CACHE_DIR", tmp_path)
-    monkeypatch.setattr(transcription_module, "LOCAL_TRANSCRIPTION_MODEL_ROOT", model_root)
-    monkeypatch.setattr(
-        transcription_module,
-        "LOCAL_TRANSCRIPTION_MODEL_PATH",
-        model_root / "faster-whisper-large-v3",
-    )
-    monkeypatch.setattr(
-        transcription_module,
-        "LOCAL_TRANSCRIPTION_MODEL_SNAPSHOTS_DIR",
-        model_root / "snapshots",
+    model_source, download_root = model_sources_module.resolve_model_source_from_root(
+        model_root,
+        repo_id=model_sources_module.FASTER_WHISPER_MODEL_SPEC.repo_id,
+        required_files=model_sources_module.FASTER_WHISPER_MODEL_SPEC.required_files,
+        direct_model_dir_name=model_sources_module.FASTER_WHISPER_MODEL_SPEC.direct_model_dir_name,
+        cache_dir=tmp_path,
     )
 
-    model_source, download_root = transcription_module._resolve_transcription_model_source()
-
-    assert model_source == transcription_module.TRANSCRIPTION_MODEL_REPO_ID
+    assert model_source == model_sources_module.FASTER_WHISPER_MODEL_SPEC.repo_id
     assert download_root == str(tmp_path)

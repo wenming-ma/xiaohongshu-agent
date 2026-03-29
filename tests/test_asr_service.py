@@ -14,7 +14,7 @@ from src.agents.shared.utils.asr.model_sources import (
 )
 from src.agents.shared.utils.asr.providers.cohere import CohereAsrProvider
 from src.agents.shared.utils.asr.providers.qwen import QwenAsrProvider
-from src.agents.video_post.schemas import SubtitleSegment, TranscriptionResult
+from src.agents.shared.utils.asr.types import TranscriptionResult, TranscriptionSegment
 
 
 class _FakeProvider:
@@ -44,8 +44,8 @@ class _FakeAligner:
             language=language,
             duration_seconds=4,
             segments=[
-                SubtitleSegment(start=0.0, end=1.0, text="fresh transcript"),
-                SubtitleSegment(start=1.0, end=4.0, text="from cohere"),
+                TranscriptionSegment(start=0.0, end=1.0, text="fresh transcript"),
+                TranscriptionSegment(start=1.0, end=4.0, text="from cohere"),
             ],
         )
 

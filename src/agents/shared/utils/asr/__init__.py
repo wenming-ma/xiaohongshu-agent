@@ -15,10 +15,8 @@ from .model_sources import (
     resolve_model_source,
     resolve_model_source_from_root,
 )
-from .providers.cohere import CohereAsrProvider
-from .providers.faster_whisper import FasterWhisperAsrProvider
-from .providers.qwen import QwenAsrProvider
 from .service import AudioTranscriber, AsrService, get_asr_service, release_asr_resources
+from .types import TranscriptionResult, TranscriptionSegment
 
 __all__ = [
     "ASRConfig",
@@ -33,9 +31,8 @@ __all__ = [
     "PROJECT_ROOT",
     "QWEN_ASR_MODEL_SPEC",
     "QWEN_FORCED_ALIGNER_MODEL_SPEC",
-    "CohereAsrProvider",
-    "FasterWhisperAsrProvider",
-    "QwenAsrProvider",
+    "TranscriptionResult",
+    "TranscriptionSegment",
     "extract_audio_track",
     "get_asr_service",
     "redistribute_transcript_to_segments",

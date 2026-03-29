@@ -4,12 +4,12 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.agents.video_post.schemas import SubtitleSegment
+from ..types import TranscriptionSegment
 
 
 @dataclass(frozen=True)
 class AlignmentResult:
-    segments: list[SubtitleSegment]
+    segments: list[TranscriptionSegment]
     duration_seconds: int = 0
     language: str = ""
 

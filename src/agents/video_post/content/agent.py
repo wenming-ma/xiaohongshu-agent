@@ -4,7 +4,8 @@ from typing import Any
 from pydantic_ai import Agent
 
 from ....core.base_agent import BaseAgent, ValidationResult
-from ..schemas import VideoResearchResult, VideoSource, XHSVideoContent, ContentReviewResult, TranscriptionResult
+from ...shared.utils.asr.types import TranscriptionResult
+from ..schemas import VideoResearchResult, VideoSource, XHSVideoContent, ContentReviewResult
 from ....utils.providers import get_text_model
 from ....utils.logger import get_logger
 from ....config.settings import RetryConfig, ReviewConfig

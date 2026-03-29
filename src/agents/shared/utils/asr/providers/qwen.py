@@ -4,7 +4,6 @@ import gc
 from pathlib import Path
 from threading import Lock
 
-from src.agents.video_post.schemas import SubtitleSegment, TranscriptionResult
 from src.utils.logger import get_logger
 
 from ..model_sources import (
@@ -15,6 +14,7 @@ from ..model_sources import (
     resolve_model_source,
 )
 from ..text_utils import build_transcription_result, empty_success_result, normalize_text, visible_text_length
+from ..types import TranscriptionResult, TranscriptionSegment
 from .base import AsrProvider
 
 logger = get_logger(__name__)
@@ -213,11 +213,11 @@ class QwenAsrProvider(AsrProvider):
     def _collapse_atomic_stamps(
         self,
         atomic_stamps: list[tuple[float, float, str]],
-    ) -> list[SubtitleSegment]:
+    ) -> list[TranscriptionSegment]:
         if not atomic_stamps:
             return []
 
-        segments: list[SubtitleSegment] = []
+        segments: list[TranscriptionSegment] = []
         current_start = 0.0
         current_end = 0.0
         current_text = ""
@@ -227,7 +227,7 @@ class QwenAsrProvider(AsrProvider):
             text = normalize_text(current_text)
             if text:
                 segments.append(
-                    SubtitleSegment(
+                    TranscriptionSegment(
                         start=current_start,
                         end=max(current_end, current_start + 0.01),
                         text=text,
@@ -287,7 +287,7 @@ class QwenAsrProvider(AsrProvider):
         if not segments:
             last_end = atomic_stamps[-1][1] if atomic_stamps else 0.01
             segments = [
-                SubtitleSegment(
+                TranscriptionSegment(
                     start=0.0,
                     end=max(float(last_end), 0.01),
                     text=transcript,

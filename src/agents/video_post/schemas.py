@@ -3,6 +3,8 @@ from typing import List, Optional, Dict, Any
 
 from pydantic import BaseModel, Field, computed_field
 
+from src.agents.shared.utils.asr.types import TranscriptionResult
+
 
 class Platform(str, Enum):
     YOUTUBE = "youtube"
@@ -69,15 +71,6 @@ class VideoResearchResult(BaseModel):
         return len(self.sources)
 
 
-class TranscriptionResult(BaseModel):
-    success: bool
-    transcript: str = ""
-    language: str = ""
-    duration_seconds: int = 0
-    segments: List["SubtitleSegment"] = []
-    error_message: str = ""
-
-
 class SubtitleSegment(BaseModel):
     start: float
     end: float
@@ -138,6 +131,3 @@ class VideoPublishResult(BaseModel):
     retry_count: int = 0
     video_path: Optional[str] = None
     content_snapshot: Optional[Dict[str, Any]] = None
-
-
-TranscriptionResult.model_rebuild()

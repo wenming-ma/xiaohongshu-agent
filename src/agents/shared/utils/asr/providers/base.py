@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from src.agents.video_post.schemas import TranscriptionResult
+from ..types import TranscriptionResult
 
 
 class AsrProvider(ABC):

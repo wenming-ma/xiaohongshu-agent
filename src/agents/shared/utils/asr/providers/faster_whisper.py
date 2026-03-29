@@ -4,7 +4,6 @@ import gc
 from pathlib import Path
 from threading import Lock
 
-from src.agents.video_post.schemas import SubtitleSegment, TranscriptionResult
 from src.utils.logger import get_logger
 
 from ..model_sources import (
@@ -15,6 +14,7 @@ from ..model_sources import (
     resolve_model_source,
 )
 from ..text_utils import build_transcription_result, empty_success_result, normalize_text
+from ..types import TranscriptionResult, TranscriptionSegment
 from .base import AsrProvider
 
 logger = get_logger(__name__)
@@ -85,7 +85,7 @@ class FasterWhisperAsrProvider(AsrProvider):
             vad_filter=True,
         )
         segments = [
-            SubtitleSegment(
+            TranscriptionSegment(
                 start=float(segment.start),
                 end=float(segment.end),
                 text=normalize_text(segment.text),

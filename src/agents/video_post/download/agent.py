@@ -12,9 +12,9 @@ from ....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import VideoSource, DownloadResult, Platform
 from ....utils.logger import get_logger
 from ....utils.providers import get_text_model
-from ...shared.utils.transcription import (
+from ...shared.utils.asr import (
     AudioTranscriber,
-    release_transcription_model,
+    release_asr_resources,
 )
 from .subtitle import SubtitleGenerator
 from .subtitle_translation_agent import SubtitleTranslationAgent
@@ -298,7 +298,7 @@ class DownloadAgent(BaseAgent):
             if keep_loaded:
                 logger.info("转录模型保持常驻（CUDA），跳过释放")
             else:
-                release_transcription_model()
+                release_asr_resources()
 
     async def _download_candidates(
         self,

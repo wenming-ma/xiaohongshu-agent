@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from src.agents.video_post.schemas import SubtitleSegment, TranscriptionResult
+from .types import TranscriptionResult, TranscriptionSegment
 
 NO_SPACE_LANGUAGES = {"zh", "ja", "ko"}
 
@@ -16,7 +16,7 @@ def visible_text_length(text: str) -> int:
     return len(re.sub(r"\s+", "", normalize_text(text)))
 
 
-def join_segments_to_transcript(segments: list[SubtitleSegment], language: str) -> str:
+def join_segments_to_transcript(segments: list[TranscriptionSegment], language: str) -> str:
     parts = [normalize_text(segment.text) for segment in segments if normalize_text(segment.text)]
     if not parts:
         return ""
@@ -76,7 +76,7 @@ def allocate_units(total_units: int, weights: list[float]) -> list[int]:
 def build_transcription_result(
     *,
     language: str,
-    segments: list[SubtitleSegment],
+    segments: list[TranscriptionSegment],
     transcript: str = "",
     duration_seconds: int = 0,
 ) -> TranscriptionResult:
@@ -86,12 +86,11 @@ def build_transcription_result(
         if not text:
             continue
         cleaned_segments.append(
-            SubtitleSegment(
+            TranscriptionSegment(
                 start=float(segment.start),
                 end=max(float(segment.end), float(segment.start) + 0.01),
                 text=text,
                 speaker_id=getattr(segment, "speaker_id", 0),
-                tone_tag=getattr(segment, "tone_tag", ""),
             )
         )
 
@@ -141,7 +140,7 @@ def ensure_timestamped_transcription_result(result: TranscriptionResult) -> Tran
         return build_transcription_result(
             language=result.language,
             segments=[
-                SubtitleSegment(
+                TranscriptionSegment(
                     start=0.0,
                     end=max(float(result.duration_seconds), 0.01),
                     text=normalized_transcript,
