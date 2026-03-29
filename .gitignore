@@ -18,9 +18,16 @@ nul
 
 # Generated outputs (e.g., Playwright downloads)
 output/
-workshop/
 /test_*
 *.xlsx
+
+# Workshop generated artifacts
+workshop/**/__pycache__/
+workshop/**/*.pyc
+workshop/video_post/video_post_crash_*.json
+workshop/video_post/video_post_failed_*.json
+workshop/video_post/video_post_failures_*.jsonl
+workshop/video_post/video_post_summary_*.json
 
 # Local tool state
 .cache/

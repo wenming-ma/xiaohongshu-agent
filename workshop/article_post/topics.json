@@ -1,0 +1,273 @@
+[
+
+  {
+    "topic": "小个子博主同款为何穿不出效果：面料垂感的物理学没人教你",
+    "audience": "买了博主同款却完全穿不出感觉、怀疑自己身材有问题的155cm以下女生",
+    "strategy": "synthesize",
+    "depth_layer": 2,
+    "hook_type": "改造前后",
+    "depth_angle": "第二层：纺织物理学原理切入。面料悬垂性（drape coefficient）是被穿搭界严重忽视的科学参数——同一件设计在不同克重、不同织法的面料上，垂感完全不同，对小骨架身材的视觉影响天差地别。长文从纺织力学角度解释为什么雪纺和真丝对小个子是陷阱（高垂感=视觉下坠=缩短）、为什么结构性面料（精纺羊毛、硬挺棉）更有利于小个子保持比例，配合博主同款对比实验框架，教读者在购买前如何判断面料垂感。",
+    "english_sources": [
+      "whowhatwear.com: best fabrics for petite women——why fabric drape matters more than style",
+      "byrdie.com: how fabric weight and drape affects your silhouette科学解析",
+      "vogue.com: fabric guide——how different textiles interact with different body types",
+      "allure.com: how fabric drape changes your silhouette analysis",
+      "glamour.com: why your outfit looks different than the blogger's——the fabric factor",
+      "refinery29.com: influencer outfit recreation reality check——beyond the style gap",
+      "bustle.com: why influencer outfits don't look the same on you材质分析",
+      "elle.com: petite shopping guide——the fabrics that actually work for shorter frames"
+    ]
+  },
+  {
+    "topic": "时装工业的尺码谎言：亚洲女生被系统性排除在外的100年",
+    "audience": "按欧美博主教程穿搭总踩雷、或深感时尚产业不为自己设计的亚洲女生",
+    "strategy": "synthesize",
+    "depth_layer": 3,
+    "hook_type": "争议反认知",
+    "depth_angle": "第三层：时装产业史与人体测量学的交叉研究。追溯现代服装工业尺码体系的历史起源——美国1940年代O'Brien和Shelton基于白人女性数据建立的标准化尺码系统，至今仍是全球服装业的基础框架。分析这套系统如何系统性地排除亚洲女性的骨架特征（肩窄、胸部偏平、腰短腿短、胯骨位置），导致欧美穿搭公式在亚洲体型上的结构性失效。同时梳理近年亚洲时装品牌建立本土尺码体系的努力，以及AI量体技术对这一问题的潜在解决路径。",
+    "english_sources": [
+      "vogue.com: the history of clothing sizes——who they were designed for and who they excluded",
+      "thecut.com: fashion sizing and racial exclusion——the systemic problem",
+      "refinery29.com: why Western sizing doesn't work for Asian bodies系统性分析",
+      "allure.com: inclusive sizing——Asian body types and the fashion industry gap",
+      "whowhatwear.com: why Western styling rules don't work for everyone",
+      "cosmopolitan.com: Asian body types and global fashion sizing gap报道",
+      "harpersbazaar.com: fashion industry diversity problem——sizing and body representation",
+      "bustle.com: petite and Asian sizing gaps in mainstream fashion产业分析"
+    ]
+  },
+  {
+    "topic": "K-fashion产业解码：韩系穿搭为何在全球爆发但在你身上失灵",
+    "audience": "沉迷韩系穿搭但总穿不出感觉、想理解K-fashion背后产业逻辑的女生",
+    "strategy": "synthesize",
+    "depth_layer": 3,
+    "hook_type": "数字清单",
+    "depth_angle": "第三层：流行文化产业与全球时尚工业的交叉分析。追溯K-fashion的系统性崛起路径：从韩国政府1990年代的文化输出政策（韩流战略）、到HYBE/SM娱乐公司将偶像穿搭商品化的完整产业链、再到Instagram和TikTok算法如何放大特定身材审美。揭示K-fashion的核心是为Korean Free Size体型（极度纤细的特定体型）量身设计的工业产品，其视觉效果依赖特定的灯光、修图和拍摄角度。分析为什么普通亚洲女生复制失败是结构性问题，而非个人身材问题。",
+    "english_sources": [
+      "vogue.com: K-fashion global influence——how Korea exported its style identity",
+      "harpersbazaar.com: Korean fashion industry——the business behind the aesthetic",
+      "thecut.com: K-pop and K-fashion——how idol culture shapes clothing trends",
+      "allure.com: Korean beauty and fashion connection——the industry infrastructure",
+      "refinery29.com: K-fashion trends and body standard issues解析",
+      "elle.com: Korean fashion's global rise——the cultural and commercial machinery",
+      "whowhatwear.com: Korean style rules和背后的产业逻辑",
+      "cosmopolitan.com: K-fashion secrets——what the industry doesn't tell you"
+    ]
+  },
+  {
+    "topic": "H型直筒身材的时装史：这个被亚洲品牌宠爱的体型凭什么",
+    "audience": "肩宽=胯宽、腰线不明显的H型直筒身材女生，困惑为何穿搭建议总忽略自己",
+    "strategy": "synthesize",
+    "depth_layer": 3,
+    "hook_type": "故事叙事",
+    "depth_angle": "第三层：时装史与体型审美政治。H型（直筒）身材在中文穿搭界是需要'创造曲线'的缺点，但这是西方沙漏审美霸权的产物。长文追溯H型廓形在时装史上的高光时代——从Coco Chanel解放女性身体、彻底抛弃束腰，到1960年代Twiggy引领的直筒美学，再到2020年代日韩时装品牌以H型为核心的设计哲学（日本设计师川久保玲、山本耀司对H型廓形的推崇）。分析为什么H型是亚洲时装设计的天然主场，帮助读者重建体型认同，再给出比例创造视觉曲线的实用原理。",
+    "english_sources": [
+      "vogue.com: the history of the straight silhouette——from Chanel to Comme des Garçons",
+      "harpersbazaar.com: H-line body shape in Asian fashion——a different aesthetic standard",
+      "thecut.com: Twiggy to now——how the straight body ideal came and went and came back",
+      "whowhatwear.com: how to dress a rectangle body shape指南及审美再认知",
+      "glamour.com: rectangle body type styling tips科学原理版",
+      "allure.com: how to accentuate your waist with styling——the visual geometry",
+      "elle.com: straight body shape fashion history and modern styling guide",
+      "refinery29.com: body shape diversity in fashion——beyond the hourglass obsession"
+    ]
+  },
+  {
+    "topic": "高个子时尚的产业悖论：秀场要你高，零售让你消失",
+    "audience": "170cm+高个子女生，既被时尚标准推崇却在现实购物中处处碰壁",
+    "strategy": "synthesize",
+    "depth_layer": 3,
+    "hook_type": "对比实验",
+    "depth_angle": "第三层：时尚产业结构性矛盾分析。揭示一个深刻的行业悖论：时装周模特平均身高177cm，整个高级时装设计体系以高个子为模板——但零售端的标准尺码（裤长、袖长、裙摆比例）全部按照平均身高（163cm）设计。长文追溯这一结构性矛盾的历史成因：成衣工业的批量生产逻辑vs高定时装的身材崇拜，分析Tall size市场从无到有的发展史（Gap Tall、ASOS Tall等），以及品牌为何迟迟不愿系统性投入高个子市场（高个子女性购买力被低估的市场研究数据）。",
+    "english_sources": [
+      "vogue.com: the tall girl paradox——fashion loves height but retail ignores it",
+      "thecut.com: why fashion fails tall women——the industry's sizing contradiction",
+      "refinery29.com: tall fashion market gap——why brands took so long to serve tall women",
+      "harpersbazaar.com: tall women in fashion——the runway reality vs retail reality",
+      "whowhatwear.com: best brands for tall women及市场发展史",
+      "glamour.com: tall girl style guide and the sizing struggle",
+      "elle.com: tall women fashion——the industry gap and how it's changing",
+      "bustle.com: tall girl fashion evolution——from ignored to emerging market"
+    ]
+  },
+  {
+    "topic": "均码的政治经济学：'One Size Fits All'究竟让谁消失了",
+    "audience": "小个子、微胖或非标准体型女生，曾因均码买不到合适衣服而沮丧的用户",
+    "strategy": "synthesize",
+    "depth_layer": 3,
+    "hook_type": "争议反认知",
+    "depth_angle": "第三层：时装零售产业经济学与身份政治。'均码'（One Size/Free Size）的商业逻辑表面是便利，实质是生产成本最小化的产物——品牌在一个尺码上节省了库存管理、样衣制作、码数分级的全部成本，由消费者的身体承担所有不适。长文从零售产业链角度揭示均码的经济学本质，追溯其在快时尚崛起中扮演的角色，分析谁的身体是'均码'的预设（研究表明是欧美平均身材），以及小个子/宽胯/微胖群体如何在均码文化中被系统性排除。最终给出小个子应对均码单品的实用改造框架。",
+    "english_sources": [
+      "thecut.com: the problem with one-size-fits-all clothing——who it actually fits",
+      "refinery29.com: free size fashion and body exclusion——the retail industry's shortcut",
+      "vogue.com: fashion sizing reform——why one-size is a political and economic choice",
+      "bustle.com: one-size clothing does not fit all——petite and plus size perspectives",
+      "whowhatwear.com: how to make one-size pieces work for petite frames",
+      "glamour.com: inclusive sizing and the fast fashion industry connection",
+      "cosmopolitan.com: size-inclusive fashion progress and the one-size problem",
+      "harpersbazaar.com: fashion sizing and body diversity——the industry's accountability gap"
+    ]
+  },
+  {
+    "topic": "肩部轮廓的权力史：1940年代垫肩到今日power shoulder的百年审美政治",
+    "audience": "肩宽或斜方肌明显、因肩宽而在穿搭上感到困惑甚至自卑的女生",
+    "strategy": "repurpose_article",
+    "depth_layer": 3,
+    "hook_type": "数字清单",
+    "depth_angle": "第三层：时装史与性别权力政治。肩部廓形是时装史上最具政治意义的设计元素之一。长文系统梳理肩部审美的百年演变：1930-40年代好莱坞垫肩（Joan Crawford）代表独立女性崛起、1980年代power dressing（Joan Collins、Dallas剧集）与职场女性权力争夺的关联、1990年代纤细去势、2010年代Balenciaga建筑感肩型回归、2020年代#BroadShouldersAreFashion运动。分析为什么每一次肩部轮廓的流行都与女性在社会结构中的位置变化同步，从而彻底重构宽肩女生的穿搭认知框架。",
+    "english_sources": [
+      "vogue.com: history of the power shoulder——fashion's most political silhouette",
+      "harpersbazaar.com: shoulder pads and women's power——the cultural history",
+      "thecut.com: broad shoulders in fashion——from stigma to strength",
+      "whowhatwear.com: broad shoulders are fashion's secret weapon详解",
+      "elle.com: power dressing history——how shoulder pads changed women's wardrobes",
+      "glamour.com: how to dress broad shoulders穿搭技巧现代版",
+      "allure.com: shoulder silhouette trends——the aesthetic and cultural evolution",
+      "refinery29.com: power shoulder fashion history and the feminist connection"
+    ]
+  },
+  {
+    "topic": "快时尚20年：小个子的衣橱如何从稀缺走向过剩再走向迷茫",
+    "audience": "155cm以下小个子，对自己的衣橱现状感到困惑和不满，有一定消费反思意识的女生",
+    "strategy": "synthesize",
+    "depth_layer": 3,
+    "hook_type": "改造前后",
+    "depth_angle": "第三层：快时尚产业史与小个子消费者的关系演变。2000年代以前，小个子几乎买不到合适的现成衣服；Zara、H&M崛起带来了更多尺码选择；2010年代ASOS Petite、Topshop Petite等专属线出现；但2020年代小个子反而陷入选择焦虑——大量廉价均码充斥市场，真正适合小骨架的版型反而更难找。长文追踪这一产业演变史，分析快时尚对小个子市场的双刃剑效应，帮读者理解为什么今天的购物困境不是个人问题，而是产业结构造成的，并给出理性应对框架。",
+    "english_sources": [
+      "vogue.com: fast fashion history and its impact on petite sizing",
+      "refinery29.com: petite fashion market evolution——from scarcity to paradox of choice",
+      "thecut.com: ASOS petite and the rise of online petite fashion市场史",
+      "whowhatwear.com: best petite brands——the evolution of petite fashion retail",
+      "bustle.com: fast fashion and petite sizing——what's changed and what hasn't",
+      "harpersbazaar.com: sustainable fashion for petite women产业分析",
+      "elle.com: petite fashion industry——brands making real progress",
+      "cosmopolitan.com: petite clothing options then vs now market report"
+    ]
+  },
+  {
+    "topic": "显老色vs减龄色的认知科学：为什么你穿某颜色总被说'好老气'",
+    "audience": "觉得某些颜色穿上显老气但完全说不清为什么的黄黑皮女生",
+    "strategy": "synthesize",
+    "depth_layer": 2,
+    "hook_type": "排名测评",
+    "depth_angle": "第二层：色彩认知科学与知觉心理学原理。人脑对'年龄感'的判断依赖肤色明度与服装色彩的对比关系——这是可以用色彩科学量化的参数。长文从感知心理学角度解释：低饱和暖灰色系如何与黄黑皮产生'吸光效应'导致面部暗沉，高明度冷色调为何创造'亮肤'视觉对比。针对olive skin tone和warm medium skin tone分别建立显老色/减龄色清单，并解释背后的色彩物理学原理——而非只是结论式罗列。",
+    "english_sources": [
+      "byrdie.com: colors that make you look younger or older——the science explained",
+      "allure.com: anti-aging color choices in fashion——what color theory says",
+      "whowhatwear.com: most flattering colors for olive skin tone科学分析",
+      "glamour.com: colors that brighten your complexion和背后原理",
+      "harpersbazaar.com: how color affects perceived age——the psychology of fashion color",
+      "vogue.com: color and complexion——the science of looking radiant",
+      "elle.com: best and worst colors for different skin tones原理版",
+      "cosmopolitan.com: worst colors for your skin tone和why they age you"
+    ]
+  },
+  {
+    "topic": "微胖女生冬季穿搭的面料政治：羽绒服工业如何让我们集体显胖",
+    "audience": "冬天穿得像球的苹果型/微胖体型女生，以及对时尚工业产品设计有批判性思考的读者",
+    "strategy": "synthesize",
+    "depth_layer": 3,
+    "hook_type": "挑战打卡",
+    "depth_angle": "第三层：服装产业设计史与体型议题的交叉。羽绒服在1980-90年代从专业户外装备进入大众消费——这一进入过程完全由Fill Power充绒量和保暖测试主导，从未考虑不同体型的视觉效果。长文从羽绒服产业史切入：追溯North Face、Moncler等品牌如何将功能性产品推向时尚市场，分析羽绒服的廓形设计语言为何天然利于直筒体型而不利于微胖体型，再从面料物理学（膨胀系数、充绒量与廓形控制的关系）给出实用解决方案。这是将产业批评与穿搭实操融合的深度内容。",
+    "english_sources": [
+      "vogue.com: puffer jacket history——from ski slopes to fashion runways产业史",
+      "thecut.com: the puffer coat and body image——why some bodies get erased",
+      "harpersbazaar.com: winter coat guide for every body type原理版",
+      "whowhatwear.com: how to look slimmer in winter clothes——the fabric science",
+      "glamour.com: best winter coats for curvy women and why they work",
+      "allure.com: winter dressing tips for apple and plus-size body types",
+      "refinery29.com: how to layer without looking bulky——the structural approach",
+      "elle.com: flattering winter outfits——why the coat industry isn't designed for curves"
+    ]
+  },
+  {
+    "topic": "穿衣认知效应：穿上它3分钟，你的大脑真的不一样了",
+    "audience": "在显瘦穿搭和穿自己喜欢的之间纠结，或对穿搭影响心理感兴趣的女生",
+    "strategy": "synthesize",
+    "depth_layer": 2,
+    "hook_type": "互动问答",
+    "depth_angle": "第二层：认知心理学与服装心理学研究的系统梳理。Enclothed Cognition（穿衣认知效应）是2012年发表在Journal of Experimental Social Psychology的实验研究，证明服装不只影响他人感知，更直接改变穿着者的认知模式和行为表现。长文系统整理这一领域的研究发现：白大褂实验、正装与抽象思维的关系、运动装与行动意愿的关联，以及这些研究对日常穿搭决策的具体指导意义。帮助读者超越'显瘦vs穿喜欢的'二元对立，理解穿搭选择的心理机制。",
+    "english_sources": [
+      "thecut.com: enclothed cognition——how what you wear changes how you think",
+      "refinery29.com: the psychology of getting dressed——what science says about clothing and confidence",
+      "glamour.com: how to dress for confidence——the psychology behind power dressing",
+      "byrdie.com: dressing for your mood——the science of emotional dressing",
+      "whowhatwear.com: how clothes affect your confidence and performance心理学版",
+      "cosmopolitan.com: dressing for yourself vs dressing to impress——psychology insights",
+      "allure.com: fashion psychology——what your wardrobe choices say about your mindset",
+      "harpersbazaar.com: dressing for confidence——the research behind feeling powerful in clothes"
+    ]
+  },
+  {
+    "topic": "小个子oversized穿搭的版型工程学：为什么有些oversized显高有些显矮",
+    "audience": "155cm以下想驾驭oversized风格但总显邋遢矮胖、反复踩雷的小个子女生",
+    "strategy": "repurpose_video",
+    "depth_layer": 2,
+    "hook_type": "对比实验",
+    "depth_angle": "第二层：服装版型工程学原理解析。同样是oversized，为什么有的穿出帅气感，有的直接变成'穿爸爸衣服'？长文从服装结构工程角度给出精准解释：结构性oversized（肩线精确落位+硬挺面料支撑廓形）vs 纯尺码放大（松软面料+肩线下移），两者在小个子身上产生完全不同的视觉效果。具体分析肩线落点精确到几cm的影响、面料硬挺度与廓形维持的关系、下摆长度与腿部比例的精确控制。配合before-after对比实验框架，让读者掌握判断oversized单品是否适合小个子的核心参数。",
+    "english_sources": [
+      "whowhatwear.com: how petite women can wear oversized clothes——the structural breakdown",
+      "byrdie.com: petite oversized styling——the difference between structure and bulk",
+      "vogue.com: proportional dressing——the technical guide to oversized for small frames",
+      "glamour.com: oversized trends for petite women——what actually works",
+      "elle.com: how to wear oversized when you're short——the engineering approach",
+      "cosmopolitan.com: petite-friendly oversized outfit ideas with styling principles",
+      "refinery29.com: oversized styling mistakes short women make——the root causes",
+      "harpersbazaar.com: making oversized work for every body type——the proportion guide"
+    ]
+  },
+  {
+    "topic": "倒三角体型的时装史盲区：设计师最爱的廓形为何成了你的穿搭噩梦",
+    "audience": "肩宽胯窄、上半身壮下半身瘦的倒三角体型女生，困惑流行款式为何总不适合自己",
+    "strategy": "repurpose_article",
+    "depth_layer": 3,
+    "hook_type": "挑战打卡",
+    "depth_angle": "第三层：时装设计哲学与体型权力分析。倒三角廓形是高级时装设计师最偏爱的审美——Balenciaga、Givenchy、Saint Laurent的经典廓形都在强调宽肩收胯的建筑感。但这个设计师的理想廓形，对真实拥有倒三角体型的女性来说，却是穿搭噩梦（所有流行款式都在放大上半身）。长文追溯时装设计中倒三角廓形的审美来源（军装美学、建筑美学），分析设计师对体型的'理想化'与真实女性体型需求的系统性错位，再从比例平衡原理给出倒三角体型的实用穿搭框架。",
+    "english_sources": [
+      "vogue.com: inverted triangle silhouette in fashion history——the designer's favorite shape",
+      "harpersbazaar.com: broad shoulders in high fashion——why designers love what consumers struggle with",
+      "thecut.com: fashion's body ideal problem——designed for a body type that doesn't exist",
+      "whowhatwear.com: how to dress an inverted triangle body shape平衡指南",
+      "glamour.com: inverted triangle body type styling tips比例原理版",
+      "elle.com: dressing for broad shoulders narrow hips——the proportion solution",
+      "allure.com: how to balance your proportions with clothing——visual geometry",
+      "cosmopolitan.com: best outfits for inverted triangle shape实测推荐"
+    ]
+  },
+  {
+    "topic": "中国女生的穿搭消费报告：为什么花了更多钱穿搭水平没提升",
+    "audience": "每年花大量预算买衣服但衣橱利用率低、穿搭能力没有成长感的女生",
+    "strategy": "synthesize",
+    "depth_layer": 3,
+    "hook_type": "数字清单",
+    "depth_angle": "第三层：行为经济学与穿搭消费心理学的系统分析。中国女性服装消费金额持续增长，但'穿搭困惑'并未随之减少——这背后有深刻的行为经济学成因。长文系统梳理服装消费中的认知偏误：FOMO驱动的趋势追随（每季跟风不同风格导致衣橱风格割裂）、零售业的损失厌恶设计（限时折扣触发的冲动购买）、社交平台种草机制对决策理性的系统性侵蚀、以及锚定效应让高溢价基础款看起来'值得投资'。结合小个子/黄黑皮用户购物场景，给出反行为陷阱的理性消费框架。",
+    "english_sources": [
+      "thecut.com: the psychology of fashion consumption——why we keep buying and never feel satisfied",
+      "refinery29.com: wardrobe spending behavior——the behavioral economics of getting dressed",
+      "vogue.com: smart wardrobe investment——the psychology behind shopping decisions",
+      "harpersbazaar.com: cost per wear and the real economics of your wardrobe",
+      "bustle.com: affordable wardrobe essentials vs impulse buying——a behavioral analysis",
+      "whowhatwear.com: investment pieces worth the money——and the psychology of perceived value",
+      "glamour.com: how to build a wardrobe on a budget without behavioral traps",
+      "elle.com: wardrobe cost per wear analysis——making rational fashion decisions"
+    ]
+  },
+  {
+    "topic": "黄黑皮女生的穿搭困境：当全球最大消费市场遇上最窄的内容赛道",
+    "audience": "黄黑皮、中等偏深肤色的亚洲女生，觉得时尚内容始终不是为自己写的",
+    "strategy": "synthesize",
+    "depth_layer": 3,
+    "hook_type": "互动问答",
+    "depth_angle": "第三层：媒体产业研究与内容经济学分析。中国是全球最大的服装消费市场，黄黑皮是中国最主流的肤色，但中文穿搭内容对黄黑皮的系统性忽视（莫兰迪色捆绑、'显白'霸权、深肤色博主稀少）创造了一个巨大的内容缺口。长文从媒体产业角度分析：中文穿搭内容生产逻辑如何被'白皮=好看'的隐形假设主导，与此同时欧美媒体如何在多元化压力下系统性地扩展了深肤色穿搭内容。对比两个市场的内容生态，为黄黑皮用户建立独立的穿搭认知框架（从色彩科学到体型比例），彻底摆脱'显白滤镜'的内容焦虑。",
+    "english_sources": [
+      "thecut.com: beauty and fashion media's skin tone problem——who gets left out",
+      "refinery29.com: dark skin fashion content gap——the industry's representation failure",
+      "allure.com: medium and deeper skin tones in fashion media——progress and gaps",
+      "vogue.com: skin tone diversity in fashion——the media coverage evolution",
+      "byrdie.com: best colors for olive and medium-deep skin tones完整配色框架",
+      "harpersbazaar.com: fashion industry's inclusivity gap——skin tone representation data",
+      "whowhatwear.com: styling for warm and olive skin tones——beyond the muted palette",
+      "glamour.com: color and skin tone diversity in fashion content分析"
+    ]
+  }
+]

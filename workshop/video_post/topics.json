@@ -1,0 +1,188 @@
+[
+
+  {
+    "topic": "一人食晚餐食谱",
+    "audience": "独居、想好好吃饭又不想太麻烦的年轻女性",
+    "strategy": "小红书'一人食'标签互动量极高，独居女性是核心用户群。YouTube/TikTok 上 cooking for one、simple dinner recipes 视频氛围感强、画面治愈。搜索关键词: cooking for one, easy dinner recipe for one, aesthetic cooking alone",
+    "platforms": ["youtube", "tiktok"],
+    "max_videos": 10,
+    "priority": "P0"
+  },
+  {
+    "topic": "韩式自然妆教程",
+    "audience": "追求韩系自然妆感、日常通勤妆的18-30岁女生",
+    "strategy": "韩妆教程在小红书有持续高需求。YouTube/Instagram 上韩国美妆博主的教程质量高、步骤可复制，加中文字幕后直接可用。搜索关键词: Korean natural makeup tutorial, everyday Korean makeup",
+    "platforms": ["youtube"],
+    "max_videos": 10,
+    "priority": "P0"
+  },
+  {
+    "topic": "单眼皮眼妆画法",
+    "audience": "单眼皮/内双、总画不好眼妆的亚洲女生",
+    "strategy": "小红书'单眼皮眼妆'是精准高需求搜索词。YouTube 上 monolid eye makeup tutorial 有大量高质量教程，由亚裔博主出镜更有代入感。搜索关键词: monolid eye makeup tutorial, Asian eye makeup",
+    "platforms": ["youtube", "tiktok"],
+    "max_videos": 10,
+    "priority": "P0"
+  },
+  {
+    "topic": "新手修眉教程",
+    "audience": "不会修眉、总把眉毛修毁的化妆新手女生",
+    "strategy": "修眉教程是小红书美妆入门级高搜索量内容。YouTube/TikTok 上 eyebrow shaping tutorial for beginners 步骤详细，视觉可跟做。搜索关键词: how to shape eyebrows for beginners, eyebrow tutorial",
+    "platforms": ["youtube", "tiktok"],
+    "max_videos": 10,
+    "priority": "P1"
+  },
+  {
+    "topic": "巴黎街头时尚穿搭",
+    "audience": "关注欧美时尚、想提升穿搭品味的25-35岁女性",
+    "strategy": "小红书'巴黎穿搭''法式穿搭'是高互动标签。YouTube/TikTok 上 Paris street style 视频画面精美、穿搭可借鉴。搜索关键词: Paris street style 2026, French girl outfit ideas",
+    "platforms": ["youtube", "tiktok"],
+    "max_videos": 10,
+    "priority": "P0"
+  },
+  {
+    "topic": "小个子穿搭显高技巧",
+    "audience": "155cm左右的小个子女生，想通过穿搭显高",
+    "strategy": "小红书'小个子穿搭'是常年爆款标签。YouTube/TikTok 上 petite outfit ideas、short girl styling tips 有大量可借鉴内容。搜索关键词: petite outfit ideas, styling tips for short girls, how to look taller",
+    "platforms": ["youtube", "tiktok"],
+    "max_videos": 10,
+    "priority": "P0"
+  },
+  {
+    "topic": "极简胶囊衣橱搭配",
+    "audience": "想少买精买、追求极简高效穿搭的女性",
+    "strategy": "小红书'胶囊衣橱''极简穿搭'持续增长。YouTube 上 capsule wardrobe、10 items 30 outfits 视频制作精良，展示互搭组合数。搜索关键词: capsule wardrobe essentials, minimalist wardrobe outfit ideas",
+    "platforms": ["youtube"],
+    "max_videos": 10,
+    "priority": "P1"
+  },
+  {
+    "topic": "10分钟居家瘦腿训练",
+    "audience": "想瘦腿但没时间去健身房的女生",
+    "strategy": "小红书'瘦腿''居家健身'搜索量常年 top，女性用户为主。YouTube 上 slim legs workout、10 min thigh workout 动作可视化。搜索关键词: slim legs workout at home, 10 minute thigh slimming exercise",
+    "platforms": ["youtube", "tiktok"],
+    "max_videos": 10,
+    "priority": "P0"
+  },
+  {
+    "topic": "办公室久坐拉伸放松",
+    "audience": "每天久坐办公、肩颈腰背酸痛的女性上班族",
+    "strategy": "小红书'久坐拉伸''办公室运动'高收藏赛道。YouTube 上 desk stretches、office yoga 视频简洁实用，5-10分钟可跟做。搜索关键词: desk stretches for office workers, office yoga 10 minutes",
+    "platforms": ["youtube", "tiktok"],
+    "max_videos": 10,
+    "priority": "P1"
+  },
+  {
+    "topic": "睡前瑜伽助眠",
+    "audience": "睡眠质量差、容易失眠焦虑的年轻女性",
+    "strategy": "小红书'助眠''睡前瑜伽'是高互动标签。YouTube 上 bedtime yoga、yoga for sleep 视频氛围舒缓、画面治愈。搜索关键词: bedtime yoga for better sleep, relaxing yoga before bed",
+    "platforms": ["youtube"],
+    "max_videos": 10,
+    "priority": "P1"
+  },
+  {
+    "topic": "小户型收纳改造",
+    "audience": "租房或住小户型、想提升居住品质的独居女性",
+    "strategy": "小红书'租房改造''收纳'是常年热搜。YouTube/TikTok 上 small space organization、room makeover 视频 before/after 对比视觉冲击力强。搜索关键词: small apartment organization, room makeover before after",
+    "platforms": ["youtube", "tiktok"],
+    "max_videos": 10,
+    "priority": "P0"
+  },
+  {
+    "topic": "书桌布置灵感",
+    "audience": "学生党或居家办公、想打造高颜值桌面的女生",
+    "strategy": "小红书'桌面布置''书桌改造'是高收藏赛道。YouTube/TikTok 上 desk setup tour、aesthetic desk makeover 视频颜值高、产品可种草。搜索关键词: aesthetic desk setup tour, desk makeover ideas, Pinterest desk organization",
+    "platforms": ["youtube", "tiktok"],
+    "max_videos": 10,
+    "priority": "P1"
+  },
+  {
+    "topic": "衣柜整理收纳法",
+    "audience": "衣柜永远乱、每天找衣服困难的女生",
+    "strategy": "小红书'衣柜收纳''换季整理'换季时搜索量飙升。YouTube 上 closet organization、Marie Kondo folding 视频步骤清晰、前后对比强烈。搜索关键词: closet organization ideas, how to organize your wardrobe, KonMari folding method",
+    "platforms": ["youtube", "tiktok"],
+    "max_videos": 10,
+    "priority": "P1"
+  },
+  {
+    "topic": "解压手工制作过程",
+    "audience": "喜欢看解压视频、需要放松减压的女性用户",
+    "strategy": "ASMR/解压类视频在小红书播放量极高，完全不依赖语言。TikTok/YouTube 上 satisfying crafts、pottery making 等视频天然适合搬运。搜索关键词: satisfying crafts compilation, pottery making ASMR",
+    "platforms": ["youtube", "tiktok"],
+    "max_videos": 10,
+    "priority": "P0"
+  },
+  {
+    "topic": "手账排版教程",
+    "audience": "喜欢做手账、想提升排版美感的学生和文具控女生",
+    "strategy": "小红书'手账'是高活跃垂类社区。YouTube/Instagram 上 bullet journal setup、journal decorating 视频画面精美。搜索关键词: bullet journal ideas, aesthetic journal decorating, planner setup",
+    "platforms": ["youtube", "tiktok"],
+    "max_videos": 10,
+    "priority": "P2"
+  },
+  {
+    "topic": "猫咪搞笑日常",
+    "audience": "猫奴、喜欢萌宠内容的女性用户",
+    "strategy": "萌宠是全平台流量密码，小红书女性用户爱猫比例极高。TikTok/YouTube 上 funny cats 播放量动辄百万，零语言门槛。搜索关键词: funny cats compilation, cute cat moments",
+    "platforms": ["youtube", "tiktok"],
+    "max_videos": 10,
+    "priority": "P0"
+  },
+  {
+    "topic": "狗狗暖心瞬间",
+    "audience": "养狗或想养狗的女性用户",
+    "strategy": "小红书'狗狗日常'互动量高，暖心向视频收藏率特别好。YouTube/TikTok 上 dog heartwarming moments、golden retriever daily 流量稳定。搜索关键词: heartwarming dog moments, golden retriever funny, dog and owner cute moments",
+    "platforms": ["youtube", "tiktok"],
+    "max_videos": 10,
+    "priority": "P1"
+  },
+  {
+    "topic": "护肤步骤正确顺序",
+    "audience": "护肤新手、不确定产品使用顺序的女生",
+    "strategy": "小红书'护肤顺序''护肤步骤'是入门级高搜索词。YouTube 上 skincare routine order、how to layer skincare 教程权威详细。搜索关键词: correct skincare routine order, how to layer skincare products",
+    "platforms": ["youtube", "tiktok"],
+    "max_videos": 10,
+    "priority": "P0"
+  },
+  {
+    "topic": "头发蓬松不贴头皮技巧",
+    "audience": "细软发质、头发总贴头皮显得没精神的女生",
+    "strategy": "小红书'头发蓬松''颅顶增高'是持续热搜。TikTok/YouTube 上 hair volume tips、flat hair hacks 视频短平快、效果即时可见。搜索关键词: hair volume hacks, how to get fluffy hair, flat hair tips",
+    "platforms": ["youtube", "tiktok"],
+    "max_videos": 10,
+    "priority": "P0"
+  },
+  {
+    "topic": "快速编发教程",
+    "audience": "手残党、想学简单好看发型的女生",
+    "strategy": "小红书'编发教程'搜索量大、收藏率高。YouTube/TikTok 上 easy hairstyle tutorial、quick braids 视频多角度演示、可跟做性强。搜索关键词: easy hairstyle tutorial, quick braids for beginners, simple updo",
+    "platforms": ["youtube", "tiktok"],
+    "max_videos": 10,
+    "priority": "P1"
+  },
+  {
+    "topic": "晨间高效护肤流程",
+    "audience": "想建立规律护肤习惯、追求精致生活的年轻女性",
+    "strategy": "小红书'晨间护肤''morning routine'有治愈向流量。YouTube 上 morning skincare routine 视频氛围感强、产品展示清晰。搜索关键词: morning skincare routine, get ready with me skincare",
+    "platforms": ["youtube"],
+    "max_videos": 10,
+    "priority": "P1"
+  },
+  {
+    "topic": "氛围感房间布置",
+    "audience": "想把房间打造成ins风/氛围感的女大学生和独居女性",
+    "strategy": "小红书'氛围感房间''ins风房间'是高收藏标签。YouTube/TikTok 上 aesthetic room tour、cozy room makeover 视频颜值即流量。搜索关键词: aesthetic room tour, cozy room makeover, Pinterest room decor",
+    "platforms": ["youtube", "tiktok"],
+    "max_videos": 10,
+    "priority": "P0"
+  },
+  {
+    "topic": "平价饰品搭配技巧",
+    "audience": "学生党或预算有限、想靠饰品提升穿搭质感的女生",
+    "strategy": "小红书'平价饰品''首饰搭配'搜索活跃。TikTok/Instagram 上 jewelry styling tips、affordable jewelry haul 视频种草力强。搜索关键词: affordable jewelry styling, how to layer necklaces, jewelry haul",
+    "platforms": ["tiktok", "youtube"],
+    "max_videos": 10,
+    "priority": "P2"
+  }
+]
+
