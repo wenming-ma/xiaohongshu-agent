@@ -9,7 +9,12 @@ from src.utils.logger import get_logger
 
 from ..alignment.base import TimestampAligner
 from ..language.base import LanguageDetector
-from ..model_sources import COHERE_ASR_MODEL_SPEC, prepare_hf_cache_env, resolve_model_source
+from ..model_sources import (
+    COHERE_ASR_MODEL_SPEC,
+    is_hf_offline_mode,
+    prepare_hf_cache_env,
+    resolve_model_source,
+)
 from ..text_utils import build_transcription_result, empty_success_result, normalize_text
 from .base import AsrProvider
 
@@ -50,6 +55,7 @@ class CohereAsrProvider(AsrProvider):
 
             model_source, _ = resolve_model_source(COHERE_ASR_MODEL_SPEC)
             self._device = "cuda" if torch.cuda.is_available() else "cpu"
+            local_files_only = is_hf_offline_mode()
             logger.info(
                 "[ASR] 加载 provider=%s, source=%s, timestamps=aligned, language_detection=internal",
                 self.provider_name,
@@ -59,12 +65,12 @@ class CohereAsrProvider(AsrProvider):
             self._processor = AutoProcessor.from_pretrained(
                 model_source,
                 trust_remote_code=True,
-                local_files_only=True,
+                local_files_only=local_files_only,
             )
             self._model = AutoModelForSpeechSeq2Seq.from_pretrained(
                 model_source,
                 trust_remote_code=True,
-                local_files_only=True,
+                local_files_only=local_files_only,
             )
             if hasattr(self._model, "to"):
                 self._model = self._model.to(self._device)

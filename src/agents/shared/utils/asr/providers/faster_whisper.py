@@ -9,6 +9,7 @@ from src.utils.logger import get_logger
 
 from ..model_sources import (
     FASTER_WHISPER_MODEL_SPEC,
+    is_hf_offline_mode,
     prepare_cuda_library_path,
     prepare_hf_cache_env,
     resolve_model_source,
@@ -49,6 +50,7 @@ class FasterWhisperAsrProvider(AsrProvider):
                 self._log_label,
                 model_source,
             )
+            local_files_only = is_hf_offline_mode()
 
             try:
                 self._model = WhisperModel(
@@ -56,7 +58,7 @@ class FasterWhisperAsrProvider(AsrProvider):
                     device="cuda",
                     compute_type="float16",
                     download_root=download_root,
-                    local_files_only=True,
+                    local_files_only=local_files_only,
                 )
             except Exception as exc:
                 logger.warning("[ASR] provider=%s CUDA 加载失败，回退 CPU: %s", self._log_label, exc)
@@ -65,7 +67,7 @@ class FasterWhisperAsrProvider(AsrProvider):
                     device="cpu",
                     compute_type="int8",
                     download_root=download_root,
-                    local_files_only=True,
+                    local_files_only=local_files_only,
                 )
 
         return self._model

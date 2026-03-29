@@ -26,6 +26,7 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 
+from ...shared.utils.asr.model_sources import HF_HUB_CACHE_DIR, prepare_hf_cache_env
 from ....utils.logger import get_logger
 from .tts_alignment import (
     AlignedToken,
@@ -48,7 +49,6 @@ logger = get_logger(__name__)
 # 项目路径与统一缓存路径
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 PROJECT_CACHE = PROJECT_ROOT / ".cache"
-HF_HUB_CACHE_DIR = PROJECT_CACHE / "huggingface" / "hub"
 MODELSCOPE_CACHE_DIR = PROJECT_CACHE / "modelscope"
 TORCH_CACHE_DIR = PROJECT_CACHE / "torch"
 AUDIO_SEPARATOR_MODEL_DIR = PROJECT_CACHE / "audio-separator" / "models"
@@ -101,33 +101,21 @@ def _get_tts_provider() -> str:
 
 
 def _prepare_model_cache_env() -> None:
-    """统一设置模型缓存目录到项目 .cache，避免落到仓库根 checkpoints。"""
+    """准备 TTS 运行时缓存环境，默认尊重用户级 Hugging Face 缓存设置。"""
+    prepare_hf_cache_env()
     HF_HUB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     MODELSCOPE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     TORCH_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     AUDIO_SEPARATOR_MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
     for key, value in _cache_env_vars().items():
-        os.environ[key] = value
-
-    # 如果 huggingface_hub 已经被导入，强制覆盖其运行时缓存常量。
-    try:
-        import huggingface_hub.constants as hf_constants
-        if hasattr(hf_constants, "HF_HUB_CACHE"):
-            hf_constants.HF_HUB_CACHE = str(HF_HUB_CACHE_DIR)
-    except Exception:
-        pass
+        os.environ.setdefault(key, value)
 
 
 def _cache_env_vars() -> dict[str, str]:
     return {
-        "XDG_CACHE_HOME": str(PROJECT_CACHE),
-        "HF_HOME": str(PROJECT_CACHE / "huggingface"),
-        "HF_HUB_CACHE": str(HF_HUB_CACHE_DIR),
-        "TRANSFORMERS_CACHE": str(HF_HUB_CACHE_DIR),
         "MODELSCOPE_CACHE": str(MODELSCOPE_CACHE_DIR),
         "TORCH_HOME": str(TORCH_CACHE_DIR),
-        "HF_HUB_DISABLE_SYMLINKS_WARNING": "1",
     }
 
 

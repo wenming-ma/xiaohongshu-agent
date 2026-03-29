@@ -1,6 +1,11 @@
+import importlib
 import os
 from pathlib import Path
 
+import huggingface_hub.constants as hf_constants
+
+import src.agents.shared.utils.asr as asr_package
+from src.agents.shared.utils.asr import model_sources as model_sources_module
 from src.agents.shared.utils import transcription as transcription_module
 from src.agents.video_post.utils import video_dubbing as video_dubbing_module
 
@@ -19,13 +24,28 @@ def _write_model_stub(model_dir: Path) -> None:
         (model_dir / filename).write_text("stub", encoding="utf-8")
 
 
-def test_cache_roots_resolve_from_repo_root() -> None:
-    expected_hf_hub_cache = PROJECT_ROOT / ".cache" / "huggingface" / "hub"
+def test_cache_roots_resolve_from_huggingface_defaults() -> None:
+    expected_hf_hub_cache = Path(hf_constants.HF_HUB_CACHE)
 
     assert transcription_module.PROJECT_ROOT == PROJECT_ROOT
     assert transcription_module.HF_HUB_CACHE_DIR == expected_hf_hub_cache
     assert video_dubbing_module.PROJECT_ROOT == PROJECT_ROOT
     assert video_dubbing_module.HF_HUB_CACHE_DIR == expected_hf_hub_cache
+
+
+def test_model_sources_respect_explicit_hf_cache_env(monkeypatch, tmp_path: Path) -> None:
+    with monkeypatch.context() as env_ctx:
+        env_ctx.setenv("HF_HOME", str(tmp_path / "hf-home"))
+        env_ctx.setenv("HF_HUB_CACHE", str(tmp_path / "hf-home" / "hub"))
+
+        reloaded = importlib.reload(model_sources_module)
+        assert reloaded.HF_HOME_DIR == tmp_path / "hf-home"
+        assert reloaded.HF_HUB_CACHE_DIR == tmp_path / "hf-home" / "hub"
+
+    importlib.reload(model_sources_module)
+    importlib.reload(asr_package)
+    importlib.reload(transcription_module)
+    importlib.reload(video_dubbing_module)
 
 
 def test_resolve_transcription_model_source_prefers_direct_model_dir(

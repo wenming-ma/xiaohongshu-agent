@@ -6,6 +6,7 @@ from threading import Lock
 
 from ..model_sources import (
     FASTER_WHISPER_MODEL_SPEC,
+    is_hf_offline_mode,
     prepare_cuda_library_path,
     prepare_hf_cache_env,
     resolve_model_source,
@@ -37,13 +38,14 @@ class FasterWhisperLanguageDetector(LanguageDetector):
                 raise RuntimeError("缺少 faster-whisper 依赖，无法加载语言检测器") from exc
 
             model_source, download_root = resolve_model_source(FASTER_WHISPER_MODEL_SPEC)
+            local_files_only = is_hf_offline_mode()
             try:
                 self._model = WhisperModel(
                     model_source,
                     device="cuda",
                     compute_type="float16",
                     download_root=download_root,
-                    local_files_only=True,
+                    local_files_only=local_files_only,
                 )
             except Exception:
                 self._model = WhisperModel(
@@ -51,7 +53,7 @@ class FasterWhisperLanguageDetector(LanguageDetector):
                     device="cpu",
                     compute_type="int8",
                     download_root=download_root,
-                    local_files_only=True,
+                    local_files_only=local_files_only,
                 )
 
         return self._model

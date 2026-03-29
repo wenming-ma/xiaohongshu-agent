@@ -93,12 +93,19 @@ class QwenAsrProvider(AsrProvider):
         except Exception as exc:
             raise RuntimeError("缺少 Qwen ASR 所需依赖（torch/qwen-asr）") from exc
 
-        if torch.cuda.is_available():
-            cuda_supports_bf16 = bool(
-                hasattr(torch.cuda, "is_bf16_supported") and torch.cuda.is_bf16_supported()
+        if not torch.cuda.is_available():
+            torch_version = getattr(torch, "__version__", "unknown")
+            cuda_version = getattr(getattr(torch, "version", None), "cuda", None)
+            raise RuntimeError(
+                "Qwen ASR 仅支持 GPU 运行，当前 torch 未启用 CUDA。"
+                f" 已检测到 torch={torch_version}, torch.version.cuda={cuda_version}. "
+                "请安装 CUDA 版 torch，并确认当前 Python 环境可见 NVIDIA GPU。"
             )
-            return ("cuda:0", torch.bfloat16 if cuda_supports_bf16 else torch.float16)
-        return ("cpu", torch.float32)
+
+        cuda_supports_bf16 = bool(
+            hasattr(torch.cuda, "is_bf16_supported") and torch.cuda.is_bf16_supported()
+        )
+        return ("cuda:0", torch.bfloat16 if cuda_supports_bf16 else torch.float16)
 
     def _load_model(self):
         if self._model is not None:
@@ -120,10 +127,12 @@ class QwenAsrProvider(AsrProvider):
             aligner_source, _ = resolve_model_source(QWEN_FORCED_ALIGNER_MODEL_SPEC)
             device_map, dtype = self._resolve_dtype_and_device()
             logger.info(
-                "[ASR] 加载 provider=%s, source=%s, forced_aligner=%s, timestamps=forced_aligner, language_detection=native",
+                "[ASR] 加载 provider=%s, source=%s, forced_aligner=%s, device=%s, dtype=%s, timestamps=forced_aligner, language_detection=native",
                 self.provider_name,
                 model_source,
                 aligner_source,
+                device_map,
+                dtype,
             )
             self._model = Qwen3ASRModel.from_pretrained(
                 model_source,

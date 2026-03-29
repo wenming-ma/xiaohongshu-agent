@@ -3,6 +3,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 import src.agents.shared.utils.asr.service as service_module
 from src.agents.shared.utils.asr.alignment.base import AlignmentResult
 from src.agents.shared.utils.asr.model_sources import (
@@ -175,6 +177,22 @@ def test_qwen_provider_returns_timestamped_segments(monkeypatch, tmp_path: Path)
     assert result.segments[0].start == 0.0
     assert result.segments[0].end == 1.1
     assert result.segments[0].text == "hello world."
+
+
+def test_qwen_provider_requires_cuda_torch() -> None:
+    provider = QwenAsrProvider()
+    fake_torch = SimpleNamespace(
+        __version__="2.11.0+cpu",
+        version=SimpleNamespace(cuda=None),
+        cuda=SimpleNamespace(is_available=lambda: False),
+        float16="float16",
+        bfloat16="bfloat16",
+        float32="float32",
+    )
+
+    with patch.dict("sys.modules", {"torch": fake_torch}):
+        with pytest.raises(RuntimeError, match="仅支持 GPU 运行"):
+            provider._resolve_dtype_and_device()
 
 
 def test_resolve_model_source_from_root_supports_qwen_snapshot_layout(tmp_path: Path) -> None:

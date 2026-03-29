@@ -6,8 +6,57 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[5]
 PROJECT_CACHE = PROJECT_ROOT / ".cache"
-HF_HOME_DIR = PROJECT_CACHE / "huggingface"
-HF_HUB_CACHE_DIR = HF_HOME_DIR / "hub"
+
+
+def _expand_path(value: str | os.PathLike[str] | None) -> Path | None:
+    if value is None:
+        return None
+    return Path(value).expanduser()
+
+
+def _resolve_hf_home_dir() -> Path:
+    env_hf_home = _expand_path(os.getenv("HF_HOME"))
+    if env_hf_home is not None:
+        return env_hf_home
+
+    env_hf_hub_cache = _expand_path(os.getenv("HF_HUB_CACHE"))
+    if env_hf_hub_cache is not None:
+        return env_hf_hub_cache.parent
+
+    try:
+        import huggingface_hub.constants as hf_constants
+
+        hf_home = _expand_path(getattr(hf_constants, "HF_HOME", None))
+        if hf_home is not None:
+            return hf_home
+        hf_hub_cache = _expand_path(getattr(hf_constants, "HF_HUB_CACHE", None))
+        if hf_hub_cache is not None:
+            return hf_hub_cache.parent
+    except Exception:
+        pass
+
+    return Path.home() / ".cache" / "huggingface"
+
+
+def _resolve_hf_hub_cache_dir() -> Path:
+    env_hf_hub_cache = _expand_path(os.getenv("HF_HUB_CACHE"))
+    if env_hf_hub_cache is not None:
+        return env_hf_hub_cache
+
+    try:
+        import huggingface_hub.constants as hf_constants
+
+        hf_hub_cache = _expand_path(getattr(hf_constants, "HF_HUB_CACHE", None))
+        if hf_hub_cache is not None:
+            return hf_hub_cache
+    except Exception:
+        pass
+
+    return _resolve_hf_home_dir() / "hub"
+
+
+HF_HOME_DIR = _resolve_hf_home_dir()
+HF_HUB_CACHE_DIR = _resolve_hf_hub_cache_dir()
 
 
 @dataclass(frozen=True)
@@ -51,26 +100,15 @@ QWEN_FORCED_ALIGNER_MODEL_SPEC = ModelSpec(
 
 def prepare_hf_cache_env() -> None:
     HF_HUB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_env = {
-        "XDG_CACHE_HOME": str(PROJECT_CACHE),
-        "HF_HOME": str(HF_HOME_DIR),
-        "HF_HUB_CACHE": str(HF_HUB_CACHE_DIR),
-        "TRANSFORMERS_CACHE": str(HF_HUB_CACHE_DIR),
-        "HF_HUB_OFFLINE": "1",
-        "HF_HUB_DISABLE_SYMLINKS_WARNING": "1",
-    }
-    for key, value in cache_env.items():
-        os.environ[key] = value
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
-    try:
-        import huggingface_hub.constants as hf_constants
 
-        if hasattr(hf_constants, "HF_HOME"):
-            hf_constants.HF_HOME = str(HF_HOME_DIR)
-        if hasattr(hf_constants, "HF_HUB_CACHE"):
-            hf_constants.HF_HUB_CACHE = str(HF_HUB_CACHE_DIR)
-    except Exception:
-        pass
+def is_hf_offline_mode() -> bool:
+    for key in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"):
+        raw = os.getenv(key, "").strip().lower()
+        if raw in {"1", "true", "yes", "y", "on"}:
+            return True
+    return False
 
 
 def prepare_cuda_library_path() -> None:
