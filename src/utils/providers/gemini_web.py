@@ -73,16 +73,29 @@ async () => {
 }
 """
 
+# 发送前记录页面上已有图片的 src，避免把参考图/历史图误判成新结果
+_SNAPSHOT_IMAGE_SOURCES_JS = """
+() => Array.from(
+    new Set(
+        Array.from(document.images)
+            .map(img => img.currentSrc || img.src || '')
+            .filter(Boolean)
+    )
+)
+"""
+
 # 轮询检测生成完成的 JS
 _POLL_IMAGE_JS = """
-() => {
+({ excludedSources = [] } = {}) => {
     const isVisible = (img) => {
         const rect = img.getBoundingClientRect();
         return rect.width > 0 && rect.height > 0;
     };
+    const excluded = new Set(excludedSources);
     const candidates = [];
     for (const [index, img] of Array.from(document.images).entries()) {
         const src = img.currentSrc || img.src || '';
+        if (excluded.has(src)) continue;
         if (!src || img.naturalWidth < 200 || img.naturalHeight < 200) continue;
         const rect = img.getBoundingClientRect();
         const score =
@@ -416,6 +429,8 @@ class GeminiWebImageClient:
                     await page.keyboard.insert_text(prompt)
                     await asyncio.sleep(0.5)
 
+                existing_image_sources = await self._snapshot_existing_image_sources(page)
+
                 # 4d. 等待发送按钮可用后点击
                 send_btn = page.locator('[aria-label="Send message"]')
                 try:
@@ -429,7 +444,11 @@ class GeminiWebImageClient:
                 logger.info("[GeminiWeb] 提示词已发送，等待图片生成...")
 
                 # 5. 轮询等待图片生成完成
-                image_meta = await self._poll_for_image(page, timeout)
+                image_meta = await self._poll_for_image(
+                    page,
+                    timeout,
+                    excluded_sources=existing_image_sources,
+                )
 
                 # 6. 下载图片（优先走浏览器原生下载事件）
                 output_path = await self._download_generated_image(page, image_meta, output_path)
@@ -506,13 +525,27 @@ class GeminiWebImageClient:
 
         logger.info("[GeminiWeb] %d 张参考图片上传完成", len(image_paths))
 
-    async def _poll_for_image(self, page: Page, timeout: int) -> dict[str, Any]:
+    async def _snapshot_existing_image_sources(self, page: Page) -> set[str]:
+        """记录发送前页面上已有的图片 src，避免误选参考图或历史图。"""
+        sources = await page.evaluate(_SNAPSHOT_IMAGE_SOURCES_JS)
+        if not isinstance(sources, list):
+            return set()
+        return {str(src).strip() for src in sources if src is not None and str(src).strip()}
+
+    async def _poll_for_image(
+        self,
+        page: Page,
+        timeout: int,
+        *,
+        excluded_sources: set[str] | None = None,
+    ) -> dict[str, Any]:
         """轮询页面直到图片生成完成"""
         poll_interval = 2
         elapsed = 0
+        excluded_payload = {"excludedSources": sorted(excluded_sources or set())}
 
         while elapsed < timeout:
-            image_meta = await page.evaluate(_POLL_IMAGE_JS)
+            image_meta = await page.evaluate(_POLL_IMAGE_JS, excluded_payload)
             if image_meta and image_meta.get("src"):
                 logger.info(
                     "[GeminiWeb] 图片生成完成 (耗时 %ds, src=%s)",

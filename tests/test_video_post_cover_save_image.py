@@ -1,7 +1,7 @@
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 
 from src.agents.video_post.cover.agent import CoverAgent
 from src.agents.video_post.cover.gemini_web_agent import GeminiWebAgent
@@ -63,11 +63,13 @@ class _FakePage:
         self,
         *,
         evaluate_results: list[object] | None = None,
+        evaluate_handler=None,
         download: _FakeDownload | None = None,
         download_error: Exception | None = None,
         response: _FakeAPIResponse | None = None,
     ):
         self._evaluate_results = list(evaluate_results or [])
+        self._evaluate_handler = evaluate_handler
         self._download = download
         self._download_error = download_error
         self.evaluate_calls: list[tuple[str, object]] = []
@@ -78,6 +80,8 @@ class _FakePage:
 
     async def evaluate(self, script: str, arg=None):
         self.evaluate_calls.append((script, arg))
+        if self._evaluate_handler is not None:
+            return self._evaluate_handler(script, arg, len(self.evaluate_calls) - 1)
         if not self._evaluate_results:
             raise AssertionError("unexpected evaluate call")
         result = self._evaluate_results.pop(0)
@@ -218,6 +222,107 @@ def test_download_via_request_preserves_original_bytes_and_suffix(tmp_path) -> N
     assert result == tmp_path / "cover.webp"
     assert result.read_bytes() == raw
     assert page.context.request.urls == ["https://lh3.googleusercontent.com/generated=s2048"]
+
+
+def test_snapshot_existing_image_sources_deduplicates_truthy_values() -> None:
+    client = object.__new__(GeminiWebImageClient)
+    page = _FakePage(evaluate_results=[["", None, "blob:frame-0", "blob:frame-0", "blob:frame-1"]])
+
+    result = asyncio.run(client._snapshot_existing_image_sources(page))
+
+    assert result == {"blob:frame-0", "blob:frame-1"}
+
+
+def test_poll_for_image_ignores_preexisting_sources_until_new_image_appears() -> None:
+    client = object.__new__(GeminiWebImageClient)
+    excluded_sources = {"blob:frame-0", "blob:frame-1"}
+
+    def _evaluate(script: str, arg, call_index: int):
+        assert set(arg["excludedSources"]) == excluded_sources
+        if call_index == 0:
+            return None
+        return {
+            "src": "blob:generated-image",
+            "width": 1024,
+            "height": 1024,
+            "alt": "AI generated",
+        }
+
+    page = _FakePage(evaluate_handler=_evaluate)
+
+    with patch("src.utils.providers.gemini_web.asyncio.sleep", AsyncMock()) as sleep_mock:
+        result = asyncio.run(
+            client._poll_for_image(page, timeout=4, excluded_sources=excluded_sources)
+        )
+
+    assert result["src"] == "blob:generated-image"
+    assert len(page.evaluate_calls) == 2
+    assert sleep_mock.await_count == 1
+
+
+def test_generate_image_snapshots_existing_sources_before_polling(tmp_path) -> None:
+    client = object.__new__(GeminiWebImageClient)
+    client._active_session_dir = "account1"
+
+    prompt_editor = SimpleNamespace(click=AsyncMock(), focus=AsyncMock())
+    send_button = SimpleNamespace(click=AsyncMock())
+    page = SimpleNamespace(
+        goto=AsyncMock(),
+        wait_for_selector=AsyncMock(),
+        wait_for_load_state=AsyncMock(),
+        evaluate=AsyncMock(side_effect=[True, "OK", None, True]),
+        locator=lambda selector: (
+            prompt_editor
+            if selector == '[aria-label="Enter a prompt for Gemini"]'
+            else send_button
+        ),
+        keyboard=SimpleNamespace(
+            press=AsyncMock(),
+            insert_text=AsyncMock(),
+        ),
+    )
+
+    reference_image = tmp_path / "frame_0.png"
+    reference_image.write_bytes(b"frame")
+    output_path = tmp_path / "cover.png"
+    output_path.write_bytes(b"cover")
+
+    with (
+        patch.object(client, "_ensure_browser", AsyncMock(return_value=page)),
+        patch.object(client, "_upload_reference_images", AsyncMock()),
+        patch.object(
+            client,
+            "_snapshot_existing_image_sources",
+            AsyncMock(return_value={"blob:frame-0"}),
+        ) as snapshot_mock,
+        patch.object(
+            client,
+            "_poll_for_image",
+            AsyncMock(return_value={"src": "blob:generated"}),
+        ) as poll_mock,
+        patch.object(
+            client,
+            "_download_generated_image",
+            AsyncMock(return_value=output_path),
+        ),
+        patch.object(client, "close", AsyncMock()),
+        patch.object(client, "_rotate"),
+    ):
+        result = asyncio.run(
+            client.generate_image(
+                prompt="generate a cozy dinner cover",
+                output_path=output_path,
+                reference_images=[reference_image],
+            )
+        )
+
+    assert result == output_path
+    snapshot_mock.assert_awaited_once_with(page)
+    poll_mock.assert_awaited_once_with(
+        page,
+        ANY,
+        excluded_sources={"blob:frame-0"},
+    )
 
 
 def test_gemini_web_agent_post_processes_saved_image_in_order(tmp_path) -> None:
