@@ -218,57 +218,79 @@ You are processing {limit_desc} starting from index {start_index}.
 
 
 async def run_agent(start_index: int, limit: int) -> None:
-    log("Initializing agent...")
-    server = create_sdk_mcp_server(name="video", tools=[run_video_post])
+    attempt = 0
 
-    options = ClaudeAgentOptions(
-        system_prompt=build_system_prompt(start_index, limit),
-        permission_mode="bypassPermissions",
-        # All default Claude Code tools (Read, Write, Edit, Bash, Grep, Glob, etc.)
-        tools={"type": "preset", "preset": "claude_code"},
-        mcp_servers={"video": server},
-        allowed_tools=["mcp__video__run_video_post"],
-        cwd=str(PROJECT_ROOT),
-        # Load user settings (inherits ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, etc.)
-        setting_sources=["user"],
-    )
+    while True:
+        attempt += 1
+        log(f"Starting agent session (attempt {attempt})...")
+        server = create_sdk_mcp_server(name="video", tools=[run_video_post])
 
-    prompt = (
-        f"Run the video post pipeline starting from topic index {start_index}, "
-        f"one topic at a time (limit=1). Iterate through all topics until done. Begin now."
-    )
+        options = ClaudeAgentOptions(
+            system_prompt=build_system_prompt(start_index, limit),
+            permission_mode="bypassPermissions",
+            # All default Claude Code tools (Read, Write, Edit, Bash, Grep, Glob, etc.)
+            tools={"type": "preset", "preset": "claude_code"},
+            mcp_servers={"video": server},
+            allowed_tools=["mcp__video__run_video_post"],
+            cwd=str(PROJECT_ROOT),
+            # Load user settings (inherits ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, etc.)
+            setting_sources=["user"],
+        )
 
-    log(f"Sending prompt to Claude: {prompt}")
-    log("Waiting for Claude Code CLI to start...")
-    turn = 0
+        prompt = (
+            f"Run the video post pipeline starting from topic index {start_index}, "
+            f"one topic at a time (limit=1). Iterate through all topics until done. Begin now."
+        )
 
-    async for message in query(prompt=prompt, options=options):
-        if isinstance(message, SystemMessage):
-            if message.subtype == "init":
-                tools = message.data.get("tools", [])
-                mcp = message.data.get("mcp_servers", {})
-                log(f"Claude Code session initialized ({len(tools)} tools, mcp={list(mcp.keys()) if isinstance(mcp, dict) else mcp})")
-        elif isinstance(message, AssistantMessage):
-            turn += 1
-            for block in message.content:
-                if isinstance(block, TextBlock):
-                    print(block.text, flush=True)
-                elif isinstance(block, ToolUseBlock):
-                    log(f"[Turn {turn}] Tool call: {block.name}({block.input})")
-        elif isinstance(message, ResultMessage):
-            print(f"\n{'=' * 60}", flush=True)
-            cost = (
-                f"Cost: ${message.total_cost_usd:.4f}"
-                if message.total_cost_usd
-                else ""
-            )
-            log(
-                f"Session complete. {cost} "
-                f"Turns: {message.num_turns}, "
-                f"Duration: {message.duration_ms / 1000:.1f}s"
-            )
-            if message.is_error:
-                log(f"Ended with error: {message.result}")
+        log(f"Sending prompt to Claude: {prompt}")
+        log("Waiting for Claude Code CLI to start...")
+        turn = 0
+        session_ok = False
+
+        try:
+            async for message in query(prompt=prompt, options=options):
+                if isinstance(message, SystemMessage):
+                    if message.subtype == "init":
+                        tools = message.data.get("tools", [])
+                        mcp = message.data.get("mcp_servers", {})
+                        log(f"Claude Code session initialized ({len(tools)} tools, mcp={list(mcp.keys()) if isinstance(mcp, dict) else mcp})")
+                elif isinstance(message, AssistantMessage):
+                    turn += 1
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            print(block.text, flush=True)
+                        elif isinstance(block, ToolUseBlock):
+                            log(f"[Turn {turn}] Tool call: {block.name}({block.input})")
+                elif isinstance(message, ResultMessage):
+                    print(f"\n{'=' * 60}", flush=True)
+                    cost = (
+                        f"Cost: ${message.total_cost_usd:.4f}"
+                        if message.total_cost_usd
+                        else ""
+                    )
+                    log(
+                        f"Session complete. {cost} "
+                        f"Turns: {message.num_turns}, "
+                        f"Duration: {message.duration_ms / 1000:.1f}s"
+                    )
+                    if message.is_error:
+                        log(f"Ended with error: {message.result}")
+                    else:
+                        session_ok = True
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:
+            log(f"CLI session crashed: {exc}")
+            log(f"Restarting agent session in 5 seconds...")
+            await asyncio.sleep(5)
+            continue
+
+        if session_ok:
+            log("Agent completed successfully.")
+            break
+        else:
+            log("Session ended with error. Restarting in 5 seconds...")
+            await asyncio.sleep(5)
 
 
 # ---------------------------------------------------------------------------
