@@ -39,6 +39,27 @@ to stay small, composable, and focused on a single responsibility.
 - **Keep `src/utils` infra-only**: `src/utils/` is reserved for providers, logging, prompting,
   file/retry helpers, and notifier integrations. Business helpers must not be added there.
 
+## Design Guidelines for Shared Capabilities
+
+- **Start from a stable contract**: Shared business capabilities under `src/agents/shared/utils/`
+  must define a fixed public input/output contract before choosing models, providers, or runtime
+  frameworks. Callers should depend on the contract, not on backend-specific parameters.
+- **Depend on abstractions, not implementations**: Pipeline code and phase agents should call a
+  capability through its public interface. Backend selection, implementation details, and
+  compatibility logic should stay behind that boundary.
+- **Separate orchestration from execution**: Service modules should handle selection, coordination,
+  validation, and result normalization. Implementation modules should only own the work specific
+  to one backend or strategy.
+- **Keep variation points isolated**: When a capability supports multiple backends or strategies,
+  isolate them behind adapters, providers, or registries instead of scattering conditional logic
+  across callers.
+- **Organize modules by responsibility**: Split public services, concrete implementations, and
+  internal helpers into separate modules once a capability has more than one backend or more than
+  one major responsibility.
+- **Keep the public surface minimal**: Expose only the configuration and methods that are part of
+  the product contract. Internal tuning knobs and implementation details should remain private by
+  default.
+
 ## Where to Wire Things
 
 - **New platform pipeline**: `src/agents/<content_type>/`
@@ -127,6 +148,15 @@ class ValidationResult(BaseModel):
 - 批次切分、并发控制、执行顺序、跨批重试、整体调度属于 pipeline 或 orchestration 层，不应塞进 agent 内部。
 - 如果某个能力既需要“单元内闭环”又需要“多单元调度”，优先拆成两层：
   上层负责拆分和调度，下层 agent 只负责把传入的单元处理到可用为止。
+
+### 共享能力设计
+
+- `src/agents/shared/utils/` 下的共享业务能力必须先定义稳定的输入输出契约，再决定具体模型、provider 或推理框架。
+- pipeline 和 agent 只能依赖共享能力的公开契约，不应直接依赖底层实现细节。
+- service 层负责选择、编排、校验和统一收口；具体实现层只负责某一种后端或策略的执行细节。
+- 一个共享能力存在多种实现方式时，应通过 provider、adapter、registry 等边界隔离差异，而不是把分支判断散落到调用方。
+- 当一个模块同时承担公开接口、实现细节和辅助逻辑时，应按职责拆分，避免单文件持续膨胀。
+- 对外接口和配置面应尽量小且稳定；默认不暴露内部调优参数，除非它们本身就是产品契约的一部分。
 
 ### 现有 Agent（示例）
 
