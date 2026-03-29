@@ -13,3 +13,9 @@
 - `src/agents/shared/utils/` 适合放转录、图片压缩、导航追踪、Playwright artifact 保护、图片后处理等业务共享能力
 - `src/utils` 只用于 provider、logger、prompting、retry、file_ops、通知器等基础 infra
 - shared agent 自身仍应保持单一职责，不承担完整 pipeline 编排
+
+## 共享工具
+
+| 文件 | 职责 |
+|------|------|
+| `utils/message_history.py` | `truncate_history_by_rounds()` — 按轮次截断 message history，自动处理 tool call/return 配对。审核修订循环必须使用，见 `src/core/AGENTS.md` |

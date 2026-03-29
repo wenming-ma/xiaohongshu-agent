@@ -44,9 +44,16 @@ to stay small, composable, and focused on a single responsibility.
 - **Start from a stable contract**: Shared business capabilities under `src/agents/shared/utils/`
   must define a fixed public input/output contract before choosing models, providers, or runtime
   frameworks. Callers should depend on the contract, not on backend-specific parameters.
+- **Keep shared contracts local to the capability**: When a shared capability exposes Pydantic
+  contract models, define them in that capability package, typically as `schemas.py`. Do not
+  place shared capability contracts in a pipeline-local `schemas.py`.
 - **Depend on abstractions, not implementations**: Pipeline code and phase agents should call a
   capability through its public interface. Backend selection, implementation details, and
   compatibility logic should stay behind that boundary.
+- **Keep dependency direction one-way**: Shared capabilities may be imported by pipelines, but a
+  shared capability must not import pipeline-local business schemas. If a pipeline needs extra
+  fields, adapt the shared contract at the pipeline boundary instead of pushing business fields
+  down into the shared module.
 - **Separate orchestration from execution**: Service modules should handle selection, coordination,
   validation, and result normalization. Implementation modules should only own the work specific
   to one backend or strategy.
@@ -56,6 +63,9 @@ to stay small, composable, and focused on a single responsibility.
 - **Organize modules by responsibility**: Split public services, concrete implementations, and
   internal helpers into separate modules once a capability has more than one backend or more than
   one major responsibility.
+- **Keep business-only fields local**: Fields that only make sense in one pipeline, such as
+  subtitle styling or TTS-only metadata, should stay in pipeline-local schemas or adapters rather
+  than being added to a shared capability contract.
 - **Keep the public surface minimal**: Expose only the configuration and methods that are part of
   the product contract. Internal tuning knobs and implementation details should remain private by
   default.
@@ -152,10 +162,13 @@ class ValidationResult(BaseModel):
 ### 共享能力设计
 
 - `src/agents/shared/utils/` 下的共享业务能力必须先定义稳定的输入输出契约，再决定具体模型、provider 或推理框架。
+- 共享能力如果需要暴露 Pydantic 契约模型，应把契约定义在该能力自己的目录里，通常命名为 `schemas.py`，不要把共享契约挂在某个 pipeline 的 `schemas.py` 下。
 - pipeline 和 agent 只能依赖共享能力的公开契约，不应直接依赖底层实现细节。
+- 依赖方向必须保持单向：pipeline 可以依赖 shared capability，但 shared capability 不应反向 import pipeline 里的业务 schema。若 pipeline 需要额外字段，应在 pipeline 边界做映射或扩展，而不是把业务字段塞回 shared 契约。
 - service 层负责选择、编排、校验和统一收口；具体实现层只负责某一种后端或策略的执行细节。
 - 一个共享能力存在多种实现方式时，应通过 provider、adapter、registry 等边界隔离差异，而不是把分支判断散落到调用方。
 - 当一个模块同时承担公开接口、实现细节和辅助逻辑时，应按职责拆分，避免单文件持续膨胀。
+- 仅在某一个 pipeline 内有意义的字段，应保留在该 pipeline 的本地 schema 或 adapter 中，例如字幕样式、TTS 专属标签等，不应进入共享能力的通用契约。
 - 对外接口和配置面应尽量小且稳定；默认不暴露内部调优参数，除非它们本身就是产品契约的一部分。
 
 ### 现有 Agent（示例）

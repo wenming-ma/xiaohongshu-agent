@@ -23,6 +23,24 @@ class MyAgent(BaseAgent):
     async def validate(self, output) -> ValidationResult: ...  # 验证
 ```
 
+## 审核修订循环必须传 Message History
+
+带 `step()` → `validate()` 循环的 agent 必须维护 message history，否则 LLM 每轮都是全新对话，会反复"原地打转"。
+
+规则：
+- State 维护 `message_history` + `review_history` 两条独立历史线
+- `step()` 和 `validate()` 都必须传 `message_history=` 给 `Agent.run()`，并用 `result.new_messages()` 累积
+- 用 `truncate_history_by_rounds()` 截断（`src/agents/shared/utils/message_history.py`），研究类 `keep_first_round=True`，内容/翻译类 `False`
+- 默认 `MAX_HISTORY_ROUNDS = 3`
+
+```python
+# 错误
+result = await self.agent.run(prompt)
+# 正确
+result = await self.agent.run(prompt, message_history=state.get_recent_history(3))
+state.message_history.extend(result.new_messages())
+```
+
 ## 验证器类型
 
 - **InternalValidator**: 返回反馈继续探索（研究任务）
