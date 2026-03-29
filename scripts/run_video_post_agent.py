@@ -170,11 +170,15 @@ limit={limit if limit > 0 else 0} to run the pipeline for ONE topic at a time.
    - Missing or empty outputs in intermediate steps (e.g., empty subtitles,
      missing audio segments, skipped TTS lines, failed downloads)
    - Any "retry", "fallback", "skip", "failed" keywords in the logs
-   If you find such issues, investigate the root cause, fix the code, and
-   re-run the same topic to verify the fix.
-4. Only after a truly clean run (exit code 0 AND no concerning warnings/errors
-   in the process log), move to the next topic by incrementing start_index.
-5. If the failure log files are mentioned in the output (e.g.,
+   If you find such issues, fix the code. But since the topic was already
+   published, do NOT re-run the same topic. Instead, move to the next topic
+   — your fix will be verified on the next topic's run.
+4. After a topic is published (exit code 0), always move to the next topic
+   by incrementing start_index, regardless of whether you found log issues.
+   The goal is to iterate through ALL topics.
+5. If a topic fails to publish (exit code 1 or 2), fix the error and re-run
+   the SAME topic until it publishes successfully, then move on.
+6. If the failure log files are mentioned in the output (e.g.,
    video_post_failures_*.jsonl, video_post_crash_*.json), read them for
    additional error context.
 
@@ -190,9 +194,8 @@ limit={limit if limit > 0 else 0} to run the pipeline for ONE topic at a time.
 - If you encounter the same error repeatedly after fixing, try a different
   approach or read more context from the codebase.
 - Do NOT modify `workshop/video_post/topics.json`.
-- Process ONE topic at a time (limit=1). After a clean run, increment
-  start_index and process the next topic. Continue until all topics are done.
-- A "clean run" means exit code 0 AND no skipped errors or concerning warnings.
+- Process ONE topic at a time (limit=1). Always advance to the next topic
+  after a successful publish (exit code 0). Continue until all topics are done.
 - After all topics are processed, summarize what you did and end.
 - If after extensive attempts you cannot fix an issue, explain what you tried
   and what the remaining problem is, then stop.
