@@ -29,6 +29,7 @@ There are six agent roles in this workflow:
 - When `controller` learns something worth preserving, it should record controller memory before that context can be lost to long-running exploration.
 - On a fresh session or whenever validator memory is stale, `controller` should ask `validator` to run first.
 - After any meaningful code change, `controller` should ask `validator` to run again before deciding whether to keep or discard the attempt.
+- Before requesting done, `controller` should inspect the relevant directory under `posts/` and the latest output directory. Validator output is necessary but not sufficient evidence for completion.
 - Explore boldly and verify carefully. Do not lock onto a direction without evidence.
 - If Python catches an unhandled `ci_agent` exception, it may invoke `recovery` before retrying the same attempt.
 
@@ -78,6 +79,7 @@ There are six agent roles in this workflow:
 - Before a long exploratory branch, before declaring done, and before requesting rollback, `controller` should update controller memory with the latest strategic state.
 - `controller` should request rollback explicitly when the current attempt should be discarded; Python will execute the rollback safely.
 - `controller` should request done explicitly when the current validated state is good enough; Python will perform legality checks and finalize the session.
+- `controller` must verify that the published result package under `posts/` is materially complete before requesting done.
 - A done request before the minimum outer-attempt threshold is treated as a progress checkpoint, not an immediate exit. Python will notify the user and continue the loop.
 
 ## Validator Rules

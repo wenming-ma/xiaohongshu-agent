@@ -65,7 +65,7 @@ class ClusterConfig:
         default_target = (
             "uv run python workshop/video_post/run.py"
             " --topics-file workshop/video_post/topics.json"
-            " --limit 1 --no-publish"
+            " --limit 1"
         )
         load_dotenv(project_root / ".env")
         kwargs: dict = {
@@ -104,6 +104,7 @@ class ClusterConfig:
         env.setdefault("CI_AGENT_SOURCE_ROOT", str(self.project_root))
         env.setdefault("CI_AGENT_WORKTREE_ROOT", str(self.worktree_root))
         env.setdefault("CI_AGENT_ANALYSIS_ROOT", str(self.cache_root / "analysis" / self.session_id))
+        env.setdefault("CI_AGENT_POSTS_ROOT", str(self.project_root / "posts"))
         env.setdefault("PYTHONUTF8", "1")
         env.setdefault("PYTHONIOENCODING", "utf-8")
         return env

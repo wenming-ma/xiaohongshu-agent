@@ -965,6 +965,7 @@ Hard rules:
 - Prefer the smallest sufficient change, not the smallest possible diff.
 - Controller memory entries should be compact: short bullets or short paragraphs, focused on what must survive context compression.
 - Before calling `request_done`, you must ensure there is at least one completed, reviewable video artifact from the current repo state.
+- Before calling `request_done`, you must not rely on validator memory alone. Inspect the `posts` directory and the latest output directory to verify the published artifact set is actually present and materially complete for the current repo state.
 - Your structured response must include `output_dir` and `review_video_path` when a completed artifact exists.
 - If you call `request_done`, `review_video_path` must point to the review artifact you want Python to send to the user.
 - If the current attempt should be discarded, you must call the `request_rollback` tool. Do not encode rollback only in structured output.
@@ -1019,7 +1020,7 @@ Rules:
 - Do not modify repository code.
 - Do not run the target command; validator owns that.
 - You have shell access. Use it boldly for investigation, prototyping, and gathering references.
-- Shell starts in the analysis workspace. Useful environment variables include `CI_AGENT_SOURCE_ROOT`, `CI_AGENT_WORKTREE_ROOT`, and `CI_AGENT_ANALYSIS_ROOT`.
+- Shell starts in the analysis workspace. Useful environment variables include `CI_AGENT_SOURCE_ROOT`, `CI_AGENT_WORKTREE_ROOT`, `CI_AGENT_ANALYSIS_ROOT`, and `CI_AGENT_POSTS_ROOT`.
 - Filesystem tools in this subagent use virtual paths rooted at the analysis workspace. Example: use `/_failed.json`, not a Windows absolute path, with `read_file`, `ls`, `glob`, or `grep`.
 - If you need to inspect source-repo files outside the analysis workspace, prefer the `explore` subagent or use shell commands with explicit absolute paths.
 - Do not waste time trying to discover hidden virtual-path mappings. Analysis files are directly available under the analysis workspace root.

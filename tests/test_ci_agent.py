@@ -135,6 +135,24 @@ def test_cluster_config_defaults_to_session_scoped_cache_paths(tmp_path: Path) -
     built_env = config.build_env()
     assert built_env["PYTHONUTF8"] == "1"
     assert built_env["PYTHONIOENCODING"] == "utf-8"
+    assert built_env["CI_AGENT_POSTS_ROOT"] == str(repo / "posts")
+
+
+def test_controller_prompt_requires_posts_verification_before_done(tmp_path: Path) -> None:
+    repo = _create_repo(tmp_path)
+    cache_root = repo / ".cache" / "ci_agent"
+    config = ClusterConfig.from_env(
+        project_root=repo,
+        cache_root=cache_root,
+        session_id="session123",
+        target_command="python -c \"print('ok')\"",
+    )
+    orchestrator = Orchestrator(config, agent_runtime=object())  # type: ignore[arg-type]
+    prompt = orchestrator._build_controller_prompt(attempt_num=1, head_before="abc123")
+
+    assert f"Posts root: {repo / 'posts'}" in prompt
+    assert "Do not trust validator alone when deciding to stop." in prompt
+    assert "confirm the successful published outputs are actually present and materially complete" in prompt
 
 
 def test_build_controller_model_uses_chat_completions_settings(tmp_path: Path, monkeypatch) -> None:
