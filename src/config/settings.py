@@ -191,10 +191,11 @@ class ReferenceImageConfig:
     MAX_TOTAL_IMAGES_PER_GROUP = int(os.getenv("REFERENCE_IMAGE_MAX_TOTAL_PER_GROUP", "6"))
 
 
+class ASRConfig:
+    PROVIDER = os.getenv("ASR_PROVIDER", "faster_whisper")
+
+
 class SubtitleConfig:
-    WHISPER_MODEL = os.getenv("WHISPER_MODEL", "large-v3")
-    WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cuda")
-    WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "float16")
     TARGET_LANGUAGE = "zh"
     FONT_NAME = "Microsoft YaHei"
     FONT_SIZE = 24

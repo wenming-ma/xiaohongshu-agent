@@ -8,8 +8,14 @@ from pathlib import Path
 from typing import Any
 
 from ....utils.logger import get_logger
-from ...shared.utils.transcription import extract_audio_track, get_transcription_model
+from ...shared.utils.transcription import extract_audio_track, get_asr_service
+from ..schemas import SubtitleResult, SubtitleSegment
 from ..utils.tts_tags import DEFAULT_TONE_TAG, build_tts_text, normalize_tone_tag
+from .prompts import (
+    download_subtitle_review_user_prompt,
+    download_subtitle_revision_user_prompt,
+    download_subtitle_translation_user_prompt,
+)
 
 logger = get_logger(__name__)
 
@@ -27,6 +33,22 @@ _MAX_TTS_CHARS_PER_SECOND = 6.5
 _MIN_TTS_SEGMENT_DURATION = 0.35
 _SUBTITLE_TRANSLATION_BATCH_SIZE = 15
 _SUBTITLE_TRANSLATION_MAX_CONCURRENCY = 5
+_LEGACY_LANG_NAMES = {
+    "en": "英文",
+    "ja": "日文",
+    "ko": "韩文",
+    "fr": "法文",
+    "es": "西班牙文",
+    "de": "德文",
+    "pt": "葡萄牙文",
+    "ru": "俄文",
+    "th": "泰文",
+    "vi": "越南文",
+    "ar": "阿拉伯文",
+    "it": "意大利文",
+    "mixed": "混合语言",
+    "zh": "中文字幕",
+}
 
 SUBTITLE_STYLES = {
     "food": {
@@ -178,42 +200,186 @@ def pick_subtitle_style(topic: str) -> dict:
     return SUBTITLE_STYLES["default"]
 
 
-class SubtitleSegment:
-    def __init__(
-        self,
-        start: float,
-        end: float,
-        text: str,
-        speaker_id: int = 0,
-        tone_tag: str = "",
-    ):
-        self.start = start
-        self.end = end
-        self.text = text
-        self.speaker_id = speaker_id
-        self.tone_tag = tone_tag
+class _LegacySubtitleTranslationAdapter:
+    def __init__(self, translator: Any, reviewer: Any, *, max_review_rounds: int = 10):
+        self.translator = translator
+        self.reviewer = reviewer
+        self.max_review_rounds = max_review_rounds
 
-
-class SubtitleGenerationResult:
-    def __init__(
+    async def forward(
         self,
-        success: bool,
-        segments: list[SubtitleSegment] | None = None,
-        language: str = "",
-        translated: bool = False,
-        srt_path: str = "",
-        tts_srt_path: str = "",
-        video_with_subs: str = "",
-        error_message: str = "",
-    ):
-        self.success = success
-        self.segments = segments or []
-        self.language = language
-        self.translated = translated
-        self.srt_path = srt_path
-        self.tts_srt_path = tts_srt_path
-        self.video_with_subs = video_with_subs
-        self.error_message = error_message
+        segments: list[SubtitleSegment],
+        *,
+        source_language: str,
+        translate_first: bool = True,
+    ) -> list[SubtitleSegment]:
+        normalized_source = [self._normalize_segment(segment) for segment in segments]
+        if not normalized_source:
+            return []
+
+        current_segments = [self._normalize_segment(segment) for segment in normalized_source] if not translate_first else []
+        feedback = ""
+        current_review = None
+
+        for review_round in range(self.max_review_rounds):
+            if review_round == 0 and translate_first:
+                prompt = self._build_translate_prompt(normalized_source, source_language)
+                result = await self.translator.run(prompt)
+                current_segments = self._build_segments_from_result(
+                    source_segments=normalized_source,
+                    translation_batch=result.output,
+                    fallback_segments=current_segments or normalized_source,
+                )
+            elif review_round > 0:
+                prompt = self._build_revision_prompt(
+                    normalized_source,
+                    current_segments,
+                    source_language,
+                    feedback or "请修复所有非中文和不自然表达。",
+                )
+                result = await self.translator.run(prompt)
+                current_segments = self._build_segments_from_result(
+                    source_segments=normalized_source,
+                    translation_batch=result.output,
+                    fallback_segments=current_segments or normalized_source,
+                )
+
+            review_prompt = self._build_review_prompt(normalized_source, current_segments, source_language)
+            current_review = (await self.reviewer.run(review_prompt)).output
+            if current_review.passed:
+                return [self._normalize_segment(segment) for segment in current_segments]
+
+            feedback = self._build_review_feedback(current_review)
+
+        raise RuntimeError(
+            f"字幕翻译审核未通过，达到最大审核轮数 ({self.max_review_rounds}): "
+            f"{self._build_review_feedback(current_review)}"
+        )
+
+    def _build_translate_prompt(self, segments: list[SubtitleSegment], source_language: str) -> str:
+        source_lines, speaker_instruction = self._format_segments(segments)
+        return download_subtitle_translation_user_prompt(
+            lang_name=self._resolve_lang_name(source_language),
+            source_lines=source_lines,
+            speaker_instruction=speaker_instruction,
+        )
+
+    def _build_revision_prompt(
+        self,
+        source_segments: list[SubtitleSegment],
+        current_segments: list[SubtitleSegment],
+        source_language: str,
+        feedback: str,
+    ) -> str:
+        source_lines, speaker_instruction = self._format_segments(source_segments)
+        current_lines, _ = self._format_segments(current_segments)
+        return download_subtitle_revision_user_prompt(
+            lang_name=self._resolve_lang_name(source_language),
+            feedback=feedback,
+            source_lines=source_lines,
+            current_lines=current_lines,
+            speaker_instruction=speaker_instruction,
+        )
+
+    def _build_review_prompt(
+        self,
+        source_segments: list[SubtitleSegment],
+        translated_segments: list[SubtitleSegment],
+        source_language: str,
+    ) -> str:
+        source_lines, _ = self._format_segments(source_segments)
+        translated_lines, _ = self._format_segments(translated_segments)
+        return download_subtitle_review_user_prompt(
+            lang_name=self._resolve_lang_name(source_language),
+            source_lines=source_lines,
+            translated_lines=translated_lines,
+        )
+
+    @staticmethod
+    def _build_segments_from_result(
+        *,
+        source_segments: list[SubtitleSegment],
+        translation_batch: Any,
+        fallback_segments: list[SubtitleSegment],
+    ) -> list[SubtitleSegment]:
+        translated_lines = {
+            line.index: line
+            for line in getattr(translation_batch, "lines", [])
+        }
+        translated_segments: list[SubtitleSegment] = []
+
+        for line_index, segment in enumerate(source_segments, start=1):
+            translated_line = translated_lines.get(line_index)
+            fallback_segment = (
+                fallback_segments[line_index - 1]
+                if line_index - 1 < len(fallback_segments)
+                else segment
+            )
+            translated_text = (
+                _normalize_subtitle_text(getattr(translated_line, "text", ""))
+                if translated_line is not None
+                else ""
+            )
+            if not translated_text:
+                translated_text = _normalize_subtitle_text(fallback_segment.text)
+
+            tone_source = (
+                getattr(translated_line, "tone_tag", "")
+                if translated_line is not None
+                else fallback_segment.tone_tag
+            )
+            translated_segments.append(
+                SubtitleSegment(
+                    start=segment.start,
+                    end=segment.end,
+                    text=translated_text,
+                    speaker_id=segment.speaker_id,
+                    tone_tag=normalize_tone_tag(tone_source or DEFAULT_TONE_TAG),
+                )
+            )
+
+        return translated_segments
+
+    @staticmethod
+    def _format_segments(segments: list[SubtitleSegment]) -> tuple[str, str]:
+        has_multiple_speakers = len({segment.speaker_id for segment in segments}) > 1
+        if has_multiple_speakers:
+            lines = "\n".join(
+                f"{index + 1}. [说话人{segment.speaker_id}] {segment.text}"
+                for index, segment in enumerate(segments)
+            )
+            return lines, (
+                "- 每行开头的 [说话人N] 只是上下文，不要出现在输出里\n"
+                "- 说话人不同可以保留不同语气\n"
+            )
+
+        lines = "\n".join(f"{index + 1}. {segment.text}" for index, segment in enumerate(segments))
+        return lines, ""
+
+    @staticmethod
+    def _normalize_segment(segment: SubtitleSegment) -> SubtitleSegment:
+        return SubtitleSegment(
+            start=segment.start,
+            end=segment.end,
+            text=_normalize_subtitle_text(segment.text),
+            speaker_id=segment.speaker_id,
+            tone_tag=normalize_tone_tag(segment.tone_tag or DEFAULT_TONE_TAG),
+        )
+
+    @staticmethod
+    def _build_review_feedback(review: Any) -> str:
+        if review is None:
+            return "字幕中文审核未通过，请根据问题修订。"
+        lines = [getattr(review, "summary", "").strip() or "字幕中文审核未通过，请根据问题修订。"]
+        for issue in getattr(review, "issues", []):
+            cleaned = str(issue).strip()
+            if cleaned:
+                lines.append(f"- {cleaned}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _resolve_lang_name(source_language: str) -> str:
+        return _LEGACY_LANG_NAMES.get(source_language or "mixed", f"{source_language} 字幕")
 
 
 class SubtitleGenerator:
@@ -223,12 +389,17 @@ class SubtitleGenerator:
         subtitle_translation_agent: Any | None = None,
     ):
         self.subtitle_translation_agent = subtitle_translation_agent
-
-    def _load_model(self) -> None:
-        self.model = get_transcription_model()
+        self.asr_service = get_asr_service()
 
     def _require_subtitle_translation_agent(self) -> Any:
         if self.subtitle_translation_agent is None:
+            legacy_translation_agent = getattr(self, "translation_agent", None)
+            legacy_translation_reviewer = getattr(self, "translation_reviewer", None)
+            if legacy_translation_agent is not None and legacy_translation_reviewer is not None:
+                return _LegacySubtitleTranslationAdapter(
+                    legacy_translation_agent,
+                    legacy_translation_reviewer,
+                )
             raise RuntimeError("字幕翻译审核 agent 未配置")
         return self.subtitle_translation_agent
 
@@ -241,7 +412,7 @@ class SubtitleGenerator:
         font_file: str = "",
         font_name: str = "",
         font_path: Path | None = None,
-    ) -> SubtitleGenerationResult:
+    ) -> SubtitleResult:
         try:
             logger.info(f"开始生成字幕: {video_path.name}")
             _ = font_file
@@ -269,7 +440,7 @@ class SubtitleGenerator:
 
             if not segments:
                 logger.warning("无字幕片段，跳过烧录")
-                return SubtitleGenerationResult(
+                return SubtitleResult(
                     success=False,
                     segments=[],
                     language=detected_lang,
@@ -294,7 +465,7 @@ class SubtitleGenerator:
             )
             logger.info(f"字幕烧录完成: {output_path}")
 
-            return SubtitleGenerationResult(
+            return SubtitleResult(
                 success=True,
                 segments=segments,
                 language=detected_lang,
@@ -305,41 +476,30 @@ class SubtitleGenerator:
             )
         except Exception as e:
             logger.error(f"字幕生成失败: {e}")
-            return SubtitleGenerationResult(success=False, error_message=str(e))
+            return SubtitleResult(success=False, error_message=str(e))
 
     async def _extract_audio(self, video_path: Path) -> Path:
         return await extract_audio_track(video_path)
 
     async def _transcribe_audio(self, audio_path: Path) -> tuple[list[SubtitleSegment], str]:
-        self._load_model()
-
         logger.info("开始音频转录并生成字幕片段...")
-        loop = asyncio.get_event_loop()
+        transcription = await self.asr_service.transcribe_audio(audio_path)
+        if not transcription.success:
+            raise RuntimeError(transcription.error_message or "ASR 转录失败")
 
-        def _transcribe():
-            segments_iter, info = self.model.transcribe(
-                str(audio_path),
-                language=None,
-                task="transcribe",
-                word_timestamps=True,
-                vad_filter=True,
-            )
-            return list(segments_iter), info
-
-        segments_list, info = await loop.run_in_executor(None, _transcribe)
-        detected_lang = info.language
+        detected_lang = transcription.language
         logger.info(f"检测到语言: {detected_lang}")
-
-        segments = [
+        logger.info(f"转录完成: {len(transcription.segments)} 个字幕片段")
+        return [
             SubtitleSegment(
                 start=segment.start,
                 end=segment.end,
-                text=segment.text.strip(),
+                text=_normalize_subtitle_text(segment.text),
+                speaker_id=segment.speaker_id,
+                tone_tag=normalize_tone_tag(segment.tone_tag or DEFAULT_TONE_TAG),
             )
-            for segment in segments_list
-        ]
-        logger.info(f"转录完成: {len(segments)} 个字幕片段")
-        return segments, detected_lang
+            for segment in transcription.segments
+        ], detected_lang
 
     async def _assign_speakers(
         self,
@@ -610,3 +770,20 @@ class SubtitleGenerator:
                 raise RuntimeError("烧录后的视频文件为空")
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def __getattr__(name: str):
+    if name in {"SubtitleTranslationReview", "TranslationBatch", "TranslationLine"}:
+        from .subtitle_translation_agent import (
+            SubtitleTranslationReview,
+            TranslationBatch,
+            TranslationLine,
+        )
+
+        exported = {
+            "SubtitleTranslationReview": SubtitleTranslationReview,
+            "TranslationBatch": TranslationBatch,
+            "TranslationLine": TranslationLine,
+        }
+        return exported[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

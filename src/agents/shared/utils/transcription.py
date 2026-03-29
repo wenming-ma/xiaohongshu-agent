@@ -1,235 +1,64 @@
-import asyncio
-import os
-import subprocess
-import tempfile
+from __future__ import annotations
+
 from pathlib import Path
-from threading import Lock
-from typing import Optional
 
-from faster_whisper import WhisperModel
+from .asr import (
+    AudioTranscriber,
+    FASTER_WHISPER_MODEL_SPEC,
+    HF_HOME_DIR,
+    HF_HUB_CACHE_DIR,
+    PROJECT_CACHE,
+    PROJECT_ROOT,
+    FasterWhisperAsrProvider,
+    extract_audio_track,
+    get_asr_service,
+    release_asr_resources,
+    resolve_model_source_from_root,
+)
 
-from ....utils.logger import get_logger
-
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
-PROJECT_CACHE = PROJECT_ROOT / ".cache"
-HF_HOME_DIR = PROJECT_CACHE / "huggingface"
-HF_HUB_CACHE_DIR = HF_HOME_DIR / "hub"
-TRANSCRIPTION_MODEL_REPO_ID = "Systran/faster-whisper-large-v3"
-LOCAL_TRANSCRIPTION_MODEL_ROOT = HF_HUB_CACHE_DIR / "models--Systran--faster-whisper-large-v3"
-LOCAL_TRANSCRIPTION_MODEL_PATH = LOCAL_TRANSCRIPTION_MODEL_ROOT / "faster-whisper-large-v3"
+TRANSCRIPTION_MODEL_REPO_ID = FASTER_WHISPER_MODEL_SPEC.repo_id
+LOCAL_TRANSCRIPTION_MODEL_ROOT = HF_HUB_CACHE_DIR / FASTER_WHISPER_MODEL_SPEC.cache_root_name
+LOCAL_TRANSCRIPTION_MODEL_PATH = LOCAL_TRANSCRIPTION_MODEL_ROOT / (
+    FASTER_WHISPER_MODEL_SPEC.direct_model_dir_name or ""
+)
 LOCAL_TRANSCRIPTION_MODEL_SNAPSHOTS_DIR = LOCAL_TRANSCRIPTION_MODEL_ROOT / "snapshots"
-
-# 设置离线模式和禁用警告
-os.environ["HF_HUB_OFFLINE"] = "1"
-os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-
-# 添加 CUDA cuBLAS DLL 路径到 PATH
-_venv_nvidia_bin = PROJECT_ROOT / ".venv" / "Lib" / "site-packages" / "nvidia" / "cublas" / "bin"
-if _venv_nvidia_bin.exists():
-    os.environ["PATH"] = str(_venv_nvidia_bin) + os.pathsep + os.environ.get("PATH", "")
-
-logger = get_logger(__name__)
-
-TRANSCRIPTION_CONFIG = {
-    "DEVICE": "cuda",
-    "COMPUTE_TYPE": "float16",
-}
-
-_shared_transcription_model: Optional[WhisperModel] = None
-_shared_transcription_model_lock = Lock()
-
-
-def _prepare_transcription_cache_env() -> None:
-    HF_HUB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-    cache_env = {
-        "XDG_CACHE_HOME": str(PROJECT_CACHE),
-        "HF_HOME": str(HF_HOME_DIR),
-        "HF_HUB_CACHE": str(HF_HUB_CACHE_DIR),
-        "TRANSFORMERS_CACHE": str(HF_HUB_CACHE_DIR),
-        "HF_HUB_OFFLINE": "1",
-        "HF_HUB_DISABLE_SYMLINKS_WARNING": "1",
-    }
-    for key, value in cache_env.items():
-        os.environ[key] = value
-
-    try:
-        import huggingface_hub.constants as hf_constants
-
-        if hasattr(hf_constants, "HF_HOME"):
-            hf_constants.HF_HOME = str(HF_HOME_DIR)
-        if hasattr(hf_constants, "HF_HUB_CACHE"):
-            hf_constants.HF_HUB_CACHE = str(HF_HUB_CACHE_DIR)
-    except Exception:
-        pass
-
-
-def _is_transcription_model_dir(path: Path) -> bool:
-    required_files = (
-        "config.json",
-        "model.bin",
-        "preprocessor_config.json",
-        "tokenizer.json",
-    )
-    return path.is_dir() and all((path / filename).exists() for filename in required_files)
 
 
 def _resolve_transcription_model_source() -> tuple[str, str | None]:
-    if _is_transcription_model_dir(LOCAL_TRANSCRIPTION_MODEL_PATH):
-        return str(LOCAL_TRANSCRIPTION_MODEL_PATH), None
-
-    if LOCAL_TRANSCRIPTION_MODEL_SNAPSHOTS_DIR.is_dir():
-        snapshot_dirs = sorted(
-            (
-                path
-                for path in LOCAL_TRANSCRIPTION_MODEL_SNAPSHOTS_DIR.iterdir()
-                if _is_transcription_model_dir(path)
-            ),
-            key=lambda path: path.stat().st_mtime,
-            reverse=True,
-        )
-        if snapshot_dirs:
-            return str(snapshot_dirs[0]), None
-
-    return TRANSCRIPTION_MODEL_REPO_ID, str(HF_HUB_CACHE_DIR)
+    return resolve_model_source_from_root(
+        LOCAL_TRANSCRIPTION_MODEL_ROOT,
+        repo_id=TRANSCRIPTION_MODEL_REPO_ID,
+        required_files=FASTER_WHISPER_MODEL_SPEC.required_files,
+        direct_model_dir_name=LOCAL_TRANSCRIPTION_MODEL_PATH.name,
+        cache_dir=HF_HUB_CACHE_DIR,
+    )
 
 
-def get_transcription_model() -> WhisperModel:
-    global _shared_transcription_model
-    if _shared_transcription_model is not None:
-        return _shared_transcription_model
-
-    with _shared_transcription_model_lock:
-        if _shared_transcription_model is None:
-            _prepare_transcription_cache_env()
-            model_source, download_root = _resolve_transcription_model_source()
-            logger.info("加载音频转录模型（本地离线模式）...")
-            logger.info(f"转录模型源: {model_source}")
-            _shared_transcription_model = WhisperModel(
-                model_source,
-                device=TRANSCRIPTION_CONFIG["DEVICE"],
-                compute_type=TRANSCRIPTION_CONFIG["COMPUTE_TYPE"],
-                download_root=download_root,
-                local_files_only=True,
-            )
-            logger.info("音频转录模型加载完成")
-    return _shared_transcription_model
+def get_transcription_model():
+    service = get_asr_service("faster_whisper")
+    provider = service.get_provider()
+    if not isinstance(provider, FasterWhisperAsrProvider):
+        raise RuntimeError("默认转录模型 provider 不是 faster_whisper")
+    return provider._load_model()
 
 
 def release_transcription_model() -> None:
-    import gc
-
-    global _shared_transcription_model
-    with _shared_transcription_model_lock:
-        if _shared_transcription_model is not None:
-            del _shared_transcription_model
-            _shared_transcription_model = None
-            gc.collect()
-            try:
-                import torch
-
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            except ImportError:
-                pass
+    release_asr_resources()
 
 
-async def has_audio_track(video_path: Path) -> bool:
-    probe = await asyncio.create_subprocess_exec(
-        "ffprobe",
-        "-v",
-        "error",
-        "-select_streams",
-        "a",
-        "-show_entries",
-        "stream=codec_type",
-        "-of",
-        "csv=p=0",
-        str(video_path),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    stdout, _ = await probe.communicate()
-    return bool(stdout.strip())
-
-
-async def extract_audio_track(video_path: Path) -> Path:
-    if not await has_audio_track(video_path):
-        raise RuntimeError("视频无音频轨道，无法提取音频")
-
-    audio_path = Path(tempfile.mktemp(suffix=".mp3"))
-    cmd = [
-        "ffmpeg",
-        "-i",
-        str(video_path),
-        "-vn",
-        "-acodec",
-        "libmp3lame",
-        "-q:a",
-        "4",
-        "-y",
-        str(audio_path),
-    ]
-    logger.info(f"提取音频: {video_path.name} -> {audio_path.name}")
-
-    process = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    _, stderr = await process.communicate()
-
-    if process.returncode != 0:
-        raise RuntimeError(f"ffmpeg 音频提取失败: {stderr.decode()[-500:]}")
-
-    if not audio_path.exists() or audio_path.stat().st_size == 0:
-        raise RuntimeError("ffmpeg 输出文件为空")
-
-    logger.info(f"音频提取完成: {audio_path.stat().st_size / (1024 * 1024):.1f} MB")
-    return audio_path
-
-
-class AudioTranscriber:
-    """使用本地转录模型进行纯文本转录。"""
-
-    def _load_model(self) -> None:
-        self.model = get_transcription_model()
-
-    async def transcribe(self, video_path: Path) -> "TranscriptionResult":
-        from ...video_post.schemas import TranscriptionResult
-
-        if not video_path.exists():
-            return TranscriptionResult(success=False, error_message=f"文件不存在: {video_path}")
-
-        try:
-            self._load_model()
-            audio_path = await extract_audio_track(video_path)
-
-            logger.info("开始音频转录（纯文本）...")
-            loop = asyncio.get_event_loop()
-
-            def _transcribe():
-                segments_iter, info = self.model.transcribe(
-                    str(audio_path),
-                    language=None,
-                    task="transcribe",
-                    vad_filter=True,
-                )
-                segments_list = list(segments_iter)
-                transcript = " ".join(seg.text.strip() for seg in segments_list)
-                return transcript, info.language
-
-            transcript, detected_lang = await loop.run_in_executor(None, _transcribe)
-
-            if audio_path.exists():
-                audio_path.unlink(missing_ok=True)
-
-            logger.info(f"转录完成: {len(transcript)} 字符，语言: {detected_lang}")
-            return TranscriptionResult(
-                success=True,
-                transcript=transcript,
-                language=detected_lang,
-            )
-        except Exception as e:
-            logger.error(f"转录失败: {e}")
-            return TranscriptionResult(success=False, error_message=str(e))
+__all__ = [
+    "AudioTranscriber",
+    "HF_HOME_DIR",
+    "HF_HUB_CACHE_DIR",
+    "LOCAL_TRANSCRIPTION_MODEL_PATH",
+    "LOCAL_TRANSCRIPTION_MODEL_ROOT",
+    "LOCAL_TRANSCRIPTION_MODEL_SNAPSHOTS_DIR",
+    "PROJECT_CACHE",
+    "PROJECT_ROOT",
+    "TRANSCRIPTION_MODEL_REPO_ID",
+    "_resolve_transcription_model_source",
+    "extract_audio_track",
+    "get_asr_service",
+    "get_transcription_model",
+    "release_transcription_model",
+]

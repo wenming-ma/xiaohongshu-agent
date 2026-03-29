@@ -1,0 +1,126 @@
+import asyncio
+from pathlib import Path
+from unittest.mock import patch
+
+import src.agents.shared.utils.asr.service as service_module
+from src.agents.shared.utils.asr.alignment.base import AlignmentResult
+from src.agents.shared.utils.asr.model_sources import COHERE_ASR_MODEL_SPEC, resolve_model_source_from_root
+from src.agents.shared.utils.asr.providers.cohere import CohereAsrProvider
+from src.agents.video_post.schemas import SubtitleSegment, TranscriptionResult
+
+
+class _FakeProvider:
+    def __init__(self, result: TranscriptionResult):
+        self.result = result
+        self.released = False
+
+    def transcribe_audio(self, _audio_path: Path) -> TranscriptionResult:
+        return self.result
+
+    def release(self) -> None:
+        self.released = True
+
+
+class _FakeLanguageDetector:
+    def detect_language(self, _audio_path: Path) -> str:
+        return "en"
+
+    def release(self) -> None:
+        pass
+
+
+class _FakeAligner:
+    def align(self, *, audio_path: Path, transcript: str, language: str) -> AlignmentResult:
+        del audio_path, transcript
+        return AlignmentResult(
+            language=language,
+            duration_seconds=4,
+            segments=[
+                SubtitleSegment(start=0.0, end=1.0, text="fresh transcript"),
+                SubtitleSegment(start=1.0, end=4.0, text="from cohere"),
+            ],
+        )
+
+    def release(self) -> None:
+        pass
+
+
+def _write_stub_files(model_dir: Path, filenames: tuple[str, ...]) -> None:
+    model_dir.mkdir(parents=True, exist_ok=True)
+    for filename in filenames:
+        (model_dir / filename).write_text("stub", encoding="utf-8")
+
+
+def test_get_asr_service_uses_configured_provider(monkeypatch) -> None:
+    service_module.release_asr_resources()
+    monkeypatch.setattr(service_module.ASRConfig, "PROVIDER", "cohere")
+
+    service = service_module.get_asr_service()
+
+    assert service.provider_name == "cohere"
+    service_module.release_asr_resources()
+
+
+def test_asr_service_fills_timestamp_contract_from_plain_transcript(tmp_path: Path) -> None:
+    audio_path = tmp_path / "sample.mp3"
+    audio_path.write_bytes(b"audio")
+    fake_provider = _FakeProvider(
+        TranscriptionResult(
+            success=True,
+            transcript="hello world",
+            language="en",
+            duration_seconds=7,
+        )
+    )
+
+    service = service_module.AsrService("fake")
+    with patch("src.agents.shared.utils.asr.service.create_asr_provider", return_value=fake_provider):
+        result = asyncio.run(service.transcribe_audio(audio_path))
+
+    assert result.success is True
+    assert result.transcript == "hello world"
+    assert len(result.segments) == 1
+    assert result.segments[0].start == 0.0
+    assert result.segments[0].end == 7.0
+    assert result.segments[0].text == "hello world"
+
+
+def test_cohere_provider_uses_reference_segments_to_build_timestamped_output(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    audio_path = tmp_path / "sample.wav"
+    audio_path.write_bytes(b"audio")
+    provider = CohereAsrProvider(
+        language_detector=_FakeLanguageDetector(),
+        timestamp_aligner=_FakeAligner(),
+    )
+    monkeypatch.setattr(provider, "_transcribe_text", lambda _path, _language: "fresh transcript from cohere")
+
+    result = provider.transcribe_audio(audio_path)
+
+    assert result.success is True
+    assert result.language == "en"
+    assert result.transcript == "fresh transcript from cohere"
+    assert len(result.segments) == 2
+    assert result.segments[0].start == 0.0
+    assert result.segments[-1].end == 4.0
+
+
+def test_resolve_model_source_from_root_supports_snapshot_only_layout(tmp_path: Path) -> None:
+    model_root = tmp_path / "models--CohereLabs--cohere-transcribe-03-2026"
+    snapshots_dir = model_root / "snapshots"
+    older_snapshot = snapshots_dir / "older"
+    newer_snapshot = snapshots_dir / "newer"
+    _write_stub_files(older_snapshot, COHERE_ASR_MODEL_SPEC.required_files)
+    _write_stub_files(newer_snapshot, COHERE_ASR_MODEL_SPEC.required_files)
+
+    result, download_root = resolve_model_source_from_root(
+        model_root,
+        repo_id=COHERE_ASR_MODEL_SPEC.repo_id,
+        required_files=COHERE_ASR_MODEL_SPEC.required_files,
+        cache_dir=tmp_path,
+    )
+
+    assert result == str(newer_snapshot)
+    assert download_root is None

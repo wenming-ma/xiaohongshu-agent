@@ -74,6 +74,7 @@ class TranscriptionResult(BaseModel):
     transcript: str = ""
     language: str = ""
     duration_seconds: int = 0
+    segments: List["SubtitleSegment"] = []
     error_message: str = ""
 
 
@@ -81,6 +82,7 @@ class SubtitleSegment(BaseModel):
     start: float
     end: float
     text: str
+    speaker_id: int = 0
     tone_tag: str = ""
 
 
@@ -136,3 +138,6 @@ class VideoPublishResult(BaseModel):
     retry_count: int = 0
     video_path: Optional[str] = None
     content_snapshot: Optional[Dict[str, Any]] = None
+
+
+TranscriptionResult.model_rebuild()
