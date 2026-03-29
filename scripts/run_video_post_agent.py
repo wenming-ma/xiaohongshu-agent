@@ -150,7 +150,7 @@ async def run_video_post(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_system_prompt(start_index: int, limit: int) -> str:
-    limit_desc = f"up to {limit} topics" if limit > 0 else "all remaining topics"
+    limit_desc = f"up to {limit} topics" if limit > 0 else "all topics one by one"
     return f"""\
 You are an autonomous CI agent for the xiaohongshu-agent project. Your job is to
 run the video post pipeline and fix any errors that prevent it from completing
@@ -159,7 +159,7 @@ successfully.
 ## Your Workflow
 
 1. Call the `run_video_post` tool with start_index={start_index} and \
-limit={limit if limit > 0 else 0} to run the pipeline for ONE topic at a time.
+limit=1 to run the pipeline for ONE topic at a time.
 2. Read the ENTIRE output carefully — not just the exit code. Check for:
    - Exit code 0: The topic finished, but there may still be issues (see step 3).
    - Exit code 1: Some topics failed. Read the failure details.
@@ -233,10 +233,10 @@ async def run_agent(start_index: int, limit: int) -> None:
         setting_sources=["user"],
     )
 
-    prompt = f"Run the video post pipeline starting from topic index {start_index}"
-    if limit > 0:
-        prompt += f", processing up to {limit} topics"
-    prompt += ". Begin now."
+    prompt = (
+        f"Run the video post pipeline starting from topic index {start_index}, "
+        f"one topic at a time (limit=1). Iterate through all topics until done. Begin now."
+    )
 
     log(f"Sending prompt to Claude: {prompt}")
     log("Waiting for Claude Code CLI to start...")
