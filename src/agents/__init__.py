@@ -6,7 +6,7 @@ def register_pipelines() -> None:
     from ..core.pipeline_registry import PipelineRegistry
     from .article_post import XHSArticlePostPipeline
     from .image_post import XHSImagePostPipeline
-    from .video_post import XHSVideoPostPipeline
+    from .video_post.pipeline import XHSVideoPostPipeline
     from .styled_image_post import StyledImagePostPipeline
 
     for pipeline_cls in (
