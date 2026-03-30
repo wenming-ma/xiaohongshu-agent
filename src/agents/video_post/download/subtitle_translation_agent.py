@@ -129,6 +129,22 @@ class SubtitleTranslationAgent(BaseAgent):
                     f"输出了 {actual} 行，但原始字幕共 {expected} 行。"
                     f"必须输出完整的 {expected} 行翻译，不能跳过或合并。"
                 )
+            expected_indices = set(range(1, expected + 1))
+            actual_indices = [line.index for line in output.lines]
+            actual_index_set = set(actual_indices)
+            if len(actual_index_set) != len(actual_indices):
+                raise ModelRetry(
+                    "输出存在重复 index。"
+                    f"必须完整覆盖 1 到 {expected}，且每个 index 只能出现一次。"
+                )
+            if actual_index_set != expected_indices:
+                missing = sorted(expected_indices - actual_index_set)
+                extra = sorted(actual_index_set - expected_indices)
+                raise ModelRetry(
+                    "输出 index 不完整。"
+                    f"缺失: {missing or '无'}；多余: {extra or '无'}。"
+                    f"必须完整覆盖 1 到 {expected}。"
+                )
             return output
         self.reviewer = Agent(
             model=model,
@@ -185,11 +201,9 @@ class SubtitleTranslationAgent(BaseAgent):
         expected_count = len(state.source_segments)
         result = await self.translator.run(prompt, deps=expected_count, message_history=recent_history)
         state.message_history.extend(result.new_messages())
-        fallback_segments = state.current_segments or state.source_segments
         state.current_segments = self._build_segments_from_result(
             source_segments=state.source_segments,
             translation_batch=result.output,
-            fallback_segments=fallback_segments,
         )
         return state.current_segments
 
@@ -260,27 +274,16 @@ class SubtitleTranslationAgent(BaseAgent):
         *,
         source_segments: list[SubtitleSegment],
         translation_batch: TranslationBatch,
-        fallback_segments: list[SubtitleSegment],
     ) -> list[SubtitleSegment]:
         translated_lines = {line.index: line for line in translation_batch.lines}
         translated_segments: list[SubtitleSegment] = []
 
         for line_index, segment in enumerate(source_segments, start=1):
             translated_line = translated_lines.get(line_index)
-            fallback_segment = (
-                fallback_segments[line_index - 1]
-                if line_index - 1 < len(fallback_segments)
-                else segment
-            )
-            translated_text = (
-                normalize_subtitle_text(translated_line.text)
-                if translated_line is not None
-                else ""
-            )
-            # Keep missing or blank lines empty so review can catch omissions directly
-            # instead of silently restoring stale subtitles from a previous revision.
-
-            tone_source = translated_line.tone_tag if translated_line is not None else fallback_segment.tone_tag
+            if translated_line is None:
+                raise RuntimeError(f"字幕翻译输出缺少第 {line_index} 行")
+            translated_text = normalize_subtitle_text(translated_line.text)
+            tone_source = translated_line.tone_tag
             translated_segments.append(
                 SubtitleSegment(
                     start=segment.start,

@@ -1,6 +1,8 @@
 import asyncio
 from types import SimpleNamespace
 
+from pydantic_ai import ModelRetry
+
 from src.agents.video_post.schemas import SubtitleSegment
 from src.agents.video_post.download.agent import DownloadAgent
 from src.agents.video_post.download.subtitle_translation_agent import (
@@ -54,6 +56,11 @@ def _build_agent(
 
     monkeypatch.setattr(SubtitleTranslationAgent, "init_agent", _init_agent)
     return SubtitleTranslationAgent(max_review_rounds=max_review_rounds)
+
+
+def _get_output_validator() -> object:
+    agent = SubtitleTranslationAgent(max_review_rounds=1)
+    return agent.translator._output_validators[0]
 
 
 def test_subtitle_translation_agent_revises_until_review_passes(monkeypatch) -> None:
@@ -121,39 +128,59 @@ def test_subtitle_translation_agent_raises_after_ten_failed_reviews(monkeypatch)
     assert len(agent.reviewer.calls) == 10
 
 
-def test_subtitle_translation_agent_missing_revision_line_does_not_restore_stale_text(monkeypatch) -> None:
+def test_subtitle_translation_output_validator_rejects_duplicate_or_missing_indices() -> None:
+    validator = _get_output_validator()
+    translation_batch = TranslationBatch(
+        lines=[
+            TranslationLine(index=1, tone_tag="neutral", text="new 1"),
+            TranslationLine(index=2, tone_tag="neutral", text="new 2"),
+            TranslationLine(index=2, tone_tag="neutral", text="new 3"),
+        ]
+    )
+
+    try:
+        asyncio.run(validator.function(SimpleNamespace(deps=3), translation_batch))
+        raise AssertionError("expected duplicate/missing indices to be rejected")
+    except ModelRetry as exc:
+        assert "index" in str(exc)
+
+
+def test_subtitle_translation_output_validator_accepts_complete_contiguous_indices() -> None:
+    validator = _get_output_validator()
+    translation_batch = TranslationBatch(
+        lines=[
+            TranslationLine(index=index, tone_tag="neutral", text=f"new {index}")
+            for index in range(1, 4)
+        ]
+    )
+
+    result = asyncio.run(validator.function(SimpleNamespace(deps=3), translation_batch))
+
+    assert result == translation_batch
+
+
+def test_subtitle_translation_agent_raises_if_missing_index_reaches_segment_builder(monkeypatch) -> None:
     monkeypatch.setattr(SubtitleTranslationAgent, "init_agent", lambda self: None)
     agent = SubtitleTranslationAgent(max_review_rounds=1)
     source_segments = [
         SubtitleSegment(start=float(index), end=float(index + 1), text=f"source {index}", tone_tag="neutral")
-        for index in range(1, 16)
+        for index in range(1, 4)
     ]
-    fallback_segments = [
-        SubtitleSegment(start=float(index), end=float(index + 1), text=f"old {index}", tone_tag="neutral")
-        for index in range(1, 16)
-    ]
-    fallback_segments[14] = SubtitleSegment(
-        start=14.0,
-        end=15.0,
-        text="你得这样做才行",
-        tone_tag="neutral",
-    )
     translation_batch = TranslationBatch(
         lines=[
-            TranslationLine(index=index, tone_tag="neutral", text=f"new {index}")
-            for index in range(1, 15)
+            TranslationLine(index=1, tone_tag="neutral", text="new 1"),
+            TranslationLine(index=2, tone_tag="neutral", text="new 2"),
         ]
     )
 
-    result = agent._build_segments_from_result(
-        source_segments=source_segments,
-        translation_batch=translation_batch,
-        fallback_segments=fallback_segments,
-    )
-
-    assert len(result) == 15
-    assert result[13].text == "new 14"
-    assert result[14].text == ""
+    try:
+        agent._build_segments_from_result(
+            source_segments=source_segments,
+            translation_batch=translation_batch,
+        )
+        raise AssertionError("expected missing index to raise")
+    except RuntimeError as exc:
+        assert "缺少第 3 行" in str(exc)
 
 
 def test_download_agent_keeps_batching_outside_translation_agent(monkeypatch) -> None:
