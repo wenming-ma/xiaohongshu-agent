@@ -86,6 +86,7 @@ DOWNLOAD_SUBTITLE_TRANSLATION_USER_PROMPT_TEMPLATE = """将以下{lang_name}字�
 - 不要输出方括号，不要输出中文 tag，不要输出长句 tag
 - 如果语气不明显，用 neutral
 - 按结构化结果输出，每条包含 index、tone_tag、text
+- 必须输出与原始字幕相同数量的行，不能跳过或合并任何一行
 
 {source_lines}
 """
@@ -103,7 +104,8 @@ DOWNLOAD_SUBTITLE_REVISION_USER_PROMPT_TEMPLATE = """请基于原始{lang_name}�
 {current_lines}
 
 修订要求：
-- 必须逐条输出完整结果，不能只输出修改建议
+- 必须输出所有行的完整翻译结果，不能只输出有问题的行或修改建议
+- 输出行数必须与原始字幕一致，未修改的行也要原样输出
 - 每一条都必须是自然、简短、适合中文 TTS 朗读的中文
 - 可以保留少量已经融入中文表达的常见英文单词，如 app、API、Wi-Fi、iPhone、OK
 - 不要保留完整外语短句、大段外语片段或明显不自然的混写

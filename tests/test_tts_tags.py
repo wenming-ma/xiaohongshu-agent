@@ -1,7 +1,8 @@
 import tempfile
 from pathlib import Path
 
-from src.agents.video_post.download.subtitle import SubtitleGenerator, SubtitleSegment
+from src.agents.video_post.schemas import SubtitleSegment
+from src.agents.video_post.utils.subtitle_helpers import generate_srt
 from src.agents.video_post.utils.tts_tags import (
     DEFAULT_TONE_TAG,
     normalize_tone_tag,
@@ -26,7 +27,6 @@ def test_prepare_provider_tts_text_strips_tag_for_google() -> None:
 
 
 def test_generate_srt_writes_display_and_tts_tracks() -> None:
-    generator = SubtitleGenerator()
     segments = [
         SubtitleSegment(start=0.0, end=1.5, text="慢慢搅拌均匀", tone_tag="gentle"),
         SubtitleSegment(start=1.5, end=3.0, text="这一步很关键", tone_tag="serious"),
@@ -35,8 +35,8 @@ def test_generate_srt_writes_display_and_tts_tracks() -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
         display_srt = Path(temp_dir) / "display.srt"
         tts_srt = Path(temp_dir) / "tts.srt"
-        generator._generate_srt(segments, display_srt, include_tone_tags=False)
-        generator._generate_srt(segments, tts_srt, include_tone_tags=True)
+        generate_srt(segments, display_srt, include_tone_tags=False)
+        generate_srt(segments, tts_srt, include_tone_tags=True)
 
         display_text = display_srt.read_text(encoding="utf-8")
         tts_text = tts_srt.read_text(encoding="utf-8")

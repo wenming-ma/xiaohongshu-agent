@@ -9,14 +9,23 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
 from ....core.base_agent import BaseAgent, ValidationResult
-from ..schemas import VideoSource, DownloadResult, Platform
+from ..schemas import VideoSource, DownloadResult, SubtitleResult, SubtitleSegment, Platform
 from ....utils.logger import get_logger
 from ....utils.providers import get_text_model
 from ...shared.utils.asr import (
     AudioTranscriber,
+    extract_audio_track,
+    get_asr_service,
     release_asr_resources,
 )
-from .subtitle import SubtitleGenerator
+from ..utils.subtitle_helpers import (
+    SUBTITLE_CONFIG,
+    build_tts_segments,
+    burn_subtitles,
+    generate_srt,
+    normalize_subtitle_text,
+)
+from ..utils.tts_tags import DEFAULT_TONE_TAG
 from .subtitle_translation_agent import SubtitleTranslationAgent
 from .prompts import (
     download_font_selector_system_prompt,
@@ -64,6 +73,8 @@ MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB
 DOWNLOAD_TIMEOUT = 1200  # 20 minutes
 DEFAULT_PRESELECT_TOP_K = 3
 DEFAULT_FONT_FILE = "ZCOOLKuaiLe-Regular.ttf"
+_SUBTITLE_TRANSLATION_BATCH_SIZE = 15
+_SUBTITLE_TRANSLATION_MAX_CONCURRENCY = 5
 
 FONT_CATALOG = [
     {
@@ -225,6 +236,7 @@ class DownloadAgent(BaseAgent):
             ),
         )
         self.subtitle_translation_agent = SubtitleTranslationAgent()
+        self.asr_service = get_asr_service()
         self._apply_font_selection(_default_font_selection())
 
     async def forward(
@@ -234,8 +246,6 @@ class DownloadAgent(BaseAgent):
         topic: str = "",
         preselect_top_k: int = DEFAULT_PRESELECT_TOP_K,
     ) -> DownloadResult:
-        self._topic = topic
-
         if not sources:
             raise RuntimeError("没有可下载的视频源")
 
@@ -244,17 +254,15 @@ class DownloadAgent(BaseAgent):
             top_k = max(1, min(preselect_top_k, total_sources))
             logger.info(f"候选视频总数: {total_sources}，预筛选 Top {top_k} 进入下载")
 
-            # Step 1: 先做轻量预评分，避免下载全部候选
+            # Step 1: 预评分，按元数据筛选 TopK
             selected_sources = self._preselect_sources(sources, topic, top_k)
 
-            # Step 2: 仅下载 TopK，并做转录用于精细评分
+            # Step 2: 下载 TopK 候选 + 转录文本（用于精细评分）
             candidates = await self._download_candidates(
                 selected_sources,
                 output_dir,
                 stage_name=f"Top{len(selected_sources)}",
             )
-
-            # 回退：若 TopK 全部失败，再尝试其余候选，避免整批失败
             if not candidates and len(selected_sources) < total_sources:
                 selected_urls = {s.url for s in selected_sources}
                 fallback_sources = [s for s in sources if s.url not in selected_urls]
@@ -266,39 +274,41 @@ class DownloadAgent(BaseAgent):
                     output_dir,
                     stage_name="Fallback",
                 )
-
             if not candidates:
                 raise RuntimeError(f"所有 {total_sources} 个视频源下载均失败")
 
-            # Step 3: 综合打分 + LLM 评估，选最佳视频
+            # Step 3: 综合打分 + LLM 评估，选出最佳视频
             best = await self._pick_best(candidates, topic)
             logger.info(f"选中最佳视频: {best.source.title[:50]}")
-
-            # Step 4: 只对选中的视频做字体选择 + 字幕烧录
-            await self._select_font(best.source)
-            best = await self._transcribe(best)
-
-            # 清理未选中的视频文件
             for c in candidates:
                 if c is not best and c.local_path:
                     path = Path(c.local_path)
                     if path.exists():
                         path.unlink(missing_ok=True)
 
+            # Step 4: 字体选择
+            await self._select_font(best.source, topic)
+
+            # Step 5: 字幕生成（转录 → 翻译 → SRT → 烧录）
+            best = await self._transcribe(best, topic)
+
             return best
         finally:
-            keep_loaded_raw = os.getenv("VIDEO_POST_KEEP_TRANSCRIPTION_MODEL_LOADED", "").strip().lower()
-            if not keep_loaded_raw:
-                keep_loaded_raw = os.getenv("VIDEO_POST_KEEP_WHISPER_LOADED", "").strip().lower()
-            if keep_loaded_raw:
-                keep_loaded = keep_loaded_raw in {"1", "true", "yes", "y", "on"}
-            else:
-                keep_loaded = self.KEEP_TRANSCRIPTION_MODEL_LOADED_BY_DEFAULT
+            self._maybe_release_asr_resources()
 
-            if keep_loaded:
-                logger.info("转录模型保持常驻（CUDA），跳过释放")
-            else:
-                release_asr_resources()
+    def _maybe_release_asr_resources(self) -> None:
+        keep_loaded_raw = os.getenv("VIDEO_POST_KEEP_TRANSCRIPTION_MODEL_LOADED", "").strip().lower()
+        if not keep_loaded_raw:
+            keep_loaded_raw = os.getenv("VIDEO_POST_KEEP_WHISPER_LOADED", "").strip().lower()
+        if keep_loaded_raw:
+            keep_loaded = keep_loaded_raw in {"1", "true", "yes", "y", "on"}
+        else:
+            keep_loaded = self.KEEP_TRANSCRIPTION_MODEL_LOADED_BY_DEFAULT
+
+        if keep_loaded:
+            logger.info("转录模型保持常驻（CUDA），跳过释放")
+        else:
+            release_asr_resources()
 
     async def _download_candidates(
         self,
@@ -608,11 +618,10 @@ class DownloadAgent(BaseAgent):
 
         return ValidationResult.success("视频文件验证通过")
 
-    async def _select_font(self, source: VideoSource) -> None:
-        """使用 LLM Agent 根据视频内容选择最佳字幕字体"""
+    async def _select_font(self, source: VideoSource, topic: str = "") -> None:
         try:
             prompt = download_font_selector_user_prompt(
-                topic=getattr(self, '_topic', ''),
+                topic=topic,
                 video_title=source.title,
                 video_description=source.description,
             )
@@ -625,12 +634,11 @@ class DownloadAgent(BaseAgent):
             self._apply_font_selection(_default_font_selection())
             logger.warning(f"字体选择失败，使用默认字体: {e}")
 
-    async def _transcribe(self, result: DownloadResult) -> DownloadResult:
+    async def _transcribe(self, result: DownloadResult, topic: str = "") -> DownloadResult:
         video_path = Path(result.local_path)
         output_dir = video_path.parent
         subtitled_path = output_dir / f"{video_path.stem}_subtitled{video_path.suffix}"
 
-        # 无 yt-dlp 字幕 -> 音频转录
         has_existing_transcript = (
             result.transcription is not None
             and result.transcription.success
@@ -653,17 +661,11 @@ class DownloadAgent(BaseAgent):
             except Exception as e:
                 logger.warning(f"转录过程异常（不影响下载结果）: {e}")
 
-        # 字幕生成 + 烧录
         try:
-            subtitle_gen = SubtitleGenerator(
-                subtitle_translation_agent=self.subtitle_translation_agent,
-            )
-            subtitle_result_obj = await subtitle_gen.generate_and_burn(
+            subtitle_result_obj = await self._generate_and_burn_subtitles(
                 video_path=video_path,
                 output_path=subtitled_path,
-                target_language="zh",
-                topic=getattr(self, '_topic', ''),
-                font_file=getattr(self, '_font_file', ''),
+                topic=topic,
                 font_name=getattr(self, '_font_name', ''),
                 font_path=getattr(self, '_font_path', None),
             )
@@ -679,6 +681,228 @@ class DownloadAgent(BaseAgent):
             logger.warning(f"字幕生成过程异常（不影响下载结果）: {e}")
 
         return result
+
+    async def _generate_and_burn_subtitles(
+        self,
+        video_path: Path,
+        output_path: Path,
+        topic: str = "",
+        font_name: str = "",
+        font_path: Path | None = None,
+    ) -> SubtitleResult:
+        try:
+            logger.info(f"开始生成字幕: {video_path.name}")
+
+            audio_path = await extract_audio_track(video_path)
+            segments, detected_lang = await self._transcribe_audio(audio_path)
+
+            if segments:
+                segments = await self._assign_speakers(segments, audio_path)
+
+            if audio_path.exists():
+                audio_path.unlink(missing_ok=True)
+
+            translate_first = detected_lang != "zh" and SUBTITLE_CONFIG["ENABLE_TRANSLATION"]
+            if translate_first:
+                logger.info(f"检测到 {detected_lang}，开始翻译成中文...")
+            segments = await self._translate_segments_for_chinese_tts(
+                segments,
+                source_language=detected_lang,
+                translate_first=translate_first,
+            )
+            translated = translate_first
+
+            if not segments:
+                logger.warning("无字幕片段，跳过烧录")
+                return SubtitleResult(
+                    success=False,
+                    segments=[],
+                    language=detected_lang,
+                    error_message="转录无结果（视频可能无人声）",
+                )
+
+            srt_path = output_path.with_suffix(".srt")
+            tts_srt_path = output_path.with_name(f"{output_path.stem}_tts.srt")
+            tts_segments = build_tts_segments(segments)
+            generate_srt(segments, srt_path, include_tone_tags=False)
+            logger.info(f"屏显 SRT 文件生成: {srt_path}")
+            generate_srt(tts_segments, tts_srt_path, include_tone_tags=True)
+            logger.info(f"TTS SRT 文件生成: {tts_srt_path}")
+
+            await burn_subtitles(
+                video_path,
+                srt_path,
+                output_path,
+                topic=topic,
+                font_name=font_name,
+                font_path=font_path,
+            )
+            logger.info(f"字幕烧录完成: {output_path}")
+
+            return SubtitleResult(
+                success=True,
+                segments=segments,
+                language=detected_lang,
+                translated=translated,
+                srt_path=str(srt_path),
+                tts_srt_path=str(tts_srt_path),
+                video_with_subs=str(output_path),
+            )
+        except Exception as e:
+            logger.error(f"字幕生成失败: {e}")
+            return SubtitleResult(success=False, error_message=str(e))
+
+    async def _transcribe_audio(self, audio_path: Path) -> tuple[list[SubtitleSegment], str]:
+        logger.info("开始音频转录并生成字幕片段...")
+        transcription = await self.asr_service.transcribe_audio(audio_path)
+        if not transcription.success:
+            raise RuntimeError(transcription.error_message or "ASR 转录失败")
+
+        detected_lang = transcription.language
+        logger.info(f"检测到语言: {detected_lang}")
+        logger.info(f"转录完成: {len(transcription.segments)} 个字幕片段")
+        return [
+            SubtitleSegment(
+                start=segment.start,
+                end=segment.end,
+                text=normalize_subtitle_text(segment.text),
+                speaker_id=segment.speaker_id,
+                tone_tag=DEFAULT_TONE_TAG,
+            )
+            for segment in transcription.segments
+        ], detected_lang
+
+    async def _assign_speakers(
+        self,
+        segments: list[SubtitleSegment],
+        audio_path: Path,
+    ) -> list[SubtitleSegment]:
+        try:
+            from pyannote.audio import Pipeline as PyannotePipeline
+        except ImportError:
+            logger.debug("pyannote-audio 未安装，跳过说话人识别")
+            return segments
+
+        hf_token = os.environ.get("HF_TOKEN", "")
+        if not hf_token:
+            logger.debug("未配置 HF_TOKEN，跳过说话人识别")
+            return segments
+
+        try:
+            loop = asyncio.get_event_loop()
+
+            def _diarize():
+                pipeline = PyannotePipeline.from_pretrained(
+                    "pyannote/speaker-diarization-3.1",
+                    use_auth_token=hf_token,
+                )
+                return pipeline(str(audio_path))
+
+            logger.info("开始说话人识别（pyannote）...")
+            diarization = await loop.run_in_executor(None, _diarize)
+
+            diarized_segments = []
+            for turn, _, speaker in diarization.itertracks(yield_label=True):
+                diarized_segments.append((turn.start, turn.end, speaker))
+
+            if not diarized_segments:
+                return segments
+
+            speaker_labels = sorted({speaker for _, _, speaker in diarized_segments})
+            label_to_id = {label: index for index, label in enumerate(speaker_labels)}
+            logger.info(f"识别到 {len(speaker_labels)} 个说话人: {speaker_labels}")
+
+            for segment in segments:
+                segment_mid = (segment.start + segment.end) / 2
+                best_speaker = None
+                best_overlap = 0.0
+                for start, end, label in diarized_segments:
+                    overlap = max(0.0, min(segment.end, end) - max(segment.start, start))
+                    if overlap > best_overlap:
+                        best_overlap = overlap
+                        best_speaker = label
+                if best_speaker is None:
+                    for start, end, label in diarized_segments:
+                        if start <= segment_mid <= end:
+                            best_speaker = label
+                            break
+                if best_speaker is not None:
+                    segment.speaker_id = label_to_id[best_speaker]
+
+            return segments
+        except Exception as e:
+            logger.warning(f"说话人识别失败（不影响字幕生成）: {e}")
+            return segments
+
+    async def _translate_segments_for_chinese_tts(
+        self,
+        segments: list[SubtitleSegment],
+        *,
+        source_language: str,
+        translate_first: bool = True,
+    ) -> list[SubtitleSegment]:
+        from ..utils.tts_tags import normalize_tone_tag
+
+        def _resolve_tone_tag(seg: SubtitleSegment) -> str:
+            return normalize_tone_tag(seg.tone_tag or DEFAULT_TONE_TAG)
+
+        normalized_source = [
+            SubtitleSegment(
+                start=segment.start,
+                end=segment.end,
+                text=normalize_subtitle_text(segment.text),
+                speaker_id=segment.speaker_id,
+                tone_tag=_resolve_tone_tag(segment),
+            )
+            for segment in segments
+        ]
+        if not normalized_source:
+            return []
+
+        batches = [
+            normalized_source[index:index + _SUBTITLE_TRANSLATION_BATCH_SIZE]
+            for index in range(0, len(normalized_source), _SUBTITLE_TRANSLATION_BATCH_SIZE)
+        ]
+        results_by_index: dict[int, list[SubtitleSegment]] = {}
+        done_count = 0
+        semaphore = asyncio.Semaphore(_SUBTITLE_TRANSLATION_MAX_CONCURRENCY)
+
+        async def _translate_batch(batch_index: int, batch: list[SubtitleSegment]) -> None:
+            nonlocal done_count
+
+            async with semaphore:
+                translated_batch = await self.subtitle_translation_agent.forward(
+                    batch,
+                    source_language=source_language or "mixed",
+                    translate_first=translate_first,
+                )
+
+            results_by_index[batch_index] = translated_batch
+            done_count += 1
+            logger.info(
+                f"字幕翻译审核进度: {done_count}/{len(batches)} 批 "
+                f"({min(done_count * _SUBTITLE_TRANSLATION_BATCH_SIZE, len(normalized_source))}/"
+                f"{len(normalized_source)})"
+            )
+
+        await asyncio.gather(
+            *[_translate_batch(batch_index, batch) for batch_index, batch in enumerate(batches)]
+        )
+
+        translated_segments: list[SubtitleSegment] = []
+        for batch_index in range(len(batches)):
+            translated_segments.extend(results_by_index[batch_index])
+
+        return [
+            SubtitleSegment(
+                start=segment.start,
+                end=segment.end,
+                text=normalize_subtitle_text(segment.text),
+                speaker_id=segment.speaker_id,
+                tone_tag=_resolve_tone_tag(segment),
+            )
+            for segment in translated_segments
+        ]
 
     def _validate_font_selection(self, selection: FontSelection) -> FontSelection:
         font_info = _CATALOG_BY_FILE.get(selection.font_file)

@@ -246,7 +246,7 @@ def test_transcribe_text_only_ignores_existing_sidecar_subtitles(monkeypatch, tm
     assert transcribed.transcription.language == "en"
 
 
-def test_transcribe_uses_subtitle_generator_even_when_sidecar_exists(monkeypatch, tmp_path: Path) -> None:
+def test_transcribe_calls_generate_and_burn_subtitles(monkeypatch, tmp_path: Path) -> None:
     video_path = tmp_path / "sample.mp4"
     video_path.write_bytes(b"video")
     (tmp_path / "sample.zh.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\n旧字幕\n", encoding="utf-8")
@@ -254,30 +254,21 @@ def test_transcribe_uses_subtitle_generator_even_when_sidecar_exists(monkeypatch
     subtitle_path = tmp_path / "sample_subtitled.srt"
     tts_path = tmp_path / "sample_subtitled_tts.srt"
     called = {"generate": 0}
-    constructor_kwargs: dict = {}
 
-    class _FakeSubtitleGenerator:
-        def __init__(self, **kwargs):
-            constructor_kwargs.update(kwargs)
+    async def _fake_generate_and_burn(self, video_path, output_path, **kwargs):
+        called["generate"] += 1
+        subtitle_path.write_text("1\n00:00:00,000 --> 00:00:01,000\n你好\n", encoding="utf-8")
+        tts_path.write_text("1\n00:00:00,000 --> 00:00:01,000\n[neutral] 你好\n", encoding="utf-8")
+        return SubtitleResult(
+            success=True,
+            language="en",
+            translated=True,
+            srt_path=str(subtitle_path),
+            tts_srt_path=str(tts_path),
+            video_with_subs=str(output_path),
+        )
 
-        async def generate_and_burn(self, video_path: Path, output_path: Path, **kwargs) -> SubtitleResult:
-            called["generate"] += 1
-            subtitle_path.write_text("1\n00:00:00,000 --> 00:00:01,000\n你好\n", encoding="utf-8")
-            tts_path.write_text("1\n00:00:00,000 --> 00:00:01,000\n[neutral] 你好\n", encoding="utf-8")
-            return SubtitleResult(
-                success=True,
-                language="en",
-                translated=True,
-                srt_path=str(subtitle_path),
-                tts_srt_path=str(tts_path),
-                video_with_subs=str(output_path),
-            )
-
-    monkeypatch.setattr(
-        download_agent_module,
-        "SubtitleGenerator",
-        lambda *args, **kwargs: _FakeSubtitleGenerator(**kwargs),
-    )
+    monkeypatch.setattr(DownloadAgent, "_generate_and_burn_subtitles", _fake_generate_and_burn)
 
     agent = DownloadAgent()
     result = _build_download_result(video_path)
@@ -286,6 +277,5 @@ def test_transcribe_uses_subtitle_generator_even_when_sidecar_exists(monkeypatch
     transcribed = asyncio.run(agent._transcribe(result))
 
     assert called["generate"] == 1
-    assert constructor_kwargs["subtitle_translation_agent"] is agent.subtitle_translation_agent
     assert transcribed.subtitle is not None
     assert transcribed.subtitle.tts_srt_path == str(tts_path)

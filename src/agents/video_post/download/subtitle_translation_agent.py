@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.messages import ModelMessage
 
 from ....config.settings import ReviewConfig, RetryConfig
@@ -19,7 +19,8 @@ from .prompts import (
     download_subtitle_translation_system_prompt,
     download_subtitle_translation_user_prompt,
 )
-from .subtitle import SubtitleSegment, _normalize_subtitle_text
+from ..schemas import SubtitleSegment
+from ..utils.subtitle_helpers import normalize_subtitle_text
 
 logger = get_logger(__name__)
 
@@ -96,7 +97,7 @@ class SubtitleTranslationAgent(BaseAgent):
         self,
         max_review_rounds: int | None = None,
     ):
-        self.max_review_rounds = max_review_rounds or ReviewConfig.MAX_ITERATIONS
+        self.max_review_rounds = max_review_rounds if max_review_rounds is not None else ReviewConfig.MAX_ITERATIONS
         self._state_var: ContextVar[SubtitleTranslationState | None] = ContextVar(
             "subtitle_translation_state",
             default=None,
@@ -110,11 +111,25 @@ class SubtitleTranslationAgent(BaseAgent):
         model = get_text_model()
         self.translator = Agent(
             model=model,
+            deps_type=int,
             output_type=TranslationBatch,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(download_subtitle_translation_system_prompt(),),
         )
+
+        @self.translator.output_validator
+        async def validate_line_count(
+            ctx: RunContext[int], output: TranslationBatch,
+        ) -> TranslationBatch:
+            expected = ctx.deps
+            actual = len(output.lines)
+            if actual != expected:
+                raise ModelRetry(
+                    f"输出了 {actual} 行，但原始字幕共 {expected} 行。"
+                    f"必须输出完整的 {expected} 行翻译，不能跳过或合并。"
+                )
+            return output
         self.reviewer = Agent(
             model=model,
             output_type=SubtitleTranslationReview,
@@ -141,28 +156,24 @@ class SubtitleTranslationAgent(BaseAgent):
             current_segments=[],
         )
         if not translate_first:
-            state.current_segments = [self._normalize_segment(segment) for segment in normalized_source]
+            state.current_segments = list(normalized_source)
 
         token = self._state_var.set(state)
         try:
             for review_round in range(self.max_review_rounds):
-                if review_round == 0:
-                    if state.translate_first:
-                        await self.step(state, review_round)
-                else:
+                if review_round > 0 or state.translate_first:
                     await self.step(state, review_round)
 
                 validation = await self.validate(state.current_segments)
                 if validation.passed:
                     logger.info(f"字幕翻译审核通过 (第{review_round + 1}轮)")
-                    return [self._normalize_segment(segment) for segment in state.current_segments]
+                    return state.current_segments
 
                 self.on_validation_failed(state, review_round, validation.feedback)
 
-            review = state.current_review or SubtitleTranslationReview()
             raise RuntimeError(
                 f"字幕翻译审核未通过，达到最大审核轮数 ({self.max_review_rounds}): "
-                f"{self._build_translation_review_feedback(review)}"
+                f"{self._build_translation_review_feedback(state.current_review)}"
             )
         finally:
             self._state_var.reset(token)
@@ -171,7 +182,8 @@ class SubtitleTranslationAgent(BaseAgent):
         mode = "translate" if iteration == 0 and state.translate_first else "revise"
         prompt = self._build_step_prompt(state, mode)
         recent_history = state.get_recent_history(self.MAX_HISTORY_ROUNDS)
-        result = await self.translator.run(prompt, message_history=recent_history)
+        expected_count = len(state.source_segments)
+        result = await self.translator.run(prompt, deps=expected_count, message_history=recent_history)
         state.message_history.extend(result.new_messages())
         fallback_segments = state.current_segments or state.source_segments
         state.current_segments = self._build_segments_from_result(
@@ -183,10 +195,7 @@ class SubtitleTranslationAgent(BaseAgent):
 
     async def validate(self, output: Any) -> ValidationResult:
         state = self._state_var.get()
-        if state is None:
-            return ValidationResult.failure("字幕翻译状态缺失")
-        if not isinstance(output, list):
-            return ValidationResult.failure("字幕翻译输出类型错误")
+        assert state is not None, "validate() must be called within forward()"
 
         prompt = self._build_review_prompt(
             source_segments=state.source_segments,
@@ -210,10 +219,8 @@ class SubtitleTranslationAgent(BaseAgent):
         feedback: str,
     ) -> None:
         state.inject_feedback(feedback)
-        summary = ""
-        if state.current_review is not None:
-            summary = state.current_review.summary or feedback
-        logger.warning(f"字幕翻译审核未通过 (第{iteration + 1}轮): {summary or feedback}")
+        summary = state.current_review.summary or feedback if state.current_review else feedback
+        logger.warning(f"字幕翻译审核未通过 (第{iteration + 1}轮): {summary}")
 
     def _build_step_prompt(self, state: SubtitleTranslationState, mode: str) -> str:
         source_lines, speaker_instruction = self._format_segments(state.source_segments)
@@ -266,7 +273,7 @@ class SubtitleTranslationAgent(BaseAgent):
                 else segment
             )
             translated_text = (
-                _normalize_subtitle_text(translated_line.text)
+                normalize_subtitle_text(translated_line.text)
                 if translated_line is not None
                 else ""
             )
@@ -320,7 +327,7 @@ class SubtitleTranslationAgent(BaseAgent):
         return SubtitleSegment(
             start=segment.start,
             end=segment.end,
-            text=_normalize_subtitle_text(segment.text),
+            text=normalize_subtitle_text(segment.text),
             speaker_id=segment.speaker_id,
             tone_tag=normalize_tone_tag(segment.tone_tag or DEFAULT_TONE_TAG),
         )

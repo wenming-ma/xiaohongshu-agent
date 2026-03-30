@@ -1,7 +1,8 @@
 import asyncio
 from types import SimpleNamespace
 
-from src.agents.video_post.download.subtitle import SubtitleGenerator, SubtitleSegment
+from src.agents.video_post.schemas import SubtitleSegment
+from src.agents.video_post.download.agent import DownloadAgent
 from src.agents.video_post.download.subtitle_translation_agent import (
     SubtitleTranslationAgent,
     SubtitleTranslationReview,
@@ -155,16 +156,18 @@ def test_subtitle_translation_agent_missing_revision_line_does_not_restore_stale
     assert result[14].text == ""
 
 
-def test_subtitle_generator_keeps_batching_outside_translation_agent() -> None:
+def test_download_agent_keeps_batching_outside_translation_agent(monkeypatch) -> None:
     translation_agent = _FakeBatchTranslationAgent()
-    generator = SubtitleGenerator(subtitle_translation_agent=translation_agent)
+    monkeypatch.setattr(DownloadAgent, "init_agent", lambda self: None)
+    agent = DownloadAgent.__new__(DownloadAgent)
+    agent.subtitle_translation_agent = translation_agent
     segments = [
         SubtitleSegment(start=float(index), end=float(index + 1), text=f"line {index}", tone_tag="neutral")
         for index in range(16)
     ]
 
     result = asyncio.run(
-        generator._translate_segments_for_chinese_tts(
+        agent._translate_segments_for_chinese_tts(
             segments,
             source_language="en",
             translate_first=True,

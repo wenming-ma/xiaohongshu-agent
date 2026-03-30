@@ -1,10 +1,8 @@
 import asyncio
 from pathlib import Path
 
-from src.agents.video_post.download.subtitle import (
-    SubtitleSegment,
-    SubtitleGenerator,
-)
+from src.agents.video_post.schemas import SubtitleSegment
+from src.agents.video_post.download.agent import DownloadAgent
 
 
 class _FakeTranslationAgent:
@@ -32,13 +30,19 @@ def _segs(*texts: str) -> list[SubtitleSegment]:
     ]
 
 
+def _make_agent(fake_translation_agent):
+    agent = DownloadAgent.__new__(DownloadAgent)
+    agent.subtitle_translation_agent = fake_translation_agent
+    return agent
+
+
 def test_translate_segments_delegates_to_agent() -> None:
     translated = _segs("继续搅拌均匀")
     fake = _FakeTranslationAgent([translated])
-    generator = SubtitleGenerator(subtitle_translation_agent=fake)
+    agent = _make_agent(fake)
 
     result = asyncio.run(
-        generator._translate_segments_for_chinese_tts(
+        agent._translate_segments_for_chinese_tts(
             _segs("keep stirring"),
             source_language="en",
             translate_first=True,
@@ -52,10 +56,10 @@ def test_translate_segments_delegates_to_agent() -> None:
 def test_translate_segments_passes_translate_first_false_for_zh() -> None:
     translated = _segs("大家慢慢搅拌均匀")
     fake = _FakeTranslationAgent([translated])
-    generator = SubtitleGenerator(subtitle_translation_agent=fake)
+    agent = _make_agent(fake)
 
     result = asyncio.run(
-        generator._translate_segments_for_chinese_tts(
+        agent._translate_segments_for_chinese_tts(
             _segs("mix it gently"),
             source_language="zh",
             translate_first=False,
@@ -69,10 +73,10 @@ def test_translate_segments_passes_translate_first_false_for_zh() -> None:
 def test_translate_passthrough_preserves_natural_chinese() -> None:
     original = _segs("这个 app 的通知先打开")
     fake = _FakeTranslationAgent([original])
-    generator = SubtitleGenerator(subtitle_translation_agent=fake)
+    agent = _make_agent(fake)
 
     result = asyncio.run(
-        generator._translate_segments_for_chinese_tts(
+        agent._translate_segments_for_chinese_tts(
             original,
             source_language="zh",
             translate_first=False,
@@ -82,15 +86,14 @@ def test_translate_passthrough_preserves_natural_chinese() -> None:
     assert result[0].text == "这个 app 的通知先打开"
 
 
-def test_generate_and_burn_always_writes_dedicated_tts_srt(tmp_path: Path) -> None:
+def test_generate_and_burn_always_writes_dedicated_tts_srt(monkeypatch, tmp_path: Path) -> None:
     translated = _segs("现在开始慢慢搅拌均匀然后继续搅拌到完全顺滑最后再把表面的小气泡轻轻整理掉")
-    # Override timing to match source segment
     translated[0].start = 0.0
     translated[0].end = 2.0
     translated[0].tone_tag = "neutral"
 
     fake = _FakeTranslationAgent([translated])
-    generator = SubtitleGenerator(subtitle_translation_agent=fake)
+    agent = _make_agent(fake)
 
     audio_path = tmp_path / "audio.mp3"
     audio_path.write_bytes(b"audio")
@@ -98,25 +101,26 @@ def test_generate_and_burn_always_writes_dedicated_tts_srt(tmp_path: Path) -> No
     async def _fake_extract_audio(_video_path: Path) -> Path:
         return audio_path
 
-    async def _fake_transcribe(_audio_path: Path):
+    async def _fake_transcribe_audio(_self, _audio_path: Path):
         return [SubtitleSegment(start=0.0, end=2.0, text="keep stirring until smooth")], "en"
 
-    async def _fake_assign_speakers(segments, _audio_path):
+    async def _fake_assign_speakers(_self, segments, _audio_path):
         return segments
 
-    async def _fake_burn_subtitles(_video_path: Path, _srt_path: Path, _output_path: Path, **_kwargs) -> None:
+    async def _fake_burn_subtitles(_video_path, _srt_path, _output_path, **_kwargs) -> None:
         return None
 
-    generator._extract_audio = _fake_extract_audio  # type: ignore[method-assign]
-    generator._transcribe_audio = _fake_transcribe  # type: ignore[method-assign]
-    generator._assign_speakers = _fake_assign_speakers  # type: ignore[method-assign]
-    generator._burn_subtitles = _fake_burn_subtitles  # type: ignore[method-assign]
+    import src.agents.video_post.download.agent as agent_module
+    monkeypatch.setattr(agent_module, "extract_audio_track", _fake_extract_audio)
+    monkeypatch.setattr(DownloadAgent, "_transcribe_audio", _fake_transcribe_audio)
+    monkeypatch.setattr(DownloadAgent, "_assign_speakers", _fake_assign_speakers)
+    monkeypatch.setattr(agent_module, "burn_subtitles", _fake_burn_subtitles)
 
     video_path = tmp_path / "sample.mp4"
     video_path.write_bytes(b"video")
     output_path = tmp_path / "sample_subtitled.mp4"
 
-    result = asyncio.run(generator.generate_and_burn(video_path, output_path, target_language="zh"))
+    result = asyncio.run(agent._generate_and_burn_subtitles(video_path, output_path))
 
     assert result.success is True
     assert result.tts_srt_path != result.srt_path
