@@ -23,7 +23,7 @@ from pydantic_ai import Agent, Tool, BinaryContent
 from ..schemas import ImageReadResult
 from ...shared.utils.image_compression import compress_image_for_review
 from ....utils.logger import get_logger
-from ....config.settings import RetryConfig, APIConfig
+from ....config.settings import RetryConfig, APIConfig, PathConfig
 from ....utils.providers import get_text_model, get_google_model
 from .prompts import image_reader_system_prompt, image_reader_user_prompt
 
@@ -115,7 +115,12 @@ class ImageReaderAgent:
         """
         path = Path(image_path)
         if not path.exists():
-            return self._error_result(f"图片文件不存在: {image_path}")
+            # 截图可能保存在 Playwright downloads 目录
+            fallback = PathConfig.DOWNLOADS_DIR / path.name
+            if fallback.exists():
+                path = fallback
+            else:
+                return self._error_result(f"图片文件不存在: {image_path}")
         if not path.is_file():
             return self._error_result(f"路径不是文件: {image_path}")
         if path.suffix.lower() not in SUPPORTED_IMAGE_SUFFIXES:
