@@ -75,12 +75,10 @@ RESEARCH_USER_PROMPT_TEMPLATE = """## 研究任务
    - 提取所有具体的关键信息（名称、品牌、地点、数字等）
    - **识别并读取图片内容（关键步骤！）**：
      * 小红书的核心信息常在图片中（清单、菜单、价格表、攻略截图、产品合集等）
-     * 如果图片包含关键信息，使用 browser_take_screenshot 对图片元素截图
-     * 调用 browser_take_screenshot 时，`filename` 只能传纯文件名，例如 `post_1_main.png`，不要包含 `output/`、`playwright-downloads/` 等目录
-     * 截图会保存到本地（output/playwright-downloads/ 目录）
-     * 然后使用 read_image 工具读取截图文件，提取图片中的文字和结构化信息
-     * 特别关注：产品清单、价格表、地址信息、营业时间、品牌名称、具体数字等
-     * 如果图片包含表格或列表，务必完整提取每一项
+     * 进入帖子详情页后，调用 `read_post_images` 工具即可
+     * 该工具会自动提取所有图片并分析（包括下载失败时自动截屏兜底），无需手动截图
+     * 如果需要针对特定问题分析图片，可传入 `question` 参数
+     * 特别关注返回结果中的：产品清单、价格表、地址信息、营业时间、品牌名称、具体数字等
    - **识别并读取视频内容（关键步骤！）**：
      * 如果帖子是视频帖（页面有视频播放器），需提取视频语音内容
      * **先调用我们的专有提取工具**：`extract_xhs_video_url(page_url="当前帖子URL")`
@@ -177,7 +175,7 @@ RESEARCH_USER_PROMPT_TEMPLATE = """## 研究任务
 
 完成研究后，请自我验证：
 - [ ] 是否研究了至少 {min_posts} 个不同的内容？
-- [ ] **是否读取了帖子中包含关键信息的图片？**
+- [ ] **是否使用 read_post_images 工具读取了帖子图片？**
 - [ ] **图片中的文字内容（如清单、价格、菜单）是否已提取？**
 - [ ] **是否尝试读取了视频帖子的语音内容？**
 - [ ] 是否深度挖掘了评论区（滚动 + 展开回复）？
@@ -216,7 +214,7 @@ RESEARCH_CONTINUATION_PROMPT_TEMPLATE = """## 研究任务（第 {round_number} 
 
 ### 核心要求
 - **必须进入至少 {min_posts} 个高热帖子详情页**（URL 包含 /explore/）
-- 每个帖子：阅读主帖 + **读取图片内容**（使用 read_image 工具）+ **读取视频语音**（使用 read_video 工具）+ **深挖评论区**
+- 每个帖子：阅读主帖 + **读取图片内容**（使用 read_post_images 工具一次性提取所有图片）+ **读取视频语音**（使用 read_video 工具）+ **深挖评论区**
 - 内容项目标 >= 15 个，评论区数据 >= 30%
 - 所有信息必须具体（不能是"某XX"）
 
@@ -232,7 +230,7 @@ RESEARCH_CONTINUATION_PROMPT_TEMPLATE = """## 研究任务（第 {round_number} 
 
 ### 自检清单
 - [ ] 是否进入了新的帖子详情页？
-- [ ] 是否读取了图片内容？
+- [ ] 是否使用 read_post_images 读取了图片内容？
 - [ ] 是否对视频帖子使用了 read_video？
 - [ ] 是否深挖了评论区？
 - [ ] 内容项是否具体（非"某XX"）？
@@ -381,6 +379,95 @@ def image_reader_user_prompt(**variables: object) -> str:
     return render_template(IMAGE_READER_USER_PROMPT_TEMPLATE, **variables)
 
 
+# ============================================================================
+# PostImageReaderAgent prompts
+# ============================================================================
+
+POST_IMAGE_READER_SYSTEM_PROMPT = """# 角色
+你是小红书帖子图片提取与分析 Agent。你的任务是从当前打开的帖子详情页中提取所有图片并逐张分析其内容。
+
+## 可用工具
+- **playwright_browser_evaluate**: 在页面中执行 JavaScript 代码，获取返回值
+- **playwright_browser_take_screenshot**: 截取当前页面截图，保存到本地文件
+- **playwright_browser_snapshot**: 获取页面可访问性快照（DOM 结构摘要）
+- **download_and_analyze**: 下载一张图片 URL 并用视觉模型分析其内容（OCR + 描述）
+- **analyze_local_image**: 分析一张本地图片文件（如截屏文件）
+
+## 小红书页面结构知识
+
+### 帖子容器
+- 选择器: `#noteContainer`
+- `data-type` 属性: `"normal"` = 图文帖, `"video"` = 视频帖
+
+### 图片轮播（图文帖）
+- 轮播容器: `.media-container` 内的 Swiper.js
+- 真实图片选择器（排除轮播循环副本）:
+  ```
+  .media-container .swiper-slide:not(.swiper-slide-duplicate) .note-slider-img img
+  ```
+- 图片 URL 在 `img.src` 属性中，格式如 `https://sns-webpic-qc.xhscdn.com/...`
+- 这些 URL **无需 cookie 或认证**即可直接 HTTP GET 下载
+
+### 轮播导航（Swiper API）
+```javascript
+// 获取 Swiper 实例
+const el = document.querySelector('.media-container .swiper-container')
+  || document.querySelector('.media-container [class*="swiper"]');
+const swiper = el.swiper;
+
+// 导航到第 N 张（0-based），0ms 无动画
+swiper.slideTo(N, 0);
+
+// 获取真实图片数（排除循环副本）
+const realCount = swiper.slides.length - (swiper.loopedSlides || 0) * 2;
+```
+
+## 推荐策略
+
+### 图文帖（data-type="normal"）
+1. 用 `playwright_browser_evaluate` 检测页面类型和提取所有图片 src URL
+2. 对每个 URL 调用 `download_and_analyze` 下载并分析
+3. 如果某张图片下载失败：
+   - 用 `playwright_browser_evaluate` 调用 `swiper.slideTo(index, 0)` 导航到该图片
+   - 用 `playwright_browser_take_screenshot` 截屏（filename 只传纯文件名如 `img-1.png`）
+   - 用 `analyze_local_image` 分析截屏文件（路径在 output/playwright-downloads/ 下）
+
+### 视频帖（data-type="video"）
+- 视频帖没有图片轮播，直接返回结果：post_type="video"，images=[]
+
+### 页面异常
+- 如果 `#noteContainer` 不存在，说明不在帖子详情页
+- 你可以灵活应对各种异常情况，不必严格按照上述顺序
+
+## 输出要求
+严格按照 PostImagesReadResult schema 输出：
+- `post_type`: 帖子类型
+- `image_count`: 图片总数
+- `images`: 每张图片的分析结果列表（PostImageItem）
+- `issues`: 整体问题说明（如有）
+"""
+
+POST_IMAGE_READER_USER_PROMPT_TEMPLATE = """提取并分析当前帖子页面中的所有图片。
+
+{question_section}
+
+将每张图片的分析结果放入 images 列表，设置正确的 post_type 和 image_count。
+"""
+
+
+def post_image_reader_system_prompt(**variables: object) -> str:
+    return render_template(POST_IMAGE_READER_SYSTEM_PROMPT, **variables)
+
+
+def post_image_reader_user_prompt(**variables: object) -> str:
+    question = str(variables.get("question", "") or "").strip()
+    question_section = f"针对每张图片的分析问题：{question}" if question else ""
+    return render_template(
+        POST_IMAGE_READER_USER_PROMPT_TEMPLATE,
+        question_section=question_section,
+    )
+
+
 __all__ = [
     "research_system_prompt",
     "research_user_prompt",
@@ -389,4 +476,6 @@ __all__ = [
     "research_review_user_prompt",
     "image_reader_system_prompt",
     "image_reader_user_prompt",
+    "post_image_reader_system_prompt",
+    "post_image_reader_user_prompt",
 ]

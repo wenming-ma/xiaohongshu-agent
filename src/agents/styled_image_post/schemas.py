@@ -214,6 +214,24 @@ class ImageReadResult(BaseModel):
     issues: List[str] = []
 
 
+class PostImageItem(BaseModel):
+    """单张帖子图片的分析结果"""
+    index: int
+    url: str = ""
+    extracted_text: str = ""
+    description: str = ""
+    has_text: bool = False
+    issues: List[str] = []
+
+
+class PostImagesReadResult(BaseModel):
+    """帖子所有图片的汇总分析结果"""
+    post_type: str = ""
+    image_count: int = 0
+    images: List[PostImageItem] = []
+    issues: List[str] = []
+
+
 class VideoReadResult(BaseModel):
     """视频语音转文字结果"""
     success: bool = False

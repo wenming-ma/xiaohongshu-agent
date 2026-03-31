@@ -2,6 +2,7 @@
 
 包含：
 - ImageReaderAgent: 读图（OCR/视觉理解）工具
+- PostImageReaderAgent: 帖子图片批量提取+分析工具
 - WebSearchAgent: Web搜索工具
 """
 from __future__ import annotations
@@ -20,12 +21,17 @@ import logfire
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, Tool, BinaryContent
 
-from ..schemas import ImageReadResult
+from ..schemas import ImageReadResult, PostImageItem, PostImagesReadResult
 from ...shared.utils.image_compression import compress_image_for_review
 from ....utils.logger import get_logger
 from ....config.settings import RetryConfig, APIConfig, PathConfig
 from ....utils.providers import get_text_model, get_google_model
-from .prompts import image_reader_system_prompt, image_reader_user_prompt
+from .prompts import (
+    image_reader_system_prompt,
+    image_reader_user_prompt,
+    post_image_reader_system_prompt,
+    post_image_reader_user_prompt,
+)
 
 logger = get_logger(__name__)
 
@@ -161,6 +167,190 @@ class ImageReaderAgent:
         """获取可供其它 Agent 使用的 Tool。"""
         return Tool(
             self.read_image,
+            takes_ctx=False,
+            docstring_format='google',
+            require_parameter_descriptions=True,
+        )
+
+
+# ============================================================================
+# PostImageReaderAgent
+# ============================================================================
+
+class PostImageReaderAgent:
+    """自主读图 Agent：LLM 自主决策如何提取和分析帖子图片。
+
+    内部运行一个 pydantic-ai Agent，拥有 MCP 浏览器工具和自定义分析工具，
+    由 LLM 自主决定提取策略（URL 下载 vs 截屏）和异常处理方式。
+    """
+
+    def __init__(self, mcp_server):
+        self._mcp_server = mcp_server
+
+        # 视觉分析 Agent（Google 模型，用于 OCR + 理解）
+        self._vision_agent = Agent(
+            model=get_google_model(),
+            output_type=ImageReadResult,
+            instrument=True,
+            retries=RetryConfig.AGENT_RETRIES,
+            system_prompt=(image_reader_system_prompt(),),
+        )
+
+        # 自定义工具
+        custom_tools = [
+            Tool(
+                self._download_and_analyze,
+                takes_ctx=False,
+                docstring_format='google',
+                require_parameter_descriptions=True,
+            ),
+            Tool(
+                self._analyze_local_image,
+                takes_ctx=False,
+                docstring_format='google',
+                require_parameter_descriptions=True,
+            ),
+        ]
+
+        # 自主决策 Agent：MCP 浏览器工具 + 自定义分析工具
+        self._agent = Agent(
+            model=get_text_model(),
+            output_type=PostImagesReadResult,
+            toolsets=[mcp_server],
+            tools=custom_tools,
+            instrument=True,
+            retries=RetryConfig.AGENT_RETRIES,
+            system_prompt=(post_image_reader_system_prompt(),),
+        )
+
+    # ── 自定义工具 ──
+
+    async def _download_and_analyze(
+        self, url: str, index: int, question: str = ""
+    ) -> str:
+        """下载一张图片 URL 并用视觉模型分析其内容。
+
+        Args:
+            url: 图片的 CDN URL（如 https://sns-webpic-qc.xhscdn.com/...）
+            index: 图片序号（从 1 开始）
+            question: 可选的分析问题；为空时仅提取文字和描述
+
+        Returns:
+            PostImageItem 的 JSON 字符串，包含 extracted_text、description 等字段
+        """
+        try:
+            from PIL import Image
+            import io
+
+            timeout = httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+
+            img = Image.open(io.BytesIO(resp.content))
+            if img.mode == "RGBA":
+                bg = Image.new("RGB", img.size, (255, 255, 255))
+                bg.paste(img, mask=img.split()[3])
+                img = bg
+            elif img.mode != "RGB":
+                img = img.convert("RGB")
+
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=85, optimize=True)
+
+            user_prompt = image_reader_user_prompt(question=(question or "").strip())
+            r = await self._vision_agent.run(
+                [user_prompt, BinaryContent(data=buf.getvalue(), media_type="image/jpeg")]
+            )
+            out = r.output
+            return PostImageItem(
+                index=index, url=url,
+                extracted_text=out.extracted_text, description=out.description,
+                has_text=out.has_text, issues=out.issues,
+            ).model_dump_json(indent=2)
+
+        except Exception as exc:
+            logger.warning("PostImageReaderAgent: download_and_analyze %d failed: %s", index, exc)
+            return PostImageItem(
+                index=index, url=url, issues=[f"下载或分析失败: {exc}"]
+            ).model_dump_json(indent=2)
+
+    async def _analyze_local_image(
+        self, image_path: str, index: int, question: str = ""
+    ) -> str:
+        """分析本地图片文件（如截屏）的内容。
+
+        Args:
+            image_path: 本地图片文件路径（如 output/playwright-downloads/img-1.png）
+            index: 图片序号（从 1 开始）
+            question: 可选的分析问题；为空时仅提取文字和描述
+
+        Returns:
+            PostImageItem 的 JSON 字符串，包含 extracted_text、description 等字段
+        """
+        try:
+            path = Path(image_path)
+            if not path.exists():
+                fallback = PathConfig.DOWNLOADS_DIR / path.name
+                if fallback.exists():
+                    path = fallback
+                else:
+                    return PostImageItem(
+                        index=index, issues=[f"图片文件不存在: {image_path}"]
+                    ).model_dump_json(indent=2)
+
+            image_data = await compress_image_for_review(path, max_size_mb=5.0)
+            user_prompt = image_reader_user_prompt(question=(question or "").strip())
+            r = await self._vision_agent.run(
+                [user_prompt, BinaryContent(data=image_data, media_type="image/jpeg")]
+            )
+            out = r.output
+            return PostImageItem(
+                index=index,
+                extracted_text=out.extracted_text, description=out.description,
+                has_text=out.has_text, issues=out.issues,
+            ).model_dump_json(indent=2)
+
+        except Exception as exc:
+            logger.warning("PostImageReaderAgent: analyze_local_image %d failed: %s", index, exc)
+            return PostImageItem(
+                index=index, issues=[f"截屏分析失败: {exc}"]
+            ).model_dump_json(indent=2)
+
+    # ── 主入口 ──
+
+    async def read_post_images(self, question: str = "") -> str:
+        """
+        提取并分析当前帖子页面中的所有图片内容。
+
+        内部运行自主 Agent，由 LLM 决定如何提取图片（URL 下载或截屏）并分析。
+        主 agent 无需关心任何细节，只需消费返回的分析结果。
+
+        Args:
+            question: 可选问题；为空时仅提取图片中的文字和结构化信息。
+
+        Returns:
+            PostImagesReadResult 的 JSON 字符串，包含每张图片的分析结果。
+        """
+        prompt = post_image_reader_user_prompt(question=question)
+
+        try:
+            result = await self._agent.run(prompt)
+            logger.info(
+                "PostImageReaderAgent: completed, %d images analyzed",
+                len(result.output.images),
+            )
+            return result.output.model_dump_json(indent=2)
+        except Exception as exc:
+            logger.error("PostImageReaderAgent: agent run failed: %s", exc)
+            return PostImagesReadResult(
+                issues=[f"读图 Agent 运行失败: {type(exc).__name__}: {exc}"]
+            ).model_dump_json(indent=2)
+
+    def get_tool(self) -> Tool:
+        """获取可供其它 Agent 使用的 Tool。"""
+        return Tool(
+            self.read_post_images,
             takes_ctx=False,
             docstring_format='google',
             require_parameter_descriptions=True,

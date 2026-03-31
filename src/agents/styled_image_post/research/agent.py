@@ -31,7 +31,7 @@ from ...shared.video_extract import create_video_extract_tool
 from ...shared.login import create_login_tool
 
 from .validator import ResearchDepthValidator, ResearchReviewValidator
-from .tools import ImageReaderAgent, WebSearchAgent
+from .tools import ImageReaderAgent, PostImageReaderAgent, WebSearchAgent
 from .prompts import research_system_prompt, research_user_prompt, research_continuation_prompt
 from .state import (
     ResearchState,
@@ -72,6 +72,7 @@ class ResearchAgent(BaseAgent):
         """初始化工具集"""
         self.login_tool = create_login_tool(self.mcp_server)
         self.image_reader_agent = ImageReaderAgent()
+        self.post_image_reader = PostImageReaderAgent(self.mcp_server)
         self.video_extract_tool = create_video_extract_tool(self.mcp_server)
         self.web_search_agent = WebSearchAgent()
 
@@ -82,6 +83,7 @@ class ResearchAgent(BaseAgent):
         function_tools = [
             self.login_tool,
             self.image_reader_agent.get_tool(),
+            self.post_image_reader.get_tool(),
             self.video_extract_tool.get_extract_tool(),
             self.video_extract_tool.get_read_tool(),
         ]
