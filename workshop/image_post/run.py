@@ -6,6 +6,7 @@
     uv run python workshop/image_post/run.py --start-index 3
     uv run python workshop/image_post/run.py --start-index 5 --limit 2
     uv run python workshop/image_post/run.py --sleep 3600
+    uv run python workshop/image_post/run.py --feishu-only
 """
 
 from __future__ import annotations
@@ -68,6 +69,46 @@ logger = get_logger(__name__)
 # Topics loading
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Feishu content review helper
+# ---------------------------------------------------------------------------
+
+FEISHU_MAX_TEXT_LEN = 3500
+
+
+async def send_content_to_feishu(result: Any, topic: str) -> None:
+    """将生成的完整内容（标题+正文+话题标签+图片）发送到飞书群审核。"""
+    notifier = get_feishu_notifier()
+
+    output_dir = Path(result.output_dir)
+    content_file = output_dir / "content.json"
+    full_body = ""
+    if content_file.exists():
+        content_data = json.loads(content_file.read_text(encoding="utf-8"))
+        full_body = content_data.get("body") or ""
+
+    title = result.title or topic
+    hashtags = " ".join(result.hashtags) if result.hashtags else "无"
+
+    header = f"📋 图文帖内容审核\n主题：{topic}\n标题：{title}\n话题：{hashtags}"
+
+    if full_body and len(full_body) > FEISHU_MAX_TEXT_LEN:
+        await notifier.send_message(header)
+        for i in range(0, len(full_body), FEISHU_MAX_TEXT_LEN):
+            chunk = full_body[i:i + FEISHU_MAX_TEXT_LEN]
+            part_num = i // FEISHU_MAX_TEXT_LEN + 1
+            await notifier.send_message(f"--- 正文 (第{part_num}段) ---\n{chunk}")
+    else:
+        body_section = f"\n---\n{full_body}" if full_body else ""
+        await notifier.send_message(f"{header}{body_section}")
+
+    image_paths = getattr(result, "image_paths", []) or []
+    for idx, img_path in enumerate(image_paths, 1):
+        p = Path(img_path)
+        if p.exists():
+            await notifier.send_image(p, caption=f"图片 {idx}/{len(image_paths)}")
+
+
 def load_topics(path: Path) -> list[dict[str, Any]]:
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, list):
@@ -88,6 +129,8 @@ async def run_single(
     total: int,
     max_retries: int,
     retry_delay: int,
+    *,
+    publish: bool = True,
     notify_feishu: bool = True,
 ) -> dict[str, Any]:
     topic = item["topic"].strip()
@@ -95,6 +138,7 @@ async def run_single(
 
     logger.info("[%d/%d] 话题: %s", idx, total, topic)
     logger.info("  受众: %s", audience)
+    logger.info("  发布: %s", publish)
 
     last_error = ""
     for attempt in range(1, max_retries + 1):
@@ -104,7 +148,7 @@ async def run_single(
 
         try:
             tool = XHSImagePostPipeline()
-            result = await tool.execute(XHSImagePostInput(topic=topic, audience=audience))
+            result = await tool.execute(XHSImagePostInput(topic=topic, audience=audience, publish=publish))
             payload = result.model_dump()
             payload["topic"] = topic
             payload["audience"] = audience
@@ -130,6 +174,11 @@ async def run_single(
                             await notifier.send_image(Path(result.image_paths[0]), caption="封面图")
                     except Exception:
                         logger.warning("飞书通知发送失败", exc_info=True)
+                elif not publish:
+                    try:
+                        await send_content_to_feishu(result, topic)
+                    except Exception:
+                        logger.warning("飞书内容审核发送失败", exc_info=True)
 
                 return payload
 
@@ -176,7 +225,12 @@ async def run_batch(args: argparse.Namespace) -> int:
 
     for i, item in enumerate(selected):
         idx = base_idx + i
-        result = await run_single(item, idx, base_idx + total - 1, args.max_retries, args.retry_delay, notify_feishu=not args.no_feishu)
+        result = await run_single(
+            item, idx, base_idx + total - 1,
+            args.max_retries, args.retry_delay,
+            publish=not args.feishu_only,
+            notify_feishu=not args.no_feishu,
+        )
         results.append(result)
 
         if not result.get("success"):
@@ -225,6 +279,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--retry-delay", type=int, default=5, help="重试间隔秒数")
     p.add_argument("--sleep", type=int, default=None, help="话题之间固定休眠秒数 (留空则不休眠)")
     p.add_argument("--no-feishu", action="store_true", default=False, help="禁用飞书通知")
+    p.add_argument("--feishu-only", action="store_true", help="跳过 XHS 发布，仅生成内容并发送到飞书审核")
     return p.parse_args()
 
 
