@@ -167,7 +167,7 @@ async def run_batch(args: argparse.Namespace) -> int:
     logger.info("XHS Image Post 批量执行")
     logger.info("话题文件: %s", args.topics_file)
     logger.info("范围: #%d ~ #%d (共 %d 个)", base_idx, base_idx + total - 1, total)
-    sleep_mode = f"固定 {args.sleep}s" if args.sleep is not None else "动态 (5-10/17-22点=45min, 其余=90min)"
+    sleep_mode = f"固定 {args.sleep}s" if args.sleep is not None else "不休眠"
     logger.info("最大重试: %d  重试间隔: %ds  休眠策略: %s", args.max_retries, args.retry_delay, sleep_mode)
     logger.info("=" * 60)
 
@@ -223,7 +223,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--limit", type=int, default=None, help="最多处理几个话题")
     p.add_argument("--max-retries", type=int, default=10, help="单个话题最大重试次数")
     p.add_argument("--retry-delay", type=int, default=5, help="重试间隔秒数")
-    p.add_argument("--sleep", type=int, default=None, help="话题之间固定休眠秒数 (留空则按时段自动: 5-10点/17-22点=45min, 其余=90min)")
+    p.add_argument("--sleep", type=int, default=None, help="话题之间固定休眠秒数 (留空则不休眠)")
     p.add_argument("--no-feishu", action="store_true", default=False, help="禁用飞书通知")
     return p.parse_args()
 

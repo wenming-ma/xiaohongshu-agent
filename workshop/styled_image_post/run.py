@@ -160,7 +160,7 @@ async def run_batch(args: argparse.Namespace) -> int:
     logger.info("XHS Styled Image Post 批量执行")
     logger.info("话题文件: %s", args.topics_file)
     logger.info("范围: #%d ~ #%d (共 %d 个)", base_idx, base_idx + total - 1, total)
-    sleep_mode = f"固定 {args.sleep}s" if args.sleep is not None else "动态 (5-10/17-22点=45min, 其余=90min)"
+    sleep_mode = f"固定 {args.sleep}s" if args.sleep is not None else "不休眠"
     logger.info("最大重试: %d  重试间隔: %ds  休眠策略: %s", args.max_retries, args.retry_delay, sleep_mode)
     logger.info("=" * 60)
 

@@ -371,7 +371,7 @@ async def run_batch(args: argparse.Namespace) -> int:
     logger.info("图文话题: %s (第 %d 项起, 共 %d 个)", args.image_topics_file.name, args.start_image, len(image_selected))
     logger.info("长文话题: %s (第 %d 项起, 共 %d 个)", args.article_topics_file.name, args.start_article, len(article_selected))
     logger.info("调度总数: %d 个帖子", total)
-    sleep_mode = f"固定 {args.sleep}s" if args.sleep is not None else "动态 (2-10点=25min, 10-2点=休眠)"
+    sleep_mode = f"固定 {args.sleep}s" if args.sleep is not None else "不休眠"
     logger.info("休眠策略: %s", sleep_mode)
     if args.feishu_only:
         logger.info("运行模式: 飞书审核 (跳过 XHS 发布，内容发送到飞书)")
@@ -405,11 +405,9 @@ async def run_batch(args: argparse.Namespace) -> int:
             failed.append(result)
 
         # Sleep between posts
-        if i < total - 1:
-            sleep_s = get_sleep_seconds(args.sleep)
-            if sleep_s > 0:
-                logger.info("休眠 %d 秒 (%.0f 分钟) 后继续 …", sleep_s, sleep_s / 60)
-                await asyncio.sleep(sleep_s)
+        if i < total - 1 and args.sleep is not None and args.sleep > 0:
+            logger.info("休眠 %d 秒 (%.0f 分钟) 后继续 …", args.sleep, args.sleep / 60)
+            await asyncio.sleep(args.sleep)
 
     # Write summary
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -465,7 +463,7 @@ def parse_args() -> argparse.Namespace:
     # Retry & sleep
     p.add_argument("--max-retries", type=int, default=10, help="单个话题最大重试次数")
     p.add_argument("--retry-delay", type=int, default=5, help="重试间隔秒数")
-    p.add_argument("--sleep", type=int, default=None, help="帖子之间固定休眠秒数 (留空则按时段自动)")
+    p.add_argument("--sleep", type=int, default=None, help="帖子之间固定休眠秒数 (留空则不休眠)")
 
     # Article-specific
     p.add_argument(
