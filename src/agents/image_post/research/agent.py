@@ -17,7 +17,7 @@ import logfire
 from pathlib import Path
 from typing import Any
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent
 from pydantic_ai.usage import UsageLimits
 
 from ....core.base_agent import BaseAgent, ValidationResult
@@ -29,6 +29,7 @@ from ....config.settings import RetryConfig, ResearchConfig, PathConfig
 from ...shared import create_shared_playwright_mcp_server
 from ...shared.video_extract import create_video_extract_tool
 from ...shared.login import create_login_tool
+from ...shared.utils.tail_soft_limit import build_tail_soft_limit_history_processor
 
 from .validator import ResearchDepthValidator, ResearchReviewValidator
 from .tools import ImageReaderAgent, PostImageReaderAgent, WebSearchAgent
@@ -93,20 +94,11 @@ class ResearchAgent(BaseAgent):
             output_type=ResearchResult,
             toolsets=[self.navigate_tracker],
             tools=function_tools,
+            history_processors=[build_tail_soft_limit_history_processor(output_name="ResearchResult", threshold=20)],
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(research_system_prompt(),),
         )
-
-        @self.generator.instructions
-        async def soft_limit_instructions(ctx: RunContext) -> str | None:
-            if ctx.usage.requests >= 20:
-                return (
-                    "URGENT: The context window is nearly full.\n"
-                    "STOP all browsing and tool calls immediately.\n"
-                    "Output your ResearchResult NOW with all data collected so far."
-                )
-            return None
 
     def init_validators(self) -> None:
         """初始化验证器"""

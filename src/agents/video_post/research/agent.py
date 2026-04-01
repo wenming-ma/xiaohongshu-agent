@@ -2,7 +2,7 @@ import logfire
 from pathlib import Path
 from typing import Any, List
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.usage import UsageLimits
 
@@ -12,6 +12,7 @@ from ....utils.providers import get_text_model
 from ....utils.logger import get_logger
 from ....config.settings import RetryConfig, PathConfig
 from ...shared import create_shared_playwright_mcp_server
+from ...shared.utils.tail_soft_limit import build_tail_soft_limit_history_processor
 
 from .validator import VideoSearchValidator, VideoListQualityFilter
 from .prompts import research_system_prompt, research_user_prompt
@@ -56,20 +57,11 @@ class ResearchAgent(BaseAgent):
             model=model,
             output_type=VideoResearchResult,
             toolsets=[self.mcp_server],
+            history_processors=[build_tail_soft_limit_history_processor(output_name="VideoResearchResult", threshold=20)],
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(research_system_prompt(),),
         )
-
-        @self.generator.instructions
-        async def soft_limit_instructions(ctx: RunContext) -> str | None:
-            if ctx.usage.requests >= 20:
-                return (
-                    "URGENT: The context window is nearly full.\n"
-                    "STOP all browsing and tool calls immediately.\n"
-                    "Output your VideoResearchResult NOW with all data collected so far."
-                )
-            return None
 
     def init_validators(self) -> None:
         self.search_validator = VideoSearchValidator(min_videos=5)

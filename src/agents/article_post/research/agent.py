@@ -30,6 +30,7 @@ from ..utils.research import (
     save_latest_snapshot,
     unique_keep_order,
 )
+from ...shared.utils.tail_soft_limit import build_tail_soft_limit_history_processor
 from .validator import ResearchReviewValidator, ResearchRulesValidator
 
 logger = get_logger(__name__)
@@ -1057,6 +1058,12 @@ class SynthesizerValidator:
             model=self.model,
             output_type=ArticleResearchResult,
             tools=evidence_store.get_tools(),
+            history_processors=[
+                build_tail_soft_limit_history_processor(
+                    output_name="ArticleResearchResult",
+                    threshold=20,
+                )
+            ],
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(SYNTHESIS_SYSTEM_PROMPT,),

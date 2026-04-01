@@ -20,6 +20,7 @@ from pydantic_ai.models.test import TestModel
 
 from src.agents.image_post.content.agent import ContentAgent as ImageContentAgent
 from src.agents.image_post.content.state import ContentState as ImageContentState
+from src.agents.image_post.research.agent import ResearchAgent as ImageResearchAgent
 from src.agents.image_post.utils.image import run_grouping_with_review
 from src.agents.image_post.schemas import (
     ImageGroupingPlan,
@@ -28,7 +29,14 @@ from src.agents.image_post.schemas import (
     ResearchResult,
     XHSContent,
 )
+from src.agents.article_post.research.agent import ResearchAgent as ArticleResearchAgent
+from src.agents.article_post.research.tools import LocalEvidenceStore
 from src.agents.shared.utils.asr.schemas import TranscriptionResult
+from src.agents.shared.utils.tail_soft_limit import (
+    build_soft_limit_message,
+    build_tail_soft_limit_history_processor,
+)
+from src.agents.styled_image_post.research.agent import ResearchAgent as StyledImageResearchAgent
 from src.agents.video_post.content.agent import ContentAgent as VideoContentAgent
 from src.agents.video_post.content.state import ContentState as VideoContentState
 from src.agents.video_post.research.agent import ResearchAgent as VideoResearchAgent
@@ -226,6 +234,41 @@ def _build_video_research() -> VideoResearchResult:
     )
 
 
+def _make_named_tool(name: str):
+    def tool() -> str:
+        return name
+
+    tool.__name__ = name
+    return tool
+
+
+class _FakeToolGetter:
+    def __init__(self, tool_name: str):
+        self.tool_name = tool_name
+
+    def get_tool(self):
+        return _make_named_tool(self.tool_name)
+
+
+class _FakeVideoExtractTool:
+    def get_extract_tool(self):
+        return _make_named_tool("extract_video")
+
+    def get_read_tool(self):
+        return _make_named_tool("read_video")
+
+
+def _build_research_agent_for_soft_limit(agent_cls):
+    agent = agent_cls.__new__(agent_cls)
+    agent.navigate_tracker = FunctionToolset()
+    agent.login_tool = _make_named_tool("login")
+    agent.image_reader_agent = _FakeToolGetter("read_image")
+    agent.post_image_reader = _FakeToolGetter("read_post_image")
+    agent.video_extract_tool = _FakeVideoExtractTool()
+    agent.init_agent()
+    return agent
+
+
 def test_image_content_state_keeps_last_complete_runs() -> None:
     state = ImageContentState(
         research=_build_image_research(),
@@ -236,6 +279,98 @@ def test_image_content_state_keeps_last_complete_runs() -> None:
     filtered = state.get_recent_history(1)
 
     assert filtered == state.message_history[4:]
+
+
+def test_tail_soft_limit_hooks_appends_tail_user_prompt_at_threshold() -> None:
+    processor = build_tail_soft_limit_history_processor(output_name="ResearchResult", threshold=20)
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content="first prompt")]),
+        ModelResponse(parts=[ToolCallPart(tool_name="playwright_browser_click", args={}, tool_call_id="call_1")]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name="playwright_browser_click",
+                    content={"ok": True},
+                    tool_call_id="call_1",
+                )
+            ]
+        ),
+    ]
+
+    updated = asyncio.run(
+        processor(
+            SimpleNamespace(usage=SimpleNamespace(requests=20)),
+            messages,
+        )
+    )
+
+    assert len(messages) == 3
+    assert len(updated) == 4
+    assert isinstance(updated[-1], ModelRequest)
+    assert len(updated[-1].parts) == 1
+    assert isinstance(updated[-1].parts[0], UserPromptPart)
+    assert updated[-1].parts[0].content == build_soft_limit_message("ResearchResult")
+
+
+def test_tail_soft_limit_hooks_do_not_append_below_threshold() -> None:
+    processor = build_tail_soft_limit_history_processor(output_name="ResearchResult", threshold=20)
+    messages = [ModelRequest(parts=[UserPromptPart(content="first prompt")])]
+
+    updated = asyncio.run(
+        processor(
+            SimpleNamespace(usage=SimpleNamespace(requests=19)),
+            messages,
+        )
+    )
+
+    assert updated == messages
+
+
+def test_image_research_agent_uses_tail_soft_limit_hooks(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.agents.image_post.research.agent.get_text_model",
+        lambda: TestModel(),
+    )
+
+    agent = _build_research_agent_for_soft_limit(ImageResearchAgent)
+
+    assert len(agent.generator.history_processors) == 1
+    assert not any(callable(item) for item in agent.generator._instructions)
+
+
+def test_styled_image_research_agent_uses_tail_soft_limit_hooks(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.agents.styled_image_post.research.agent.get_text_model",
+        lambda: TestModel(),
+    )
+
+    agent = _build_research_agent_for_soft_limit(StyledImageResearchAgent)
+
+    assert len(agent.generator.history_processors) == 1
+    assert not any(callable(item) for item in agent.generator._instructions)
+
+
+def test_article_research_synthesizer_uses_tail_soft_limit_history_processor(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "src.agents.article_post.research.agent.get_text_model",
+        lambda: TestModel(),
+    )
+
+    agent = ArticleResearchAgent()
+    synthesizer = agent.synthesizer._create_synthesizer(LocalEvidenceStore(tmp_path))
+
+    assert len(synthesizer.history_processors) == 1
+
+    updated = asyncio.run(
+        synthesizer.history_processors[0](
+            SimpleNamespace(usage=SimpleNamespace(requests=20)),
+            [ModelRequest(parts=[UserPromptPart(content="prompt")])],
+        )
+    )
+
+    assert isinstance(updated[-1], ModelRequest)
+    assert isinstance(updated[-1].parts[0], UserPromptPart)
+    assert updated[-1].parts[0].content == build_soft_limit_message("ArticleResearchResult")
 
 
 def test_image_content_step_uses_revision_prompt_without_mutating_history() -> None:
@@ -473,7 +608,7 @@ def test_video_research_step_retries_with_cleared_history_on_tool_result_id_not_
     assert "需要更多高质量视频" in str(agent.generator.calls[1]["prompt"])
 
 
-def test_video_research_soft_limit_instruction_triggers_at_20_requests(monkeypatch) -> None:
+def test_video_research_agent_uses_tail_soft_limit_history_processor(monkeypatch) -> None:
     monkeypatch.setattr(
         "src.agents.video_post.research.agent.get_text_model",
         lambda: TestModel(),
@@ -484,17 +619,8 @@ def test_video_research_soft_limit_instruction_triggers_at_20_requests(monkeypat
     )
 
     agent = VideoResearchAgent()
-    instruction_funcs = [item for item in agent.generator._instructions if callable(item)]
-
-    assert instruction_funcs, "expected a soft limit instruction to be registered"
-
-    instruction = instruction_funcs[-1]
-    assert asyncio.run(instruction(SimpleNamespace(usage=SimpleNamespace(requests=19)))) is None
-
-    message = asyncio.run(instruction(SimpleNamespace(usage=SimpleNamespace(requests=20))))
-    assert message is not None
-    assert "STOP all browsing and tool calls immediately." in message
-    assert "Output your VideoResearchResult NOW" in message
+    assert len(agent.generator.history_processors) == 1
+    assert not any(callable(item) for item in agent.generator._instructions)
 
 
 def test_video_research_state_drops_out_of_order_tool_result_even_if_id_matches_later_call() -> None:
