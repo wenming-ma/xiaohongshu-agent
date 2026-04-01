@@ -12,7 +12,7 @@ def build_soft_limit_message(output_name: str) -> str:
     )
 
 
-def build_tail_soft_limit_history_processor(*, output_name: str, threshold: int = 20):
+def build_tail_soft_limit_history_processor(*, output_name: str, threshold: int = 50):
     soft_limit_message = build_soft_limit_message(output_name)
 
     async def processor(ctx: RunContext[Any], messages: list[ModelMessage]) -> list[ModelMessage]:

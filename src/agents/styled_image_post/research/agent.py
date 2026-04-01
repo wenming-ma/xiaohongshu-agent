@@ -94,7 +94,7 @@ class ResearchAgent(BaseAgent):
             output_type=ResearchResult,
             toolsets=[self.navigate_tracker],
             tools=function_tools,
-            history_processors=[build_tail_soft_limit_history_processor(output_name="ResearchResult", threshold=20)],
+            history_processors=[build_tail_soft_limit_history_processor(output_name="ResearchResult", threshold=50)],
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(research_system_prompt(),),

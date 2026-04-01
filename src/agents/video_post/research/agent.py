@@ -57,7 +57,7 @@ class ResearchAgent(BaseAgent):
             model=model,
             output_type=VideoResearchResult,
             toolsets=[self.mcp_server],
-            history_processors=[build_tail_soft_limit_history_processor(output_name="VideoResearchResult", threshold=20)],
+            history_processors=[build_tail_soft_limit_history_processor(output_name="VideoResearchResult", threshold=50)],
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(research_system_prompt(),),

@@ -282,7 +282,7 @@ def test_image_content_state_keeps_last_complete_runs() -> None:
 
 
 def test_tail_soft_limit_hooks_appends_tail_user_prompt_at_threshold() -> None:
-    processor = build_tail_soft_limit_history_processor(output_name="ResearchResult", threshold=20)
+    processor = build_tail_soft_limit_history_processor(output_name="ResearchResult", threshold=50)
     messages = [
         ModelRequest(parts=[UserPromptPart(content="first prompt")]),
         ModelResponse(parts=[ToolCallPart(tool_name="playwright_browser_click", args={}, tool_call_id="call_1")]),
@@ -299,7 +299,7 @@ def test_tail_soft_limit_hooks_appends_tail_user_prompt_at_threshold() -> None:
 
     updated = asyncio.run(
         processor(
-            SimpleNamespace(usage=SimpleNamespace(requests=20)),
+            SimpleNamespace(usage=SimpleNamespace(requests=50)),
             messages,
         )
     )
@@ -313,12 +313,12 @@ def test_tail_soft_limit_hooks_appends_tail_user_prompt_at_threshold() -> None:
 
 
 def test_tail_soft_limit_hooks_do_not_append_below_threshold() -> None:
-    processor = build_tail_soft_limit_history_processor(output_name="ResearchResult", threshold=20)
+    processor = build_tail_soft_limit_history_processor(output_name="ResearchResult", threshold=50)
     messages = [ModelRequest(parts=[UserPromptPart(content="first prompt")])]
 
     updated = asyncio.run(
         processor(
-            SimpleNamespace(usage=SimpleNamespace(requests=19)),
+            SimpleNamespace(usage=SimpleNamespace(requests=49)),
             messages,
         )
     )
@@ -363,7 +363,7 @@ def test_article_research_synthesizer_uses_tail_soft_limit_history_processor(mon
 
     updated = asyncio.run(
         synthesizer.history_processors[0](
-            SimpleNamespace(usage=SimpleNamespace(requests=20)),
+            SimpleNamespace(usage=SimpleNamespace(requests=50)),
             [ModelRequest(parts=[UserPromptPart(content="prompt")])],
         )
     )

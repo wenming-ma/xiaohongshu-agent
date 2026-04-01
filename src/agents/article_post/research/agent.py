@@ -1061,7 +1061,7 @@ class SynthesizerValidator:
             history_processors=[
                 build_tail_soft_limit_history_processor(
                     output_name="ArticleResearchResult",
-                    threshold=20,
+                    threshold=50,
                 )
             ],
             instrument=True,
