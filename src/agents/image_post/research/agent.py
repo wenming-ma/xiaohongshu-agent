@@ -100,7 +100,7 @@ class ResearchAgent(BaseAgent):
 
         @self.generator.instructions
         async def soft_limit_instructions(ctx: RunContext) -> str | None:
-            if ctx.usage.requests >= 25:
+            if ctx.usage.requests >= 20:
                 return (
                     "URGENT: The context window is nearly full.\n"
                     "STOP all browsing and tool calls immediately.\n"

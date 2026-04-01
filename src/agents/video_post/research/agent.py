@@ -2,7 +2,7 @@ import logfire
 from pathlib import Path
 from typing import Any, List
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.usage import UsageLimits
 
@@ -60,6 +60,16 @@ class ResearchAgent(BaseAgent):
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(research_system_prompt(),),
         )
+
+        @self.generator.instructions
+        async def soft_limit_instructions(ctx: RunContext) -> str | None:
+            if ctx.usage.requests >= 20:
+                return (
+                    "URGENT: The context window is nearly full.\n"
+                    "STOP all browsing and tool calls immediately.\n"
+                    "Output your VideoResearchResult NOW with all data collected so far."
+                )
+            return None
 
     def init_validators(self) -> None:
         self.search_validator = VideoSearchValidator(min_videos=5)

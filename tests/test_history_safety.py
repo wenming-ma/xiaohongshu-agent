@@ -1,5 +1,7 @@
 import asyncio
+from types import SimpleNamespace
 
+from pydantic_ai import FunctionToolset
 from pydantic_ai.messages import (
     BaseToolCallPart,
     BaseToolReturnPart,
@@ -14,6 +16,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.models.test import TestModel
 
 from src.agents.image_post.content.agent import ContentAgent as ImageContentAgent
 from src.agents.image_post.content.state import ContentState as ImageContentState
@@ -468,6 +471,30 @@ def test_video_research_step_retries_with_cleared_history_on_tool_result_id_not_
     assert agent.generator.calls[0]["message_history"] == initial_history
     assert agent.generator.calls[1]["message_history"] == []
     assert "需要更多高质量视频" in str(agent.generator.calls[1]["prompt"])
+
+
+def test_video_research_soft_limit_instruction_triggers_at_20_requests(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.agents.video_post.research.agent.get_text_model",
+        lambda: TestModel(),
+    )
+    monkeypatch.setattr(
+        "src.agents.video_post.research.agent.create_shared_playwright_mcp_server",
+        lambda **_kwargs: FunctionToolset(),
+    )
+
+    agent = VideoResearchAgent()
+    instruction_funcs = [item for item in agent.generator._instructions if callable(item)]
+
+    assert instruction_funcs, "expected a soft limit instruction to be registered"
+
+    instruction = instruction_funcs[-1]
+    assert asyncio.run(instruction(SimpleNamespace(usage=SimpleNamespace(requests=19)))) is None
+
+    message = asyncio.run(instruction(SimpleNamespace(usage=SimpleNamespace(requests=20))))
+    assert message is not None
+    assert "STOP all browsing and tool calls immediately." in message
+    assert "Output your VideoResearchResult NOW" in message
 
 
 def test_video_research_state_drops_out_of_order_tool_result_even_if_id_matches_later_call() -> None:
