@@ -27,7 +27,7 @@ class TtsService:
             return await provider.synthesize_many(requests, context)
 
         last_error: Exception | None = None
-        for fallback_name in ("fish", "s2cpp", "google"):
+        for fallback_name in ("fish", "s2cpp", "qwen", "google"):
             provider = create_tts_provider(fallback_name)
             try:
                 result = await provider.synthesize_many(requests, context)

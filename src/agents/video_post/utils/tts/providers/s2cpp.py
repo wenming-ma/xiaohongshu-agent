@@ -8,10 +8,8 @@ import time
 from pathlib import Path
 
 import httpx
-from pydantic_ai import Agent
 
 from ......utils.logger import get_logger
-from ......utils.providers import get_text_model
 from ...tts_tags import DEFAULT_TONE_TAG, prepare_provider_tts_text, strip_tone_tag
 from ..common import (
     PROJECT_ROOT,
@@ -32,6 +30,7 @@ _S2CPP_EXE = PROJECT_ROOT / "submodules" / "s2.cpp_check" / "build-cuda" / "Rele
 _S2CPP_DLL_DIR = PROJECT_ROOT / "submodules" / "s2.cpp_check" / "build-cuda" / "bin" / "Release"
 _S2CPP_MODEL = PROJECT_ROOT / "submodules" / "s2.cpp_check" / "models" / "s2-pro-q8_0.gguf"
 _S2CPP_TOKENIZER = PROJECT_ROOT / "submodules" / "s2.cpp_check" / "models" / "tokenizer.json"
+_S2CPP_CACHE_DIR = PROJECT_ROOT / ".cache" / "s2cpp"
 _s2cpp_server_proc: subprocess.Popen | None = None
 
 VOICE_REGISTRY: dict[str, dict[str, str]] = {
@@ -75,9 +74,17 @@ async def select_voice_async(topic: str, transcript: str = "") -> str:
         f"可选音色:\n{options}\n\n"
         "只输出音色名称（如 liuyifei），不要任何解释。"
     )
-    agent = Agent(model=get_text_model(), output_type=str)
-    result = await agent.run(prompt)
-    voice = result.output.strip().lower()
+    try:
+        from pydantic_ai import Agent
+        from ......utils.providers.selector import get_text_model
+
+        agent = Agent(model=get_text_model(), output_type=str)
+        result = await agent.run(prompt)
+        voice = result.output.strip().lower()
+    except Exception as exc:
+        logger.warning("AI 选音不可用，回退默认音色 %s: %s", DEFAULT_VOICE, exc)
+        return DEFAULT_VOICE
+
     if voice in VOICE_REGISTRY:
         logger.info("AI 选择配音音色: %s (%s)", voice, VOICE_REGISTRY[voice]["desc"])
         return voice
@@ -102,8 +109,15 @@ async def assign_voices_to_speakers(
         "每行输出格式: 说话人编号=音色名称\n"
         "示例:\n0=liuyifei\n1=dingzhen\n"
     )
-    agent = Agent(model=get_text_model(), output_type=str)
-    result = await agent.run(prompt)
+    try:
+        from pydantic_ai import Agent
+        from ......utils.providers.selector import get_text_model
+
+        agent = Agent(model=get_text_model(), output_type=str)
+        result = await agent.run(prompt)
+    except Exception as exc:
+        logger.warning("多说话人 AI 选音不可用，统一回退默认音色 %s: %s", DEFAULT_VOICE, exc)
+        return {speaker_id: DEFAULT_VOICE for speaker_id in speaker_ids}
 
     mapping: dict[int, str] = {}
     for line in result.output.strip().splitlines():
@@ -272,13 +286,8 @@ async def _prepare_s2cpp_reference_audio(
 async def _ensure_s2cpp_server(base_url: str, timeout_s: float = 180.0) -> None:
     global _s2cpp_server_proc
 
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(base_url, timeout=5.0)
-            if response.status_code < 500:
-                return
-    except Exception:
-        pass
+    if await _probe_s2cpp_server(base_url, timeout_seconds=5.0):
+        return
 
     if not _S2CPP_EXE.exists():
         raise FileNotFoundError(f"s2.exe 不存在: {_S2CPP_EXE}")
@@ -287,9 +296,74 @@ async def _ensure_s2cpp_server(base_url: str, timeout_s: float = 180.0) -> None:
     port = int(parsed[-1]) if len(parsed) > 1 and parsed[-1].isdigit() else 3030
     host = "127.0.0.1"
     cuda_device = int(os.getenv("S2CPP_CUDA_DEVICE", "0"))
+    start_retries = max(get_env_int("S2CPP_SERVER_START_RETRIES", 2), 1)
+
+    for attempt in range(1, start_retries + 1):
+        log_path = _build_s2cpp_server_log_path(port, attempt)
+        logger.info(
+            "自动启动 s2.cpp server (port=%s, cuda=%s, attempt=%s/%s)...",
+            port,
+            cuda_device,
+            attempt,
+            start_retries,
+        )
+        _s2cpp_server_proc = _spawn_s2cpp_server(
+            host=host,
+            port=port,
+            cuda_device=cuda_device,
+            log_path=log_path,
+        )
+
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            if await _probe_s2cpp_server(base_url, timeout_seconds=3.0):
+                logger.info("s2.cpp server 已就绪")
+                return
+
+            code = _s2cpp_server_proc.poll()
+            if code is not None:
+                snippet = _read_s2cpp_server_log(log_path)
+                if attempt >= start_retries:
+                    raise RuntimeError(
+                        f"s2.cpp server 启动失败 (attempt={attempt}/{start_retries}, exit={code})"
+                        + (f": {snippet}" if snippet else "")
+                    )
+                logger.warning(
+                    "s2.cpp server 启动失败 (attempt=%s/%s, exit=%s)，重试。%s",
+                    attempt,
+                    start_retries,
+                    code,
+                    snippet or "无可用启动日志",
+                )
+                await asyncio.sleep(min(float(attempt * 2), 5.0))
+                break
+
+            await asyncio.sleep(1.0)
+        else:
+            _terminate_s2cpp_server_proc(_s2cpp_server_proc)
+            snippet = _read_s2cpp_server_log(log_path)
+            raise RuntimeError(
+                f"s2.cpp server 启动超时 ({timeout_s}s)"
+                + (f": {snippet}" if snippet else "")
+            )
+
+    raise RuntimeError("s2.cpp server 启动失败：已超过最大重试次数")
+
+
+def _build_s2cpp_server_log_path(port: int, attempt: int) -> Path:
+    _S2CPP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    return _S2CPP_CACHE_DIR / f"server-{port}-attempt{attempt}.log"
+
+
+def _spawn_s2cpp_server(
+    *,
+    host: str,
+    port: int,
+    cuda_device: int,
+    log_path: Path,
+) -> subprocess.Popen:
     env = os.environ.copy()
     env["PATH"] = f"{_S2CPP_DLL_DIR}{os.pathsep}{env.get('PATH', '')}"
-
     cmd = [
         str(_S2CPP_EXE),
         "-m",
@@ -304,29 +378,45 @@ async def _ensure_s2cpp_server(base_url: str, timeout_s: float = 180.0) -> None:
         "-P",
         str(port),
     ]
-    logger.info("自动启动 s2.cpp server (port=%s, cuda=%s)...", port, cuda_device)
-    _s2cpp_server_proc = subprocess.Popen(
-        cmd,
-        cwd=str(PROJECT_ROOT / "submodules" / "s2.cpp_check"),
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    with log_path.open("w", encoding="utf-8", errors="ignore") as log_file:
+        return subprocess.Popen(
+            cmd,
+            cwd=str(PROJECT_ROOT / "submodules" / "s2.cpp_check"),
+            env=env,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+        )
 
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(base_url, timeout=3.0)
-                if response.status_code < 500:
-                    logger.info("s2.cpp server 已就绪")
-                    return
-        except Exception:
-            pass
-        if _s2cpp_server_proc.poll() is not None:
-            raise RuntimeError(f"s2.cpp server 启动失败 (exit={_s2cpp_server_proc.returncode})")
-        await asyncio.sleep(1.0)
-    raise RuntimeError(f"s2.cpp server 启动超时 ({timeout_s}s)")
+
+def _read_s2cpp_server_log(log_path: Path, max_chars: int = 1200) -> str:
+    if not log_path.exists():
+        return ""
+    content = log_path.read_text(encoding="utf-8", errors="ignore").strip()
+    if not content:
+        return ""
+    normalized = " ".join(content.split())
+    if len(normalized) <= max_chars:
+        return normalized
+    return normalized[-max_chars:]
+
+
+def _terminate_s2cpp_server_proc(proc: subprocess.Popen | None) -> None:
+    if proc is None or proc.poll() is not None:
+        return
+    proc.kill()
+    try:
+        proc.wait(timeout=5)
+    except Exception:
+        pass
+
+
+async def _probe_s2cpp_server(base_url: str, timeout_seconds: float) -> bool:
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(base_url, timeout=timeout_seconds)
+            return response.status_code < 500
+    except Exception:
+        return False
 
 
 async def _check_s2cpp_tts_health(

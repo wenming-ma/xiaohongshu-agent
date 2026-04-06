@@ -23,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bg-volume", type=float, default=0.6, help="Background music volume")
     parser.add_argument(
         "--tts-provider",
-        choices=["fish", "google", "s2cpp", "auto"],
+        choices=["fish", "google", "qwen", "s2cpp", "auto"],
         default="",
         help="Override VIDEO_DUB_TTS_PROVIDER",
     )

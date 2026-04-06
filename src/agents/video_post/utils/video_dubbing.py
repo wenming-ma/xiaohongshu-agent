@@ -351,6 +351,8 @@ def _display_tts_provider_name(provider_name: str) -> str:
         return "Google"
     if provider_name == "fish":
         return "Fish"
+    if provider_name == "qwen":
+        return "Qwen"
     return provider_name
 
 
