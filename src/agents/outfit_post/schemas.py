@@ -21,6 +21,17 @@ class OutfitItemList(BaseModel):
     items: list[OutfitItem] = []
 
 
+class StyleOption(BaseModel):
+    """单个风格方向选项"""
+    label: str  # 简短标签，如 "休闲街头"
+    keyword: str  # 用于搜索的关键词，如 "休闲街头穿搭"
+
+
+class StyleSuggestion(BaseModel):
+    """LLM 根据单品推荐的风格方向"""
+    options: list[StyleOption] = []  # 3-5 个风格选项
+
+
 class OutfitPostInput(BaseModel):
     topic: str = ""  # 风格提示，如 "休闲风穿搭"、"通勤穿搭"，可为空
     audience: str = "年轻女性"

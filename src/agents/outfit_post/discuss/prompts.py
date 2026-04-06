@@ -29,3 +29,33 @@ def item_parser_system_prompt(**variables: object) -> str:
 
 def item_parser_user_prompt(**variables: object) -> str:
     return render_template(ITEM_PARSER_USER_PROMPT_TEMPLATE, **variables)
+
+
+STYLE_SUGGESTION_SYSTEM_PROMPT = """你是穿搭风格分析专家。根据用户提供的搭配单品，推荐 3-5 个最适合的穿搭风格方向。
+
+规则：
+- 根据单品的类型、材质、颜色等特征，判断它们适合哪些风格场景
+- 每个选项包含 label（简短标签，2-4字）和 keyword（用于小红书搜索的关键词，格式为"XX穿搭"）
+- 按匹配度从高到低排列
+- 最后一个选项固定为 label="不限风格"、keyword=""
+
+示例：
+单品：冲锋衣、速干T恤、束脚运动裤、跑鞋
+输出：[运动户外穿搭, 徒步旅行穿搭, 露营穿搭, 不限风格]
+
+单品：西装外套、白色打底衫、直筒西裤、乐福鞋
+输出：[通勤办公穿搭, 轻商务穿搭, 知性优雅穿搭, 不限风格]
+"""
+
+STYLE_SUGGESTION_USER_PROMPT_TEMPLATE = """用户的搭配单品：{items_text}
+
+请推荐 3-5 个最适合的穿搭风格方向。
+"""
+
+
+def style_suggestion_system_prompt(**variables: object) -> str:
+    return render_template(STYLE_SUGGESTION_SYSTEM_PROMPT, **variables)
+
+
+def style_suggestion_user_prompt(**variables: object) -> str:
+    return render_template(STYLE_SUGGESTION_USER_PROMPT_TEMPLATE, **variables)

@@ -10,6 +10,7 @@ from ....core.base_agent import BaseAgent, ValidationResult
 from ..schemas import (
     OutfitItem,
     OutfitItemList,
+    StyleSuggestion,
     VisualItemDetail,
     ItemReferenceImages,
     ReferenceImageResult,
@@ -18,7 +19,12 @@ from ....utils.providers import get_text_model
 from ....utils.feishu_notifier import get_feishu_notifier
 from ....utils.logger import get_logger
 from ....config.settings import ReferenceImageConfig
-from .prompts import item_parser_system_prompt, item_parser_user_prompt
+from .prompts import (
+    item_parser_system_prompt,
+    item_parser_user_prompt,
+    style_suggestion_system_prompt,
+    style_suggestion_user_prompt,
+)
 
 logger = get_logger(__name__)
 
@@ -44,6 +50,13 @@ class DiscussAgent(BaseAgent):
             model=model,
             output_type=OutfitItemList,
             system_prompt=(item_parser_system_prompt(),),
+            retries=3,
+            instrument=True,
+        )
+        self.style_suggester = Agent(
+            model=model,
+            output_type=StyleSuggestion,
+            system_prompt=(style_suggestion_system_prompt(),),
             retries=3,
             instrument=True,
         )
@@ -233,20 +246,27 @@ class DiscussAgent(BaseAgent):
     # ========================================================================
 
     async def ask_style_direction(self, items: list[OutfitItem]) -> str:
-        """询问用户这套搭配的风格方向，返回风格提示（空字符串表示不限）"""
+        """根据单品动态推荐风格方向，让用户选择。返回风格关键词（空字符串表示不限）"""
         if self.notifier.client is None:
             return ""
 
         items_str = "、".join(item.name for item in items)
+
+        # LLM 根据单品推荐风格选项
+        logger.info("分析单品风格方向...")
+        prompt = style_suggestion_user_prompt(items_text=items_str)
+        result = await self.style_suggester.run(prompt)
+        suggestion = result.output
+
+        if not suggestion.options:
+            return ""
+
+        # 构建飞书按钮
+        buttons = [(opt.label, opt.keyword) for opt in suggestion.options]
+
         await self.notifier.send_card_message(
             text=f"**🎨 {items_str}**\n\n这套搭配主要想分享什么风格？",
-            buttons=[
-                ("休闲日常", "休闲日常穿搭"),
-                ("通勤办公", "通勤办公穿搭"),
-                ("约会出行", "约会出行穿搭"),
-                ("运动户外", "运动户外穿搭"),
-                ("不限风格", ""),
-            ],
+            buttons=buttons,
         )
 
         while True:
@@ -257,7 +277,6 @@ class DiscussAgent(BaseAgent):
             text = text.strip()
             if not text:
                 continue
-            # 按钮点击会返回 keyword 值
             return text
 
     # ========================================================================
