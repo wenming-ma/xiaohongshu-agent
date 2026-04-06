@@ -145,28 +145,27 @@ class CollectAgent(BaseAgent):
         recommendations: list[VisualItemDetail],
         topic: str,
     ) -> list[VisualItemDetail]:
-        """通过飞书卡片让用户确认/删除/补充推荐物品列表"""
+        """通过飞书卡片（按钮+文字）让用户确认/删除/补充推荐物品列表"""
         if self.notifier.client is None:
             logger.warning("飞书客户端未初始化，跳过用户确认")
             return recommendations
 
         items = list(recommendations)
 
-        # 发送初始列表
+        # 发送推荐列表卡片
         await self._send_recommendation_card(items, topic)
 
-        # 交互循环：等待用户确认、删除或补充
+        # 交互循环
         while True:
             image_path, text = await self.notifier.wait_for_image_or_text()
 
             if image_path is not None:
-                # 用户发了图片，忽略（还没到收集阶段）
                 await self.notifier.send_message("当前是确认推荐列表阶段，请先确认列表后再发送图片")
                 continue
 
             text = text.strip()
 
-            # 确认列表
+            # 按钮或文字确认
             if text in ("确认列表", "确认"):
                 return items
 
@@ -174,40 +173,47 @@ class CollectAgent(BaseAgent):
             if text in ("全部跳过", "跳过"):
                 return []
 
-            # 删除物品：匹配 "删除 N" 或 "删N"
-            delete_match = re.match(r"删除?\s*(\d+)", text)
+            # 批量删除：支持 "删除 1,2,3" / "删1，2，3"
+            delete_match = re.match(r"删除?\s*([\d,，、\s]+)", text)
             if delete_match:
-                idx = int(delete_match.group(1)) - 1
-                if 0 <= idx < len(items):
-                    removed = items.pop(idx)
-                    await self.notifier.send_message(f"已删除「{removed.name}」")
-                    if not items:
-                        await self.notifier.send_message("推荐列表已清空")
-                        return []
-                    await self._send_recommendation_card(items, topic)
-                else:
-                    await self.notifier.send_message(f"编号 {idx+1} 不存在，请重试")
-                continue
-
-            # 补充物品：匹配 "加xxx" 或 "添加xxx"
-            add_match = re.match(r"(?:加|添加)\s*(.+)", text)
-            if add_match:
-                name = add_match.group(1).strip()
-                items.append(VisualItemDetail(
-                    name=name,
-                    description="用户补充",
-                    visual_questions=[],
-                ))
-                await self.notifier.send_message(f"已添加「{name}」")
+                raw = delete_match.group(1)
+                indices = sorted(
+                    {int(n) - 1 for n in re.findall(r"\d+", raw)},
+                    reverse=True,
+                )
+                removed_names = []
+                for idx in indices:
+                    if 0 <= idx < len(items):
+                        removed_names.append(items.pop(idx).name)
+                if removed_names:
+                    await self.notifier.send_message(f"已删除：{'、'.join(reversed(removed_names))}")
+                if not items:
+                    await self.notifier.send_message("推荐列表已清空")
+                    return []
                 await self._send_recommendation_card(items, topic)
                 continue
 
-            # 未识别的输入
+            # 补充物品：匹配 "加xxx" / "添加xxx"
+            add_match = re.match(r"(?:加|添加)\s*(.+)", text)
+            if add_match:
+                for name in re.split(r"[,，、]+", add_match.group(1)):
+                    name = name.strip()
+                    if name:
+                        items.append(VisualItemDetail(
+                            name=name,
+                            description="用户补充",
+                            visual_questions=[],
+                        ))
+                        await self.notifier.send_message(f"已添加「{name}」")
+                await self._send_recommendation_card(items, topic)
+                continue
+
+            # 未识别
             await self.notifier.send_message(
-                "未识别操作。你可以：\n"
-                '- 回复"删除 N"删除物品\n'
-                '- 回复"加 物品名"补充物品\n'
-                "- 点击按钮确认或跳过"
+                "你可以：\n"
+                "- 点击「确认列表」或「全部跳过」\n"
+                '- 回复"删除 1,2,3"批量删除\n'
+                '- 回复"加 物品名"补充物品'
             )
 
     async def _send_recommendation_card(
@@ -215,7 +221,7 @@ class CollectAgent(BaseAgent):
         items: list[VisualItemDetail],
         topic: str,
     ) -> None:
-        """发送推荐物品列表卡片"""
+        """发送推荐物品列表卡片（JSON 1.0，按钮走 WebSocket 回调）"""
         lines = [
             f"**📋 帖子主题：{topic}**\n",
             "根据研究分析，以下物品值得推荐：\n",
@@ -224,9 +230,7 @@ class CollectAgent(BaseAgent):
             desc = f" — {item.description}" if item.description and item.description != "用户补充" else ""
             lines.append(f"{i+1}. **{item.name}**{desc}")
 
-        lines.append("\n你可以：")
-        lines.append('- 回复"删除 N"删除物品')
-        lines.append('- 回复"加 物品名"补充物品')
+        lines.append('\n回复"删除 1,2,3"删除 · 回复"加 物品名"补充')
 
         await self.notifier.send_card_message(
             text="\n".join(lines),

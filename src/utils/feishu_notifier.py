@@ -195,9 +195,37 @@ class FeishuNotifier:
                     logger.warning(f"解析图片消息失败: {e}")
 
         def _on_card_action(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
-            """收到卡片按钮点击时放入队列（在 WS 线程中执行）"""
-            action_value = (data.event.action.value or {}) if (data.event and data.event.action) else {}
-            keyword = action_value.get("keyword", "")
+            """收到卡片按钮/表单提交时放入队列（在 WS 线程中执行）"""
+            try:
+                action = data.event.action if (data.event and data.event.action) else None
+                action_value = (action.value or {}) if action else {}
+                keyword = action_value.get("keyword", "")
+
+                # 表单提交：form_value 包含所有字段数据
+                form_value = action.form_value if action else None
+            except Exception as e:
+                logger.error(f"解析卡片回调失败: {e}")
+                form_value = None
+                keyword = ""
+                action = None
+            if form_value:
+                form_json = json.dumps(form_value, ensure_ascii=False)
+                queue_text = f"__FORM__:{form_json}"
+                logger.debug(f"收到表单提交: {form_json[:100]}")
+                self._record("user", "form", form_json[:200])
+                asyncio.run_coroutine_threadsafe(
+                    self._reply_queue.put(queue_text), self._loop
+                )
+                asyncio.run_coroutine_threadsafe(
+                    self._media_queue.put((queue_text, None)), self._loop
+                )
+                resp = P2CardActionTriggerResponse()
+                resp.toast = CallBackToast()
+                resp.toast.type = "success"
+                resp.toast.content = "已提交"
+                return resp
+
+            # 普通按钮点击
             if keyword:
                 logger.debug(f"收到卡片按钮点击: {keyword}")
                 self._record("user", "button", keyword)
@@ -241,19 +269,14 @@ class FeishuNotifier:
                 asyncio.set_event_loop(new_loop)
                 _ws_mod.loop = new_loop
 
-                # Monkey-patch: SDK 默认丢弃 CARD 帧，改为和 EVENT 帧同样处理
+                # Monkey-patch: SDK 默认丢弃 CARD 帧，让它走 EVENT 同样的路径
                 _orig_handle = ws_client._handle_data_frame
 
                 async def _patched_handle(frame):
-                    hs = frame.headers
-                    type_ = ""
-                    for h in hs:
-                        if h.key == HEADER_TYPE:
-                            type_ = h.value
+                    for h in frame.headers:
+                        if h.key == HEADER_TYPE and h.value == MessageType.CARD.value:
+                            h.value = MessageType.EVENT.value
                             break
-                    if type_ and MessageType(type_) == MessageType.CARD:
-                        # 将 CARD 帧伪装为 EVENT 帧处理
-                        h.value = MessageType.EVENT.value
                     return await _orig_handle(frame)
 
                 ws_client._handle_data_frame = _patched_handle
@@ -411,6 +434,106 @@ class FeishuNotifier:
                 return None
         except Exception as e:
             logger.error(f"发送卡片消息失败: {e}")
+            return None
+
+    async def send_form_card(
+        self,
+        title: str,
+        checkers: list[dict],
+        input_name: str = "",
+        input_placeholder: str = "",
+        submit_label: str = "确认",
+        chat_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """发送带表单（checker + input + 提交按钮）的交互式卡片
+
+        Args:
+            title: 卡片顶部 markdown 文本
+            checkers: [{"name": "item_0", "text": "物品名", "checked": True}, ...]
+            input_name: 输入框字段名（空则不显示输入框）
+            input_placeholder: 输入框占位符
+            submit_label: 提交按钮文本
+            chat_id: 目标聊天 ID
+
+        Returns:
+            消息 ID，失败返回 None
+        """
+        if self.client is None:
+            return None
+
+        target_chat = chat_id or self.chat_id
+        if not target_chat:
+            return None
+
+        form_elements: list[dict] = [
+            {"tag": "markdown", "content": title},
+        ]
+
+        for item in checkers:
+            form_elements.append({
+                "tag": "checker",
+                "name": item["name"],
+                "checked": item.get("checked", True),
+                "text": {"tag": "plain_text", "content": item["text"]},
+                "behaviors": [{"type": "callback", "value": {}}],
+            })
+
+        if input_name:
+            form_elements.append({
+                "tag": "input",
+                "name": input_name,
+                "placeholder": {"tag": "plain_text", "content": input_placeholder or "请输入"},
+            })
+
+        form_elements.append({
+            "tag": "button",
+            "text": {"tag": "plain_text", "content": submit_label},
+            "type": "primary",
+            "form_action_type": "submit",
+            "behaviors": [{"type": "callback", "value": {"action": "form_submit"}}],
+        })
+
+        card = {
+            "schema": "2.0",
+            "body": {
+                "elements": [{
+                    "tag": "form",
+                    "name": "recommend_form",
+                    "elements": form_elements,
+                }],
+            },
+        }
+
+        try:
+            request = (
+                CreateMessageRequest.builder()
+                .receive_id_type(self.receive_id_type)
+                .request_body(
+                    CreateMessageRequestBody.builder()
+                    .receive_id(target_chat)
+                    .msg_type("interactive")
+                    .content(json.dumps(card))
+                    .build()
+                )
+                .build()
+            )
+
+            response = await asyncio.to_thread(
+                self.client.im.v1.message.create, request
+            )
+
+            if response.success():
+                msg_id = response.data.message_id
+                self._record("bot", "form", title[:100])
+                logger.debug(f"表单卡片已发送: {title[:50]}...")
+                return msg_id
+            else:
+                logger.error(
+                    f"发送表单卡片失败: code={response.code}, msg={response.msg}"
+                )
+                return None
+        except Exception as e:
+            logger.error(f"发送表单卡片失败: {e}")
             return None
 
     async def upsert_status(
