@@ -26,4 +26,5 @@ output/
 .claude/
 .cursor/
 .serena/
+.playwright-mcp/
 *.png
