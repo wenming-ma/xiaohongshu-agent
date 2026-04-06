@@ -96,6 +96,10 @@ class FeishuNotifier:
             # 用于接收图片/文本的结构化队列 (text, image_path)
             self._media_queue: asyncio.Queue[tuple[str, Path | None]] = asyncio.Queue()
 
+            # 会话历史：记录本次会话中所有收发的消息
+            # 每条记录: {"role": "bot"|"user", "type": "text"|"image"|"card"|"button", "content": str, "ts": float}
+            self._session_history: list[dict] = []
+
             # WebSocket 后台线程
             self._polling_thread: Optional[threading.Thread] = None
             self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -106,6 +110,32 @@ class FeishuNotifier:
         FeishuNotifier._initialized = True
         mode = "私聊模式" if self.dm_mode else "群聊模式"
         logger.info("FeishuNotifier 初始化完成 (%s)", mode)
+
+    # ------------------------------------------------------------------
+    # 会话历史
+    # ------------------------------------------------------------------
+
+    def _record(self, role: str, msg_type: str, content: str) -> None:
+        """记录一条会话消息"""
+        import time
+        self._session_history.append({
+            "role": role,
+            "type": msg_type,
+            "content": content,
+            "ts": time.time(),
+        })
+
+    def get_session_history(self) -> list[dict]:
+        """获取本次会话的完整聊天记录"""
+        return list(self._session_history)
+
+    def get_session_history_text(self) -> str:
+        """获取本次会话的聊天记录（文本格式）"""
+        lines = []
+        for msg in self._session_history:
+            role = "🤖" if msg["role"] == "bot" else "👤"
+            lines.append(f"{role} [{msg['type']}] {msg['content'][:200]}")
+        return "\n".join(lines)
 
     # ------------------------------------------------------------------
     # 消息轮询（WebSocket 长连接）
@@ -139,6 +169,7 @@ class FeishuNotifier:
                 except (json.JSONDecodeError, TypeError):
                     text = str(msg.content)
                 logger.debug(f"收到飞书消息: {text[:50]}...")
+                self._record("user", "text", text)
                 asyncio.run_coroutine_threadsafe(
                     self._reply_queue.put(text), self._loop
                 )
@@ -147,6 +178,7 @@ class FeishuNotifier:
                 )
             elif msg.message_type == "image":
                 logger.debug("收到图片消息")
+                self._record("user", "image", "[图片]")
                 # 向 reply_queue 放入文本标记（向后兼容）
                 asyncio.run_coroutine_threadsafe(
                     self._reply_queue.put("[IMAGE]"), self._loop
@@ -168,6 +200,7 @@ class FeishuNotifier:
             keyword = action_value.get("keyword", "")
             if keyword:
                 logger.debug(f"收到卡片按钮点击: {keyword}")
+                self._record("user", "button", keyword)
                 asyncio.run_coroutine_threadsafe(
                     self._reply_queue.put(keyword), self._loop
                 )
@@ -293,6 +326,7 @@ class FeishuNotifier:
 
             if response.success():
                 msg_id = response.data.message_id
+                self._record("bot", "text", text)
                 logger.debug(f"消息已发送: {text[:50]}...")
                 return msg_id
             else:
@@ -367,6 +401,7 @@ class FeishuNotifier:
 
             if response.success():
                 msg_id = response.data.message_id
+                self._record("bot", "card", text)
                 logger.debug(f"卡片消息已发送: {text[:50]}...")
                 return msg_id
             else:
@@ -522,6 +557,7 @@ class FeishuNotifier:
                 return None
 
             msg_id = response.data.message_id
+            self._record("bot", "image", f"[图片: {image_path.name}]")
             logger.debug(f"图片已发送: {image_path.name}")
 
             # 图片说明作为单独文本发送
