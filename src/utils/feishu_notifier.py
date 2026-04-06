@@ -27,6 +27,12 @@ from lark_oapi.api.im.v1 import (
     UpdateMessageRequestBody,
 )
 
+from lark_oapi.event.callback.model.p2_card_action_trigger import (
+    P2CardActionTrigger,
+    P2CardActionTriggerResponse,
+    CallBackToast,
+)
+
 from .logger import get_logger
 from ..config.settings import FeishuConfig, PathConfig
 
@@ -153,9 +159,28 @@ class FeishuNotifier:
                 except Exception as e:
                     logger.warning(f"解析图片消息失败: {e}")
 
+        def _on_card_action(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
+            """收到卡片按钮点击时放入队列（在 WS 线程中执行）"""
+            action_value = (data.event.action.value or {}) if (data.event and data.event.action) else {}
+            keyword = action_value.get("keyword", "")
+            if keyword:
+                logger.debug(f"收到卡片按钮点击: {keyword}")
+                asyncio.run_coroutine_threadsafe(
+                    self._reply_queue.put(keyword), self._loop
+                )
+                asyncio.run_coroutine_threadsafe(
+                    self._media_queue.put((keyword, None)), self._loop
+                )
+            resp = P2CardActionTriggerResponse()
+            resp.toast = CallBackToast()
+            resp.toast.type = "info"
+            resp.toast.content = f"已选择: {keyword}" if keyword else "操作已收到"
+            return resp
+
         event_handler = (
             lark.EventDispatcherHandler.builder("", "")
             .register_p2_im_message_receive_v1(_on_message)
+            .register_p2_card_action_trigger(_on_card_action)
             .build()
         )
 
@@ -173,10 +198,29 @@ class FeishuNotifier:
                 # 必须替换该模块级变量，否则会用主线程的 loop 导致
                 # "This event loop is already running"
                 import lark_oapi.ws.client as _ws_mod
+                from lark_oapi.ws.enum import MessageType
+                from lark_oapi.ws.const import HEADER_TYPE
 
                 new_loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(new_loop)
                 _ws_mod.loop = new_loop
+
+                # Monkey-patch: SDK 默认丢弃 CARD 帧，改为和 EVENT 帧同样处理
+                _orig_handle = ws_client._handle_data_frame
+
+                async def _patched_handle(frame):
+                    hs = frame.headers
+                    type_ = ""
+                    for h in hs:
+                        if h.key == HEADER_TYPE:
+                            type_ = h.value
+                            break
+                    if type_ and MessageType(type_) == MessageType.CARD:
+                        # 将 CARD 帧伪装为 EVENT 帧处理
+                        h.value = MessageType.EVENT.value
+                    return await _orig_handle(frame)
+
+                ws_client._handle_data_frame = _patched_handle
 
                 ws_client.start()
             except Exception as e:
@@ -255,6 +299,80 @@ class FeishuNotifier:
                 return None
         except Exception as e:
             logger.error(f"发送消息失败: {e}")
+            return None
+
+    async def send_card_message(
+        self,
+        text: str,
+        buttons: list[tuple[str, str]],
+        chat_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """发送交互式卡片消息（markdown 文本 + 按钮行）
+
+        Args:
+            text: 卡片正文（支持飞书 markdown）
+            buttons: 按钮列表 [(显示文本, keyword), ...]
+            chat_id: 目标聊天 ID（可选）
+
+        Returns:
+            消息 ID，失败返回 None
+        """
+        if self.client is None:
+            return None
+
+        target_chat = chat_id or self.chat_id
+        if not target_chat:
+            return None
+
+        # 构建按钮 actions
+        actions = []
+        for label, keyword in buttons:
+            btn_type = "danger" if keyword in ("跳过",) else (
+                "primary" if keyword in ("完成",) else "default"
+            )
+            actions.append({
+                "tag": "button",
+                "text": {"tag": "plain_text", "content": label},
+                "type": btn_type,
+                "value": {"keyword": keyword},
+            })
+
+        card = {
+            "elements": [
+                {"tag": "markdown", "content": text},
+                {"tag": "action", "actions": actions},
+            ],
+        }
+
+        try:
+            request = (
+                CreateMessageRequest.builder()
+                .receive_id_type(self.receive_id_type)
+                .request_body(
+                    CreateMessageRequestBody.builder()
+                    .receive_id(target_chat)
+                    .msg_type("interactive")
+                    .content(json.dumps(card))
+                    .build()
+                )
+                .build()
+            )
+
+            response = await asyncio.to_thread(
+                self.client.im.v1.message.create, request
+            )
+
+            if response.success():
+                msg_id = response.data.message_id
+                logger.debug(f"卡片消息已发送: {text[:50]}...")
+                return msg_id
+            else:
+                logger.error(
+                    f"发送卡片消息失败: code={response.code}, msg={response.msg}"
+                )
+                return None
+        except Exception as e:
+            logger.error(f"发送卡片消息失败: {e}")
             return None
 
     async def upsert_status(
@@ -584,18 +702,33 @@ class FeishuNotifier:
         save_dir: Path,
         done_keyword: str = "完成",
         skip_keyword: str = "跳过",
-        next_keyword: str = "下一组",
+        next_keyword: str = "下一个",
+        next_group_keyword: str = "",
         max_images: int = 5,
     ) -> tuple[list[Path], str]:
         """发送提示并循环收集多张图片，直到用户回复关键词。
 
         Returns:
-            (图片路径列表, 停止原因: "done"/"skip"/"next"/"max_reached")
+            (图片路径列表, 停止原因: "done"/"skip"/"next"/"next_group"/"max_reached")
         """
         if self.client is None:
             return [], "skip"
 
-        await self.send_message(prompt)
+        # 构建按钮列表并发送卡片消息
+        buttons: list[tuple[str, str]] = []
+        if next_keyword:
+            buttons.append((next_keyword, next_keyword))
+        if next_group_keyword:
+            buttons.append((next_group_keyword, next_group_keyword))
+        if skip_keyword:
+            buttons.append((skip_keyword, skip_keyword))
+        if done_keyword:
+            buttons.append((done_keyword, done_keyword))
+
+        if buttons:
+            await self.send_card_message(prompt, buttons)
+        else:
+            await self.send_message(prompt)
 
         collected: list[Path] = []
         while len(collected) < max_images:
@@ -618,6 +751,8 @@ class FeishuNotifier:
                 return collected, "skip"
             if text_lower == next_keyword or text == next_keyword:
                 return collected, "next"
+            if next_group_keyword and (text_lower == next_group_keyword or text == next_group_keyword):
+                return collected, "next_group"
 
             # Unknown text, treat as continue signal
             logger.debug(f"收到未知文本回复: {text}, 继续等待图片")

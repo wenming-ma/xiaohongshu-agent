@@ -55,10 +55,6 @@ class CollectAgent(BaseAgent):
         output_dir: Path,
     ) -> ReferenceImageResult:
         """主入口：分析分组 → 逐物品收集参考图片"""
-        if not ReferenceImageConfig.ENABLED:
-            logger.info("参考图片收集已禁用 (REFERENCE_IMAGE_ENABLED=0)")
-            return ReferenceImageResult(skipped=True)
-
         if not groups:
             return ReferenceImageResult(skipped=True)
 
@@ -118,6 +114,7 @@ class CollectAgent(BaseAgent):
                     done_keyword="完成",
                     skip_keyword="跳过",
                     next_keyword="下一个",
+                    next_group_keyword="下一组",
                     max_images=ReferenceImageConfig.MAX_IMAGES_PER_ITEM,
                 )
 
@@ -125,11 +122,13 @@ class CollectAgent(BaseAgent):
                     global_stop = True
                 elif stop_reason == "done":
                     global_stop = True
+                elif stop_reason == "next_group":
+                    break  # 仅跳过当前分组，继续下一分组
                 elif stop_reason == "next" and len(images) == 0:
                     # 用户说"下一个"但没发图，提醒确认
                     confirm_msg = (
-                        f'⚠️ 还没有收到「{item.name}」的参考图片，确定跳过吗？\n'
-                        f'回复"确定"跳过，或发送图片继续'
+                        f'**⚠️ 还没有收到「{item.name}」的参考图片**\n'
+                        f'点击"确定"跳过，或发送图片继续'
                     )
                     more_images, reason2 = await self.notifier.collect_images(
                         prompt=confirm_msg,
@@ -137,6 +136,7 @@ class CollectAgent(BaseAgent):
                         done_keyword="完成",
                         skip_keyword="跳过",
                         next_keyword="确定",
+                        next_group_keyword="下一组",
                         max_images=ReferenceImageConfig.MAX_IMAGES_PER_ITEM,
                     )
                     images.extend(more_images)
@@ -144,6 +144,8 @@ class CollectAgent(BaseAgent):
                         global_stop = True
                     elif reason2 == "done":
                         global_stop = True
+                    elif reason2 == "next_group":
+                        break  # 仅跳过当前分组，继续下一分组
 
                 item_refs.append(ItemReferenceImages(
                     item_name=item.name,
@@ -154,6 +156,14 @@ class CollectAgent(BaseAgent):
                     logger.info("物品「%s」: 收集到 %d 张参考图片", item.name, len(images))
                 else:
                     logger.info("物品「%s」: 已跳过", item.name)
+
+                # 检查分组总数是否达上限
+                group_total = sum(len(item_ref.image_paths) for item_ref in item_refs)
+                if group_total >= ReferenceImageConfig.MAX_TOTAL_IMAGES_PER_GROUP:
+                    await self.notifier.send_message(
+                        f"本分组已收集 {group_total} 张参考图片（达到上限），自动进入下一分组"
+                    )
+                    break
 
             collected_groups.append(ReferenceImageGroup(
                 group_index=analysis.group_index,
@@ -251,13 +261,11 @@ class CollectAgent(BaseAgent):
         total_items: int,
     ) -> str:
         lines = [
-            f"📸 [{item_idx + 1}/{total_items}] 请发送「{item.name}」的参考图片",
-            f"可发送多张（不同角度/细节），发完回复\"下一个\"",
+            f"**📸 [{item_idx + 1}/{total_items}] 请发送「{item.name}」的参考图片**",
+            f"可发送多张（不同角度/细节），发完点击按钮继续",
         ]
         if item.description:
             lines.append(f"描述: {item.description}")
         for q in item.visual_questions:
             lines.append(f"   - {q}")
-        lines.append("")
-        lines.append('跳过所有剩余物品回复"跳过"，全部完成回复"完成"')
         return "\n".join(lines)

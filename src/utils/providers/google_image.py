@@ -79,7 +79,7 @@ class GeminiImageClient:
         image_size: Optional[str] = None,
         aspect_ratio: Optional[str] = None,
         max_retries: int = _MAX_RETRIES,
-        reference_images: list[Path] | None = None,
+        reference_images: list[tuple[str, Path]] | None = None,
     ) -> Path:
         """
         生成图片并保存到指定路径
@@ -90,6 +90,7 @@ class GeminiImageClient:
             image_size: 图片尺寸（可选），覆盖默认值
             aspect_ratio: 图片比例（可选），覆盖默认值
             max_retries: 最大重试次数
+            reference_images: 带物品标签的参考图片列表 [(item_name, path), ...]
 
         Returns:
             保存的图片路径
@@ -99,15 +100,19 @@ class GeminiImageClient:
 
         logger.info("开始生成图片: %s (size=%s, aspect_ratio=%s)", output_path.name, size, ratio)
         if reference_images:
-            logger.info("附加 %d 张参考图片", len([p for p in reference_images if p.exists()]))
+            logger.info("附加 %d 张参考图片", len([p for _, p in reference_images if p.exists()]))
         logger.debug("提示词: %s...", prompt[:100])
 
         last_error = None
         for attempt in range(max_retries):
             try:
                 parts = []
-                for ref_path in (reference_images or []):
+                current_label = None
+                for label, ref_path in (reference_images or []):
                     if ref_path.exists():
+                        if label != current_label:
+                            parts.append(types.Part.from_text(text=f"[Reference image: {label}]"))
+                            current_label = label
                         img_bytes = ref_path.read_bytes()
                         mime = mimetypes.guess_type(str(ref_path))[0] or "image/jpeg"
                         parts.append(types.Part.from_bytes(data=img_bytes, mime_type=mime))
@@ -201,7 +206,7 @@ async def generate_gemini_image(
     output_path: Path,
     image_size: Optional[str] = None,
     aspect_ratio: Optional[str] = None,
-    reference_images: list[Path] | None = None,
+    reference_images: list[tuple[str, Path]] | None = None,
 ) -> Path:
     """便捷函数：生成 Gemini 图片"""
     client = GeminiImageClient()

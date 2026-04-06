@@ -103,7 +103,7 @@ class ImageAgent(BaseAgent):
             base_prompt = image_system_prompt()
 
             # 有参考图片时，追加参考图片生成规则
-            if ctx.deps.reference_item_names:
+            if ctx.deps.reference_image_map:
                 base_prompt += REFERENCE_IMAGE_SYSTEM_ADDENDUM
 
             if ctx.deps.validation_feedback:
@@ -208,22 +208,20 @@ class ImageAgent(BaseAgent):
         # 3. 逐张生成图片
         generated_images: list[GeneratedImage] = []
         for spec in image_specs:
-            # 查找当前 spec 对应的参考图片和物品名
-            ref_paths: list[Path] | None = None
-            ref_item_names: list[str] = []
+            # 查找当前 spec 对应的参考图片（按物品组织）
+            ref_image_map: dict[str, list[Path]] = {}
             if reference_images and not reference_images.skipped:
                 image_type = spec["type"]
                 if image_type.startswith("detail_"):
                     try:
                         group_idx = int(image_type.split("_")[1]) - 1
-                        ref_paths = reference_images.get_images_for_group(group_idx) or None
-                        # 提取有参考图的物品名
                         for g in reference_images.groups:
                             if g.group_index == group_idx:
-                                ref_item_names = [
-                                    item.item_name for item in g.items
-                                    if item.image_paths
-                                ]
+                                for item in g.items:
+                                    if item.image_paths:
+                                        ref_image_map[item.item_name] = [
+                                            Path(p) for p in item.image_paths
+                                        ]
                                 break
                     except (ValueError, IndexError) as e:
                         logger.warning("解析分组索引失败 image_type=%s: %s", image_type, e)
@@ -234,8 +232,7 @@ class ImageAgent(BaseAgent):
                 topic=topic,
                 output_dir=output_dir,
                 image_spec=spec,
-                ref_image_paths=ref_paths,
-                ref_item_names=ref_item_names,
+                ref_image_map=ref_image_map,
             )
             generated_images.append(generated_image)
             logger.info("%s 生成完成", spec["type"])
@@ -264,8 +261,7 @@ class ImageAgent(BaseAgent):
         topic: str,
         output_dir: Path,
         image_spec: ImageTypeSpec,
-        ref_image_paths: list[Path] | None = None,
-        ref_item_names: list[str] | None = None,
+        ref_image_map: dict[str, list[Path]] | None = None,
     ) -> GeneratedImage:
         """
         工作流子步骤：生成单张图片
@@ -276,20 +272,21 @@ class ImageAgent(BaseAgent):
             topic: 主题
             output_dir: 输出目录
             image_spec: 图片规格
-            ref_image_paths: 参考图片路径列表（可选）
-            ref_item_names: 有参考图的物品名称列表（可选）
+            ref_image_map: 物品名 → 参考图片路径列表（可选）
         """
         image_type = image_spec["type"]
         image_desc = image_spec.get("desc", "")
+        ref_image_map = ref_image_map or {}
 
         logger.info("[%s] %s", image_type, image_desc)
-        if ref_image_paths:
-            logger.info("附加 %d 张参考图片 (物品: %s)", len(ref_image_paths), ", ".join(ref_item_names or []))
+        if ref_image_map:
+            total_refs = sum(len(ps) for ps in ref_image_map.values())
+            logger.info("附加 %d 张参考图片 (物品: %s)", total_refs, ", ".join(ref_image_map.keys()))
 
         gen_ctx = ImageGenContext(
             topic=topic,
             image_type=image_type,
-            reference_item_names=ref_item_names or [],
+            reference_image_map={k: [str(p) for p in v] for k, v in ref_image_map.items()},
         )
 
         logger.info("启动 Gemini API 图片生成...")
@@ -301,7 +298,7 @@ class ImageAgent(BaseAgent):
             content=content,
             research=research,
             image_spec=image_spec,
-            ref_image_paths=ref_image_paths,
+            ref_image_map=ref_image_map,
         )
 
         return GeneratedImage(
@@ -382,12 +379,24 @@ class ImageAgent(BaseAgent):
             image_desc=image_desc,
         )
 
-        # 追加参考图片指令（含具体物品名）
-        if has_reference_images and gen_ctx.reference_item_names:
-            items_list = "、".join(gen_ctx.reference_item_names)
+        # 追加参考图片指令（含逐物品编号映射）
+        if has_reference_images and gen_ctx.reference_image_map:
+            # 构建编号映射：参考图 #1、#2 → 渔夫帽，#3 → 阔腿裤
+            mapping_lines = []
+            idx = 1
+            for item_name, paths in gen_ctx.reference_image_map.items():
+                count = len(paths)
+                if count == 1:
+                    mapping_lines.append(f"- 参考图 #{idx}：{item_name}")
+                else:
+                    nums = "、".join(f"#{idx + i}" for i in range(count))
+                    mapping_lines.append(f"- 参考图 {nums}：{item_name}")
+                idx += count
+            mapping_text = "\n".join(mapping_lines)
+
             user_prompt += (
                 f"\n\n{REFERENCE_IMAGE_INSTRUCTION}\n"
-                f"以下物品已附上参考图片：**{items_list}**\n"
+                f"参考图片对应关系：\n{mapping_text}\n\n"
                 "在提示词中，描述这些物品时必须明确指示「参照附图中该物品的外观」，"
                 "包括颜色、款式、材质等视觉特征。"
             )
@@ -422,7 +431,7 @@ class ImageAgent(BaseAgent):
         research: ResearchResult,
         image_spec: ImageTypeSpec,
         max_retries: int = RetryConfig.MAX_RETRIES,
-        ref_image_paths: list[Path] | None = None,
+        ref_image_map: dict[str, list[Path]] | None = None,
     ) -> tuple[Path, str]:
         """
         通过 Gemini API 生成图片（带质量验证和重试）
@@ -436,14 +445,20 @@ class ImageAgent(BaseAgent):
             research: 研究数据
             image_spec: 图片规格
             max_retries: 最大重试次数
-            ref_image_paths: 参考图片路径列表（可选）
+            ref_image_map: 物品名 → 参考图片路径列表（可选）
 
         Returns:
             (图片路径, 使用的提示词)
         """
         last_error: Optional[Exception] = None
         final_prompt = ""
-        has_refs = bool(ref_image_paths)
+        has_refs = bool(ref_image_map)
+        # 构建有序 (label, path) 对，供客户端按物品标注图片
+        ref_image_pairs: list[tuple[str, Path]] | None = None
+        if ref_image_map:
+            ref_image_pairs = [
+                (name, p) for name, paths in ref_image_map.items() for p in paths
+            ]
 
         for attempt in range(max_retries):
             try:
@@ -461,7 +476,7 @@ class ImageAgent(BaseAgent):
                         prompt=prompt,
                         output_path=output_path,
                         aspect_ratio="3:4",
-                        reference_images=ref_image_paths,
+                        reference_images=ref_image_pairs,
                     )
                 except Exception as api_err:
                     if hasattr(self, 'web_image_client') and _is_retryable_error(api_err):
@@ -470,7 +485,7 @@ class ImageAgent(BaseAgent):
                             prompt=prompt,
                             output_path=output_path,
                             aspect_ratio="3:4",
-                            reference_images=ref_image_paths,
+                            reference_images=ref_image_pairs,
                         )
                     else:
                         raise

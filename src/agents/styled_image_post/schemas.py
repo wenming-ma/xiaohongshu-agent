@@ -90,7 +90,7 @@ class ImageGenContext:
     topic: str = ""
     image_type: str = ""
     validation_feedback: str = ""
-    reference_item_names: list[str] = field(default_factory=list)
+    reference_image_map: dict[str, list[str]] = field(default_factory=dict)  # item_name → [path_str]
 
 
 class GroupSpec(TypedDict):

@@ -476,29 +476,32 @@ REFERENCE_IMAGE_SYSTEM_ADDENDUM = """
 
 ## 🔴 参考图片模式（本次生成启用）
 
-本次生成附带了用户提供的产品参考图片。你生成的提示词必须适配这种"参考图+文本"的多模态输入模式。
+本次生成附带了用户提供的产品参考图片。每张参考图都标注了对应的物品名称（格式为 `[Reference image: 物品名]`）。
+你生成的提示词必须适配这种"参考图+文本"的多模态输入模式。
 
 ### 核心规则
-1. **在提示词中明确引用参考图**：对于有参考图的物品，提示词中必须写出类似 "the [物品名] matches the exact appearance shown in the attached reference photo, including its color, shape, texture and design details" 的指令
-2. **逐物品描述外观时引用参考图**：不要自行编造物品的颜色/款式/材质，而是指示模型"参照附图"
-3. **保持叙事风格**：仍然用叙事性段落描述整体场景，但在涉及有参考图的物品时，用 "as shown in the reference image" 等短语引导
-4. **没有参考图的物品**：正常描述，可以自由选择外观
+1. **按标签匹配参考图与物品**：每张参考图前有 `[Reference image: 物品名]` 标签，提示词中必须按标签指明哪个物品参照哪张图
+2. **逐物品引用参考图**：对于有参考图的物品，提示词中必须写出类似 "the [物品名] matches the exact appearance shown in its labeled reference photo, including its color, shape, texture and design details" 的指令
+3. **不要编造外观**：有参考图的物品，不要自行编造颜色/款式/材质，而是指示模型"参照标注了该物品名的附图"
+4. **保持叙事风格**：仍然用叙事性段落描述整体场景，但在涉及有参考图的物品时，用 "as shown in its reference image" 等短语引导
+5. **没有参考图的物品**：正常描述，可以自由选择外观
 
-### 示例（有参考图的物品：渔夫帽、阔腿裤）
+### 示例（参考图 #1、#2 → 渔夫帽，#3 → 阔腿裤）
 ```
-...She wears a cream-colored fisherman hat matching the exact style, color and texture shown in the attached reference photo — its soft brim and woven pattern faithfully reproduced. ...Her wide-leg pants replicate the reference image precisely: the same dark navy fabric, high-waisted cut, and slightly cropped length...
+...She wears a cream-colored fisherman hat matching the exact style, color and texture shown in reference images #1 and #2 — its soft brim and woven pattern faithfully reproduced. ...Her wide-leg pants replicate reference image #3 precisely: the same dark navy fabric, high-waisted cut, and slightly cropped length...
 ```
 """
 
 REFERENCE_IMAGE_INSTRUCTION = """## 参考图片说明
-已附上产品参考图片，展示了本图中推荐产品的真实外观。
+已附上产品参考图片，每张图片都标注了对应的物品名称。
 
 严格要求：
+- 按照标注的物品名称，将每张参考图片与对应的物品匹配
 - 必须参考这些图片中产品的颜色、形状、材质、细节特征
-- 产品在生成图中的外观应与参考图片保持一致
+- 产品在生成图中的外观应与其对应的参考图片保持一致
 - 不要随意更改产品的视觉特征（颜色、图案、造型等）
 - 可以调整产品在画面中的角度、大小和位置，但外观必须忠实于参考图
-- The attached images are product reference photos. Generate a NEW image in the specified style, but ensure the products match the appearance in the reference photos exactly.
+- Each reference image is labeled with `[Reference image: item_name]`. Match each product to its labeled reference photo and ensure the generated appearance matches exactly.
 """
 
 
