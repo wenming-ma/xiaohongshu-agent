@@ -71,8 +71,8 @@ def load_topics(path: Path) -> list[dict[str, Any]]:
     if not isinstance(raw, list):
         raise ValueError("topics.json 顶层必须是数组")
     for i, item in enumerate(raw, 1):
-        if not isinstance(item, dict) or not item.get("topic") or not item.get("audience"):
-            raise ValueError(f"第 {i} 项缺少 topic 或 audience")
+        if not isinstance(item, dict) or not item.get("audience"):
+            raise ValueError(f"第 {i} 项缺少 audience")
     return raw
 
 
@@ -90,7 +90,7 @@ async def run_mock_single(
     from src.agents.outfit_post.image import ImageAgent
     from src.agents.outfit_post.publish import PublisherAgent
 
-    topic = item["topic"].strip()
+    topic_hint = item.get("topic", "").strip()
     audience = item["audience"].strip()
     items_str = item.get("items", "").strip()
 
@@ -102,10 +102,11 @@ async def run_mock_single(
     ref_images = ReferenceImageResult(skipped=True)
 
     search_names = item_names[:4]
-    research_topic = f"{topic}：{'、'.join(search_names)} 穿法搭配"
+    items_joined = "、".join(search_names)
+    research_topic = f"{topic_hint}：{items_joined} 穿法搭配" if topic_hint else f"{items_joined} 穿搭穿法"
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    safe_topic = "".join(c for c in topic if c.isalnum() or c in " -_")[:20]
+    safe_topic = "".join(c for c in (topic_hint or "outfit") if c.isalnum() or c in " -_")[:20]
     output_dir = PathConfig.IMAGE_PROJECT_DIR / f"{timestamp}-{safe_topic}-outfit"
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -182,13 +183,16 @@ async def run_single(
     mock: bool,
     notify_feishu: bool = True,
 ) -> dict[str, Any]:
-    topic = item["topic"].strip()
+    topic_hint = item.get("topic", "").strip()
     audience = item["audience"].strip()
+    items_str = item.get("items", "").strip()
 
-    logger.info("[%d/%d] 话题: %s", idx, total, topic)
+    logger.info("[%d/%d] 单品: %s", idx, total, items_str or "(飞书交互)")
+    if topic_hint:
+        logger.info("  风格提示: %s", topic_hint)
     logger.info("  受众: %s", audience)
     if mock:
-        logger.info("  模式: MOCK (预设单品: %s)", item.get("items", ""))
+        logger.info("  模式: MOCK")
 
     last_error = ""
     for attempt in range(1, max_retries + 1):
@@ -202,12 +206,13 @@ async def run_single(
             else:
                 pipeline = OutfitPostPipeline()
                 result = await pipeline.execute(
-                    OutfitPostInput(topic=topic, audience=audience, publish=publish)
+                    OutfitPostInput(topic=topic_hint, audience=audience, publish=publish)
                 )
 
             payload = result.model_dump()
-            payload["topic"] = topic
+            payload["topic"] = topic_hint
             payload["audience"] = audience
+            payload["items"] = items_str
 
             if result.success:
                 logger.info("  成功: %s", result.title or topic)
@@ -217,7 +222,7 @@ async def run_single(
                         notifier = get_feishu_notifier()
                         lines = [
                             "✅ 穿搭帖子发布成功",
-                            f"主题：{topic}",
+                            f"单品：{items_str}",
                             f"标题：{result.title or '无'}",
                             f"话题：{' '.join(result.hashtags) if result.hashtags else '无'}",
                             f"图片数：{result.image_count} 张",
@@ -238,7 +243,7 @@ async def run_single(
             last_error = traceback.format_exc()
             logger.exception("  执行异常")
 
-    return {"success": False, "topic": topic, "audience": audience, "error_message": last_error}
+    return {"success": False, "items": items_str, "audience": audience, "error_message": last_error}
 
 
 # ---------------------------------------------------------------------------
