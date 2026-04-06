@@ -261,8 +261,10 @@ class DiscussAgent(BaseAgent):
         if not suggestion.options:
             return ""
 
-        # 构建飞书按钮
+        # 构建飞书按钮，确保末尾有"不限风格"
         buttons = [(opt.label, opt.keyword) for opt in suggestion.options]
+        if not any(kw == "" for _, kw in buttons):
+            buttons.append(("不限风格", ""))
 
         await self.notifier.send_card_message(
             text=f"**🎨 {items_str}**\n\n这套搭配主要想分享什么风格？",
