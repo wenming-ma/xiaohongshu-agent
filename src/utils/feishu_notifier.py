@@ -5,6 +5,7 @@
 - 发送文本消息
 - 发送图片（如二维码）
 - 阻塞等待用户回复（无超时限制）
+- 电话加急（通过 urgent_phone API 拨打电话通知用户）
 
 用于 LoginAgent 与用户交互获取登录凭证。
 """
@@ -25,6 +26,8 @@ from lark_oapi.api.im.v1 import (
     CreateImageRequestBody,
     UpdateMessageRequest,
     UpdateMessageRequestBody,
+    UrgentPhoneMessageRequest,
+    UrgentReceivers,
 )
 
 from lark_oapi.event.callback.model.p2_card_action_trigger import (
@@ -623,6 +626,85 @@ class FeishuNotifier:
         except Exception as e:
             logger.error(f"发送文件失败: {e}")
             return None
+
+    # ------------------------------------------------------------------
+    # 电话加急
+    # ------------------------------------------------------------------
+
+    async def call_phone(
+        self,
+        text: str,
+        user_ids: list[str] | None = None,
+        chat_id: str | None = None,
+    ) -> bool:
+        """
+        发送消息并通过电话加急通知用户。
+
+        先发送一条文本消息，再对该消息调用 urgent_phone API，
+        飞书会拨打电话通知目标用户查看消息。
+
+        注意：电话加急会消耗企业加急额度，请谨慎使用。
+
+        Args:
+            text: 加急消息内容
+            user_ids: 目标用户 open_id 列表（默认使用 MENTION_USER_ID）
+            chat_id: 目标聊天 ID（可选）
+
+        Returns:
+            是否成功触发电话加急
+        """
+        if self.client is None:
+            logger.warning("飞书客户端未初始化，无法发起电话加急")
+            return False
+
+        # 1. 发送消息
+        msg_id = await self.send_message(text, chat_id)
+        if not msg_id:
+            logger.error("电话加急失败：消息发送失败")
+            return False
+
+        # 2. 确定目标用户
+        target_users = user_ids or [FeishuConfig.MENTION_USER_ID]
+        if not target_users or not target_users[0]:
+            logger.error("电话加急失败：未指定目标用户 (FEISHU_MENTION_USER_ID)")
+            return False
+
+        # 3. 调用 urgent_phone API
+        try:
+            request = (
+                UrgentPhoneMessageRequest.builder()
+                .message_id(msg_id)
+                .user_id_type("open_id")
+                .request_body(
+                    UrgentReceivers.builder()
+                    .user_id_list(target_users)
+                    .build()
+                )
+                .build()
+            )
+
+            response = await asyncio.to_thread(
+                self.client.im.v1.message.urgent_phone, request
+            )
+
+            if response.success():
+                invalid = (
+                    response.data.invalid_user_id_list
+                    if response.data and response.data.invalid_user_id_list
+                    else []
+                )
+                if invalid:
+                    logger.warning(f"部分用户电话加急失败（不在会话中）: {invalid}")
+                logger.info(f"电话加急已发起: msg_id={msg_id}, 目标用户={target_users}")
+                return True
+            else:
+                logger.error(
+                    f"电话加急失败: code={response.code}, msg={response.msg}"
+                )
+                return False
+        except Exception as e:
+            logger.error(f"电话加急异常: {e}")
+            return False
 
     # ------------------------------------------------------------------
     # 等待回复
