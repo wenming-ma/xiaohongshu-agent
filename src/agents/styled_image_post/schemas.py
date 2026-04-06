@@ -26,23 +26,20 @@ class StyledImagePostOutput(BaseModel):
 
 
 # ============================================================================
-# 参考图片收集相关模型
+# 推荐物品识别与参考图片收集
 # ============================================================================
 
 class VisualItemDetail(BaseModel):
-    """单个需要视觉指定的物品"""
+    """单个需要视觉指定的推荐物品"""
     name: str
     description: str
     visual_questions: list[str]
 
 
-class GroupVisualAnalysis(BaseModel):
-    """单个分组的 LLM 视觉分析结果"""
-    group_index: int
-    group_title: str
-    has_visual_items: bool
-    visual_items: list[VisualItemDetail] = []
-    summary: str
+class RecommendationAnalysis(BaseModel):
+    """LLM 从研究数据中识别的推荐物品列表"""
+    recommendations: list[VisualItemDetail] = []
+    summary: str = ""
 
 
 class ItemReferenceImages(BaseModel):
@@ -51,36 +48,22 @@ class ItemReferenceImages(BaseModel):
     image_paths: list[str] = []
 
 
-class ReferenceImageGroup(BaseModel):
-    """单个分组收集到的参考图片（按物品组织）"""
-    group_index: int
-    group_title: str
-    items: list[ItemReferenceImages] = []
-
-
 class ReferenceImageResult(BaseModel):
-    """参考图片收集总结果"""
-    groups: list[ReferenceImageGroup] = []
+    """参考图片收集总结果（按物品组织，不绑定分组）"""
+    items: list[ItemReferenceImages] = []
     skipped: bool = False
 
-    def get_images_for_group(self, group_index: int, max_total: int = 0) -> list[Path]:
-        """获取该分组所有物品的所有参考图（平铺，可截断）"""
-        from ..config.settings import ReferenceImageConfig
-        cap = max_total or ReferenceImageConfig.MAX_TOTAL_IMAGES_PER_GROUP
-        for g in self.groups:
-            if g.group_index == group_index:
-                all_paths = [Path(p) for item in g.items for p in item.image_paths]
-                if len(all_paths) > cap:
-                    import logging
-                    logging.getLogger(__name__).warning(
-                        "分组 %d 参考图片 %d 张超过上限 %d，截断", group_index, len(all_paths), cap
-                    )
-                    return all_paths[:cap]
-                return all_paths
-        return []
+    def get_image_map(self) -> dict[str, list[Path]]:
+        """获取物品名 → 图片路径列表的映射"""
+        return {
+            item.item_name: [Path(p) for p in item.image_paths]
+            for item in self.items
+            if item.image_paths
+        }
 
-    def has_images_for_group(self, group_index: int) -> bool:
-        return len(self.get_images_for_group(group_index)) > 0
+    def get_item_names_with_images(self) -> list[str]:
+        """获取有参考图片的物品名列表"""
+        return [item.item_name for item in self.items if item.image_paths]
 
 
 @dataclass
@@ -93,9 +76,10 @@ class ImageGenContext:
     reference_image_map: dict[str, list[str]] = field(default_factory=dict)  # item_name → [path_str]
 
 
-class GroupSpec(TypedDict):
+class GroupSpec(TypedDict, total=False):
     title: str
     indices: list[int]
+    ref_items: list[str]  # 属于本组的参考图物品名（由分组 Agent 分配）
 
 
 class CompactKeyInfo(TypedDict):
@@ -110,6 +94,7 @@ class ImageTypeSpec(TypedDict, total=False):
     desc: str
     group_title: str
     indices: list[int]
+    ref_items: list[str]
 
 
 class ResearchItem(BaseModel):
@@ -182,6 +167,7 @@ class ImageGroupingGroup(BaseModel):
     title: str
     indices: List[int] = []
     rationale: Optional[str] = None
+    ref_items: List[str] = []  # 属于本组的参考图物品名
 
 
 class ImageGroupingPlan(BaseModel):

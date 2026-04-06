@@ -140,13 +140,15 @@ class ImageAgent(BaseAgent):
         self,
         research: ResearchResult,
         topic: str,
+        ref_item_names: list[str] | None = None,
     ) -> list[GroupSpec]:
         """
-        独立的语义分组入口，供 tool.py 在 Content 之前调用。
+        独立的语义分组入口，供 pipeline 在 Content 之前调用。
 
         Args:
             research: 研究数据
             topic: 主题
+            ref_item_names: 有参考图片的推荐物品名列表（可选，影响分组策略）
 
         Returns:
             list[GroupSpec]: 分组结果
@@ -167,6 +169,7 @@ class ImageAgent(BaseAgent):
             target_groups=target_groups,
             target_group_size=target_group_size,
             max_group_size_cap=max_group_size_cap,
+            ref_item_names=ref_item_names,
         )
 
     # ========================================================================
@@ -205,26 +208,20 @@ class ImageAgent(BaseAgent):
         image_specs = groups_to_image_specs(groups)
         logger.info("开始生成 %d 张配图 (%d 个内容项)", len(image_specs), item_count)
 
-        # 3. 逐张生成图片
+        # 3. 构建全局参考图映射
+        global_ref_map: dict[str, list[Path]] = {}
+        if reference_images and not reference_images.skipped:
+            global_ref_map = reference_images.get_image_map()
+
+        # 4. 逐张生成图片
         generated_images: list[GeneratedImage] = []
         for spec in image_specs:
-            # 查找当前 spec 对应的参考图片（按物品组织）
+            # 从分组 Agent 分配的 ref_items 获取参考图片（不再硬编码子串匹配）
             ref_image_map: dict[str, list[Path]] = {}
-            if reference_images and not reference_images.skipped:
-                image_type = spec["type"]
-                if image_type.startswith("detail_"):
-                    try:
-                        group_idx = int(image_type.split("_")[1]) - 1
-                        for g in reference_images.groups:
-                            if g.group_index == group_idx:
-                                for item in g.items:
-                                    if item.image_paths:
-                                        ref_image_map[item.item_name] = [
-                                            Path(p) for p in item.image_paths
-                                        ]
-                                break
-                    except (ValueError, IndexError) as e:
-                        logger.warning("解析分组索引失败 image_type=%s: %s", image_type, e)
+            if global_ref_map and spec["type"].startswith("detail_"):
+                for ref_name in spec.get("ref_items", []):
+                    if ref_name in global_ref_map:
+                        ref_image_map[ref_name] = global_ref_map[ref_name]
 
             generated_image = await self.step(
                 content=content,

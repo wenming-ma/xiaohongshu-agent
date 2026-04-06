@@ -221,7 +221,7 @@ IMAGE_GROUPING_USER_PROMPT_TEMPLATE = """主题：{topic}
 ```json
 {key_infos_json}
 ```
-
+{ref_item_hint}
 请按语义分组，输出 ImageGroupingPlan JSON。
 """
 
@@ -252,6 +252,11 @@ IMAGE_GROUPING_REVIEW_SYSTEM_PROMPT = """你是”图片分组审核专家”。
 4) 标题匹配：group.title 应概括本组多数条目，避免标题与内容明显冲突。
 5) 组内内容矛盾：同一组内的条目之间不应存在事实或观点上的矛盾（例如一条说”全年开放”另一条说”仅冬季营业”；或一条说”免费入场”另一条说”门票200元”）。如发现矛盾，记录到 issues 并扣分。
 6) 跨组内容矛盾：不同组中如果涉及同一事物或同一建议维度，描述和结论不应互相矛盾（例如 A 组说”黄黑皮避免穿驼色/卡其色”，B 组却推荐驼色大衣显白；或 A 组说某景点”免费开放”，B 组说同一景点”门票80元”）。如发现跨组矛盾，记录到 issues 并扣分。
+7) 参考图物品分配：如果提供了有参考图片的物品名称列表，检查 ref_items 分配是否合理：
+   - 每个参考图物品应分配到与其内容最相关的分组
+   - 参考图物品不应被分配到避雷/负面内容为主的分组
+   - 同一个参考图物品名不应出现在多个分组的 ref_items 中
+   - 如有未被分配的参考图物品，记录到 issues
 
 通过标准：
 - passed = true 当且仅当：不存在明显货不对板（严重错配）、组内内容矛盾或跨组内容矛盾。
@@ -448,7 +453,17 @@ def image_grouping_system_prompt(**variables: object) -> str:
     return render_template(IMAGE_GROUPING_SYSTEM_PROMPT, **variables)
 
 
-def image_grouping_user_prompt(**variables: object) -> str:
+def image_grouping_user_prompt(**variables) -> str:
+    ref_item_names = variables.pop("ref_item_names", "")
+    if ref_item_names:
+        variables["ref_item_hint"] = (
+            f"\n📸 以下物品已有用户提供的参考图片：**{ref_item_names}**\n"
+            "分组时请注意：\n"
+            "- 包含这些物品的条目适合放在「推荐」类分组中，与避雷/负面内容分开\n"
+            "- 在每个分组的 ref_items 字段中列出属于该组的参考图物品名\n"
+        )
+    else:
+        variables["ref_item_hint"] = ""
     return render_template(IMAGE_GROUPING_USER_PROMPT_TEMPLATE, **variables)
 
 

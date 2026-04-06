@@ -1,4 +1,4 @@
-"""Collect phase - LLM 视觉分析 + 飞书参考图片收集"""
+"""Collect phase - 推荐物品识别 + 用户确认 + 参考图片收集"""
 
 from .agent import CollectAgent
 

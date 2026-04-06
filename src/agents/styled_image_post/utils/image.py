@@ -83,6 +83,7 @@ def groups_to_image_specs(groups: list[GroupSpec]) -> list[ImageTypeSpec]:
             "desc": f"详情图{i} - 语义分组：{g['title']}",
             "group_title": g["title"],
             "indices": g["indices"],
+            "ref_items": g.get("ref_items", []),
         })
     return image_types
 
@@ -155,6 +156,7 @@ async def run_grouping_with_review(
     target_groups: int,
     target_group_size: int,
     max_group_size_cap: int,
+    ref_item_names: list[str] | None = None,
 ) -> list[GroupSpec]:
     """语义分组 + 审核循环"""
     max_detail_images = ImageConfig.MAX_DETAIL_IMAGES
@@ -176,6 +178,7 @@ async def run_grouping_with_review(
                 key_infos_json=json.dumps(compact_items, ensure_ascii=False, indent=2),
                 max_group_size=target_group_size,
                 target_groups=target_groups,
+                ref_item_names=", ".join(ref_item_names) if ref_item_names else "",
             )
             grouping_result = await grouping_agent.run(user_prompt, message_history=messages)
             round_messages = list(grouping_result.new_messages())
@@ -198,7 +201,7 @@ async def run_grouping_with_review(
         plan: ImageGroupingPlan = grouping_result.output
 
         groups = [
-            {"title": g.title, "indices": g.indices}
+            {"title": g.title, "indices": g.indices, "ref_items": g.ref_items}
             for g in plan.groups
         ]
 

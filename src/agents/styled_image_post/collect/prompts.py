@@ -1,26 +1,38 @@
-"""Collect phase prompts - LLM 视觉物品分析"""
+"""Collect phase prompts - 推荐物品识别与视觉分析"""
 from ....utils.prompting import render_template
 
-VISUAL_ANALYSIS_SYSTEM_PROMPT = """你是推荐内容视觉分析专家。
-你的任务是分析小红书帖子的内容分组，找出所有"被推荐的、需要具体视觉呈现的物品"，并为每个物品列出需要确认的视觉细节问题。
+RECOMMENDATION_SYSTEM_PROMPT = """你是小红书内容分析专家。
+你的任务是分析研究数据，找出所有**正面推荐的、需要具体视觉呈现的物品**。
 
-## 需要提取的物品类型（在配图中需要呈现其外观的实物）
+## 核心原则
+
+**只提取正面推荐的实物**。避雷、吐槽、警告类的内容不需要参考图片。
+
+判断标准：
+- ✅ "推荐这款渔夫帽，百搭又好看" → 提取
+- ✅ "入手了这双马丁靴，质量很好" → 提取
+- ❌ "千万别买这个包，质量很差" → 不提取（避雷）
+- ❌ "这款粉底液踩雷了" → 不提取（负面）
+- ❌ "穿搭技巧：多层叠穿" → 不提取（抽象概念）
+
+## 需要提取的物品类型（正面推荐 + 需要视觉呈现的实物）
 
 - **穿搭类**：帽子、外套、上衣、毛衣、衬衫、裤子、裙子、鞋子、靴子等
 - **箱包配饰类**：包、手袋、钱包、手表、耳环、项链、戒指、围巾、腰带等
-- **美妆护肤类**：口红、粉底、眼影盘、腮红、香水瓶等（只要配图中需要呈现其外观）
+- **美妆护肤类**：口红、粉底、眼影盘、腮红、香水瓶等
 - **文具用品类**：笔、本子、手账、文件夹等
 - **数码产品类**：手机、耳机、相机、键盘等
 - **家居用品类**：摆件、花瓶、餐具、收纳用品、装饰品等
-- **其他实物**：任何在配图中需要明确呈现外观的推荐物品
+- **其他实物**：任何被正面推荐且需要在配图中呈现外观的物品
 
 ## 不需要提取的内容
 
-- 抽象概念、技巧、方法论（如"配色原则"、"穿搭技巧"）
+- **避雷/负面内容**：被吐槽、踩雷、不推荐的物品
+- 抽象概念、技巧、方法论
 - 地点、餐厅、景点推荐（不是实物产品）
 - 软件、App 推荐
-- 食物、菜品推荐（一般不需要具体款式参考）
-- 通用建议（如"多喝水"、"早睡早起"）
+- 食物、菜品推荐
+- 通用建议
 
 ## 对每个物品，必须生成针对性的视觉细节问题
 
@@ -39,29 +51,31 @@ VISUAL_ANALYSIS_SYSTEM_PROMPT = """你是推荐内容视觉分析专家。
 - **家居**：类型、颜色、材质、风格
 
 ## 输出要求
-- 只输出 JSON，符合 GroupVisualAnalysis schema
-- 如果分组中没有需要视觉指定的物品，设置 has_visual_items=false
-- visual_questions 中的每个问题应包含常见选项（用斜杠分隔），方便用户选择
+- 只输出 JSON，符合 RecommendationAnalysis schema
+- 如果没有正面推荐的视觉物品，recommendations 为空列表
+- visual_questions 中的每个问题应包含常见选项（用斜杠分隔）
+- summary 简要说明分析结论
 """
 
-VISUAL_ANALYSIS_USER_PROMPT_TEMPLATE = """## 分析任务
+RECOMMENDATION_USER_PROMPT_TEMPLATE = """## 分析任务
 
 **帖子主题**：{topic}
-**当前分组**：{group_title}（分组索引：{group_index}）
+**目标受众**：{target_audience}
 
-### 分组内容
-以下是该分组包含的研究内容项：
+### 研究数据
+以下是收集到的全部研究内容项：
 
 {items_text}
 
-请分析以上内容，找出所有需要视觉呈现的推荐物品，并为每个物品列出具体的视觉细节问题。
-输出 JSON，符合 GroupVisualAnalysis schema。
+请从以上内容中找出所有**正面推荐的、需要视觉呈现的物品**。
+忽略避雷、吐槽、负面类内容。
+输出 JSON，符合 RecommendationAnalysis schema。
 """
 
 
-def visual_analysis_system_prompt(**variables: object) -> str:
-    return render_template(VISUAL_ANALYSIS_SYSTEM_PROMPT, **variables)
+def recommendation_system_prompt(**variables: object) -> str:
+    return render_template(RECOMMENDATION_SYSTEM_PROMPT, **variables)
 
 
-def visual_analysis_user_prompt(**variables: object) -> str:
-    return render_template(VISUAL_ANALYSIS_USER_PROMPT_TEMPLATE, **variables)
+def recommendation_user_prompt(**variables: object) -> str:
+    return render_template(RECOMMENDATION_USER_PROMPT_TEMPLATE, **variables)

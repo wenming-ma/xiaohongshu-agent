@@ -1,7 +1,7 @@
 """StyledImagePostPipeline - 小红书图文帖子工具（支持参考图片）
 
-封装完整的图文帖子创作和发布工作流，在语义分组后通过 LLM 分析
-推荐物品并收集用户提供的参考图片，使配图中推荐内容的外观更精准。
+封装完整的图文帖子创作和发布工作流：先识别推荐物品并收集参考图片，
+再进行语义分组和内容创作，使配图中推荐内容的外观更精准。
 """
 
 from datetime import datetime
@@ -23,8 +23,8 @@ class StyledImagePostPipeline(BasePipeline[StyledImagePostInput, StyledImagePost
 
     封装完整的工作流：
     1. 研究主题（ResearchAgent）
-    2. 语义分组（ImageAgent.compute_groups）
-    3. 参考图片收集（CollectAgent）
+    2. 识别推荐物品 + 用户确认 + 收集参考图片（CollectAgent）
+    3. 语义分组（ImageAgent.compute_groups，感知参考图片）
     4. 创作内容（ContentAgent，按分组结构组织正文）
     5. 生成图片（ImageAgent，使用参考图片）
     6. 发布帖子（PublisherAgent）
@@ -35,7 +35,8 @@ class StyledImagePostPipeline(BasePipeline[StyledImagePostInput, StyledImagePost
 
 该工具会执行完整的内容创作工作流：
 - 在小红书平台研究目标主题，收集热门帖子和评论区信息
-- 通过 LLM 分析分组中的推荐物品，向用户收集具体产品的参考图片
+- 从研究数据中识别正面推荐的物品，让用户确认并收集参考图片
+- 进行语义分组，将推荐物品和避雷内容智能分配到不同板块
 - 根据研究结果生成符合小红书风格的标题、正文和话题标签
 - 使用AI生成封面图和详情图（参考用户提供的产品图片）
 - 自动发布到小红书平台
@@ -50,7 +51,7 @@ class StyledImagePostPipeline(BasePipeline[StyledImagePostInput, StyledImagePost
     output_schema = StyledImagePostOutput
 
     async def execute(self, input_data: StyledImagePostInput) -> StyledImagePostOutput:
-        """执行图文帖子工作流（带参考图片收集）"""
+        """执行图文帖子工作流"""
         from .research import ResearchAgent
         from .content import ContentAgent
         from .image import ImageAgent
@@ -84,29 +85,16 @@ class StyledImagePostPipeline(BasePipeline[StyledImagePostInput, StyledImagePost
             save_json(output_dir / "research.json", research.model_dump())
             logger.info(f"研究完成: {len(research.items)} 个内容项")
 
-            # Phase 2: 语义分组
+            # Phase 2: 识别推荐物品 + 用户确认 + 收集参考图片
             logger.info("-" * 40)
-            logger.info("Phase 2: 语义分组")
-            logger.info("-" * 40)
-
-            image_agent = ImageAgent()
-            groups = await image_agent.compute_groups(
-                research=research,
-                topic=input_data.topic,
-            )
-            save_json(output_dir / "groups.json", groups)
-            logger.info(f"语义分组完成: {len(groups)} 个分组")
-
-            # Phase 3: 参考图片收集
-            logger.info("-" * 40)
-            logger.info("Phase 3: 参考图片收集")
+            logger.info("Phase 2: 识别推荐物品与收集参考图片")
             logger.info("-" * 40)
 
             collect_agent = CollectAgent()
             ref_images = await collect_agent.forward(
-                groups=groups,
                 research=research,
                 topic=input_data.topic,
+                target_audience=input_data.audience,
                 output_dir=output_dir,
             )
             save_json(output_dir / "reference_images.json", ref_images.model_dump())
@@ -114,8 +102,22 @@ class StyledImagePostPipeline(BasePipeline[StyledImagePostInput, StyledImagePost
             if ref_images.skipped:
                 logger.info("参考图片收集: 已跳过")
             else:
-                total_refs = sum(len(item.image_paths) for g in ref_images.groups for item in g.items)
+                total_refs = sum(len(item.image_paths) for item in ref_images.items)
                 logger.info(f"参考图片收集完成: {total_refs} 张图片")
+
+            # Phase 3: 语义分组（感知参考图片）
+            logger.info("-" * 40)
+            logger.info("Phase 3: 语义分组")
+            logger.info("-" * 40)
+
+            image_agent = ImageAgent()
+            groups = await image_agent.compute_groups(
+                research=research,
+                topic=input_data.topic,
+                ref_item_names=ref_images.get_item_names_with_images(),
+            )
+            save_json(output_dir / "groups.json", groups)
+            logger.info(f"语义分组完成: {len(groups)} 个分组")
 
             # Phase 4: 内容创作
             logger.info("-" * 40)
