@@ -68,6 +68,12 @@ class DiscussAgent(BaseAgent):
 
         logger.info("用户确认 %d 个搭配单品", len(items))
 
+        # Phase 1.5: 如果没有风格提示，询问用户风格方向
+        if not topic_hint:
+            topic_hint = await self.ask_style_direction(items)
+            if topic_hint:
+                logger.info("用户选择风格: %s", topic_hint)
+
         # Phase 2: 逐物品收集参考图片
         ref_dir = output_dir / "reference_images"
         ref_dir.mkdir(parents=True, exist_ok=True)
@@ -221,6 +227,38 @@ class DiscussAgent(BaseAgent):
                 return items
             if text in ("跳过",):
                 return []
+
+    # ========================================================================
+    # Phase 1.5: 询问风格方向
+    # ========================================================================
+
+    async def ask_style_direction(self, items: list[OutfitItem]) -> str:
+        """询问用户这套搭配的风格方向，返回风格提示（空字符串表示不限）"""
+        if self.notifier.client is None:
+            return ""
+
+        items_str = "、".join(item.name for item in items)
+        await self.notifier.send_card_message(
+            text=f"**🎨 {items_str}**\n\n这套搭配主要想分享什么风格？",
+            buttons=[
+                ("休闲日常", "休闲日常穿搭"),
+                ("通勤办公", "通勤办公穿搭"),
+                ("约会出行", "约会出行穿搭"),
+                ("运动户外", "运动户外穿搭"),
+                ("不限风格", ""),
+            ],
+        )
+
+        while True:
+            image_path, text = await self.notifier.wait_for_image_or_text()
+            if image_path is not None:
+                await self.notifier.send_message("请先选择风格方向，再发送图片")
+                continue
+            text = text.strip()
+            if not text:
+                continue
+            # 按钮点击会返回 keyword 值
+            return text
 
     # ========================================================================
     # Phase 2: 收集参考图片
