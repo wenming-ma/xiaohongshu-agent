@@ -153,7 +153,7 @@ class CollectAgent(BaseAgent):
         items = list(recommendations)
 
         # 发送推荐列表卡片
-        card_msg_id = await self._send_recommendation_card(items, topic)
+        await self._send_recommendation_card(items, topic)
 
         # 交互循环
         while True:
@@ -183,12 +183,8 @@ class CollectAgent(BaseAgent):
                     if not items:
                         await self.notifier.send_message("推荐列表已清空")
                         return []
-                    # 更新卡片（原地刷新）
-                    card = self._build_recommendation_card(items, topic)
-                    if card_msg_id:
-                        await self.notifier.update_card_message(card_msg_id, card)
-                    else:
-                        card_msg_id = await self._send_recommendation_card(items, topic)
+                    # 发送新卡片（App 端不支持原地刷新）
+                    await self._send_recommendation_card(items, topic)
                 continue
 
             # 文字批量删除：支持 "删除 1,2,3"
@@ -205,11 +201,7 @@ class CollectAgent(BaseAgent):
                 if not items:
                     await self.notifier.send_message("推荐列表已清空")
                     return []
-                card = self._build_recommendation_card(items, topic)
-                if card_msg_id:
-                    await self.notifier.update_card_message(card_msg_id, card)
-                else:
-                    card_msg_id = await self._send_recommendation_card(items, topic)
+                await self._send_recommendation_card(items, topic)
                 continue
 
             # 补充物品：匹配 "加xxx" / "添加xxx"
@@ -223,12 +215,7 @@ class CollectAgent(BaseAgent):
                             description="用户补充",
                             visual_questions=[],
                         ))
-                # 更新卡片
-                card = self._build_recommendation_card(items, topic)
-                if card_msg_id:
-                    await self.notifier.update_card_message(card_msg_id, card)
-                else:
-                    card_msg_id = await self._send_recommendation_card(items, topic)
+                await self._send_recommendation_card(items, topic)
                 continue
 
     def _build_recommendation_card(
