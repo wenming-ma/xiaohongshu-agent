@@ -96,6 +96,10 @@ class CollectAgent(BaseAgent):
         logger.info("参考图片收集完成: %d 个物品, %d 张图片", len(collected), total)
         return result
 
+    async def step(self, *args, **kwargs):
+        """由 forward 内部各阶段方法替代，不直接使用"""
+        raise NotImplementedError("CollectAgent uses identify/confirm/collect phases instead of step")
+
     # ========================================================================
     # Phase 1: 识别推荐物品
     # ========================================================================
