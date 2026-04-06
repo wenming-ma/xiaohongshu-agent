@@ -240,7 +240,9 @@ class FeishuNotifier:
             resp = P2CardActionTriggerResponse()
             resp.toast = CallBackToast()
             resp.toast.type = "info"
-            resp.toast.content = f"已选择: {keyword}" if keyword else "操作已收到"
+            # 支持按钮自定义 toast 文本
+            custom_toast = action_value.get("toast", "") if action_value else ""
+            resp.toast.content = custom_toast or (f"已选择: {keyword}" if keyword else "操作已收到")
             return resp
 
         event_handler = (

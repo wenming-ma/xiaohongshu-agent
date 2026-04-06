@@ -241,7 +241,7 @@ class CollectAgent(BaseAgent):
             {"tag": "markdown", "content": f"**📋 帖子主题：{topic}**\n\n根据研究分析，以下物品值得推荐："},
         ]
 
-        # 每个物品一行：名称 + 删除按钮
+        # 每个物品一行：名称文本 + 删除按钮
         for i, item in enumerate(items):
             desc = f" — {item.description}" if item.description and item.description != "用户补充" else ""
             elements.append({
@@ -249,15 +249,15 @@ class CollectAgent(BaseAgent):
                 "actions": [
                     {
                         "tag": "button",
-                        "text": {"tag": "plain_text", "content": f"{item.name}{desc}"},
+                        "text": {"tag": "plain_text", "content": f"{i+1}. {item.name}{desc}"},
                         "type": "default",
-                        "value": {"keyword": ""},  # 不触发操作，仅显示
+                        "value": {"keyword": ""},
                     },
                     {
                         "tag": "button",
                         "text": {"tag": "plain_text", "content": "❌"},
                         "type": "danger",
-                        "value": {"keyword": f"删除_{i}"},
+                        "value": {"keyword": f"删除_{i}", "toast": f"已删除「{item.name}」"},
                     },
                 ],
             })
