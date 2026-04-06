@@ -8,11 +8,13 @@ def register_pipelines() -> None:
     from .image_post import XHSImagePostPipeline
     from .video_post.pipeline import XHSVideoPostPipeline
     from .styled_image_post import StyledImagePostPipeline
+    from .outfit_post import OutfitPostPipeline
 
     for pipeline_cls in (
         XHSArticlePostPipeline,
         XHSImagePostPipeline,
         XHSVideoPostPipeline,
         StyledImagePostPipeline,
+        OutfitPostPipeline,
     ):
         PipelineRegistry.register(pipeline_cls)
