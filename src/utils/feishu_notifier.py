@@ -26,6 +26,8 @@ from lark_oapi.api.im.v1 import (
     CreateImageRequestBody,
     UpdateMessageRequest,
     UpdateMessageRequestBody,
+    PatchMessageRequest,
+    PatchMessageRequestBody,
     UrgentPhoneMessageRequest,
     UrgentReceivers,
 )
@@ -435,6 +437,75 @@ class FeishuNotifier:
         except Exception as e:
             logger.error(f"发送卡片消息失败: {e}")
             return None
+
+    async def send_card_message_raw(
+        self,
+        card: dict,
+        chat_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """发送原始卡片 JSON（msg_type=interactive），返回 msg_id"""
+        if self.client is None:
+            return None
+        target_chat = chat_id or self.chat_id
+        if not target_chat:
+            return None
+        try:
+            request = (
+                CreateMessageRequest.builder()
+                .receive_id_type(self.receive_id_type)
+                .request_body(
+                    CreateMessageRequestBody.builder()
+                    .receive_id(target_chat)
+                    .msg_type("interactive")
+                    .content(json.dumps(card))
+                    .build()
+                )
+                .build()
+            )
+            response = await asyncio.to_thread(
+                self.client.im.v1.message.create, request
+            )
+            if response.success():
+                msg_id = response.data.message_id
+                self._record("bot", "card", json.dumps(card, ensure_ascii=False)[:100])
+                return msg_id
+            else:
+                logger.error(f"发送卡片失败: code={response.code}, msg={response.msg}")
+                return None
+        except Exception as e:
+            logger.error(f"发送卡片失败: {e}")
+            return None
+
+    async def update_card_message(
+        self,
+        message_id: str,
+        card: dict,
+    ) -> bool:
+        """更新已发送的卡片消息内容（使用 patch API）"""
+        if self.client is None:
+            return False
+        try:
+            request = (
+                PatchMessageRequest.builder()
+                .message_id(message_id)
+                .request_body(
+                    PatchMessageRequestBody.builder()
+                    .content(json.dumps(card))
+                    .build()
+                )
+                .build()
+            )
+            response = await asyncio.to_thread(
+                self.client.im.v1.message.patch, request
+            )
+            if response.success():
+                return True
+            else:
+                logger.error(f"更新卡片失败: code={response.code}, msg={response.msg}")
+                return False
+        except Exception as e:
+            logger.error(f"更新卡片失败: {e}")
+            return False
 
     async def send_form_card(
         self,

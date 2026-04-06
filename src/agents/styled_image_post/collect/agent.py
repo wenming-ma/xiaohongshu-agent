@@ -153,7 +153,7 @@ class CollectAgent(BaseAgent):
         items = list(recommendations)
 
         # 发送推荐列表卡片
-        await self._send_recommendation_card(items, topic)
+        card_msg_id = await self._send_recommendation_card(items, topic)
 
         # 交互循环
         while True:
@@ -173,7 +173,25 @@ class CollectAgent(BaseAgent):
             if text in ("全部跳过", "跳过"):
                 return []
 
-            # 批量删除：支持 "删除 1,2,3" / "删1，2，3"
+            # 单个删除按钮：删除_N
+            delete_btn = re.match(r"删除_(\d+)", text)
+            if delete_btn:
+                idx = int(delete_btn.group(1))
+                if 0 <= idx < len(items):
+                    removed = items.pop(idx)
+                    logger.info("用户删除推荐物品: %s", removed.name)
+                    if not items:
+                        await self.notifier.send_message("推荐列表已清空")
+                        return []
+                    # 更新卡片（原地刷新）
+                    card = self._build_recommendation_card(items, topic)
+                    if card_msg_id:
+                        await self.notifier.update_card_message(card_msg_id, card)
+                    else:
+                        card_msg_id = await self._send_recommendation_card(items, topic)
+                continue
+
+            # 文字批量删除：支持 "删除 1,2,3"
             delete_match = re.match(r"删除?\s*([\d,，、\s]+)", text)
             if delete_match:
                 raw = delete_match.group(1)
@@ -181,16 +199,17 @@ class CollectAgent(BaseAgent):
                     {int(n) - 1 for n in re.findall(r"\d+", raw)},
                     reverse=True,
                 )
-                removed_names = []
                 for idx in indices:
                     if 0 <= idx < len(items):
-                        removed_names.append(items.pop(idx).name)
-                if removed_names:
-                    await self.notifier.send_message(f"已删除：{'、'.join(reversed(removed_names))}")
+                        items.pop(idx)
                 if not items:
                     await self.notifier.send_message("推荐列表已清空")
                     return []
-                await self._send_recommendation_card(items, topic)
+                card = self._build_recommendation_card(items, topic)
+                if card_msg_id:
+                    await self.notifier.update_card_message(card_msg_id, card)
+                else:
+                    card_msg_id = await self._send_recommendation_card(items, topic)
                 continue
 
             # 补充物品：匹配 "加xxx" / "添加xxx"
@@ -204,41 +223,78 @@ class CollectAgent(BaseAgent):
                             description="用户补充",
                             visual_questions=[],
                         ))
-                        await self.notifier.send_message(f"已添加「{name}」")
-                await self._send_recommendation_card(items, topic)
+                # 更新卡片
+                card = self._build_recommendation_card(items, topic)
+                if card_msg_id:
+                    await self.notifier.update_card_message(card_msg_id, card)
+                else:
+                    card_msg_id = await self._send_recommendation_card(items, topic)
                 continue
 
-            # 未识别
-            await self.notifier.send_message(
-                "你可以：\n"
-                "- 点击「确认列表」或「全部跳过」\n"
-                '- 回复"删除 1,2,3"批量删除\n'
-                '- 回复"加 物品名"补充物品'
-            )
+    def _build_recommendation_card(
+        self,
+        items: list[VisualItemDetail],
+        topic: str,
+    ) -> dict:
+        """构建推荐物品列表卡片 JSON（每个物品带删除按钮）"""
+        elements: list[dict] = [
+            {"tag": "markdown", "content": f"**📋 帖子主题：{topic}**\n\n根据研究分析，以下物品值得推荐："},
+        ]
+
+        # 每个物品一行：名称 + 删除按钮
+        for i, item in enumerate(items):
+            desc = f" — {item.description}" if item.description and item.description != "用户补充" else ""
+            elements.append({
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": f"{item.name}{desc}"},
+                        "type": "default",
+                        "value": {"keyword": ""},  # 不触发操作，仅显示
+                    },
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "❌"},
+                        "type": "danger",
+                        "value": {"keyword": f"删除_{i}"},
+                    },
+                ],
+            })
+
+        elements.append({"tag": "markdown", "content": '回复"加 物品名"可补充'})
+
+        # 底部操作按钮
+        elements.append({
+            "tag": "action",
+            "actions": [
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "确认列表"},
+                    "type": "primary",
+                    "value": {"keyword": "确认列表"},
+                },
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "全部跳过"},
+                    "type": "danger",
+                    "value": {"keyword": "全部跳过"},
+                },
+            ],
+        })
+
+        return {"elements": elements}
 
     async def _send_recommendation_card(
         self,
         items: list[VisualItemDetail],
         topic: str,
-    ) -> None:
-        """发送推荐物品列表卡片（JSON 1.0，按钮走 WebSocket 回调）"""
-        lines = [
-            f"**📋 帖子主题：{topic}**\n",
-            "根据研究分析，以下物品值得推荐：\n",
-        ]
-        for i, item in enumerate(items):
-            desc = f" — {item.description}" if item.description and item.description != "用户补充" else ""
-            lines.append(f"{i+1}. **{item.name}**{desc}")
-
-        lines.append('\n回复"删除 1,2,3"删除 · 回复"加 物品名"补充')
-
-        await self.notifier.send_card_message(
-            text="\n".join(lines),
-            buttons=[
-                ("确认列表", "确认列表"),
-                ("全部跳过", "全部跳过"),
-            ],
-        )
+    ) -> str | None:
+        """发送推荐物品列表卡片，返回 msg_id 用于后续更新"""
+        if self.notifier.client is None:
+            return None
+        card = self._build_recommendation_card(items, topic)
+        return await self.notifier.send_card_message_raw(card)
 
     # ========================================================================
     # Phase 3: 收集参考图片
