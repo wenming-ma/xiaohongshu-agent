@@ -178,25 +178,12 @@ class DiscussAgent(BaseAgent):
         items: list[OutfitItem],
         topic_hint: str = "",
     ) -> list[OutfitItem]:
-        """通过飞书表单卡片让用户确认/删除/补充物品列表"""
-        title_text = f"**📋 穿搭搭配：{topic_hint}**" if topic_hint else "**📋 穿搭搭配确认**"
+        """通过飞书卡片（按钮+文字）让用户确认/删除/补充物品列表"""
+        if self.notifier.client is None:
+            return items
 
-        checkers = []
-        for i, item in enumerate(items):
-            desc = f" — {item.description}" if item.description else ""
-            checkers.append({
-                "name": f"item_{i}",
-                "text": f"{item.name}{desc}",
-                "checked": True,
-            })
-
-        await self.notifier.send_form_card(
-            title=f"{title_text}\n\n请勾选要保留的搭配单品，取消勾选即删除：",
-            checkers=checkers,
-            input_name="add_items",
-            input_placeholder="补充单品（多个用逗号分隔）",
-            submit_label="确认",
-        )
+        items = list(items)
+        await self._send_items_card(items, topic_hint)
 
         while True:
             image_path, text = await self.notifier.wait_for_image_or_text()
@@ -207,38 +194,117 @@ class DiscussAgent(BaseAgent):
 
             text = text.strip()
 
+            # 按钮或文字确认
+            if text in ("确认列表", "确认"):
+                return items
+
+            # 全部跳过
             if text in ("全部跳过", "跳过"):
                 return []
 
-            # 表单提交
-            if text.startswith("__FORM__:"):
-                import json as _json
-                try:
-                    form_data = _json.loads(text[len("__FORM__:"):])
-                except _json.JSONDecodeError:
-                    logger.warning("表单数据解析失败: %s", text[:100])
-                    continue
+            # 单个删除按钮：删除_N
+            delete_btn = re.match(r"删除_(\d+)", text)
+            if delete_btn:
+                idx = int(delete_btn.group(1))
+                if 0 <= idx < len(items):
+                    removed = items.pop(idx)
+                    logger.info("用户删除单品: %s", removed.name)
+                    if not items:
+                        await self.notifier.send_message("搭配列表已清空")
+                        return []
+                    await self._send_items_card(items, topic_hint)
+                continue
 
-                confirmed = []
-                for i, item in enumerate(items):
-                    key = f"item_{i}"
-                    if form_data.get(key, False):
-                        confirmed.append(item)
+            # 文字批量删除：支持 "删除 1,2,3"
+            delete_match = re.match(r"删除?\s*([\d,，、\s]+)", text)
+            if delete_match:
+                raw = delete_match.group(1)
+                indices = sorted(
+                    {int(n) - 1 for n in re.findall(r"\d+", raw)},
+                    reverse=True,
+                )
+                for idx in indices:
+                    if 0 <= idx < len(items):
+                        items.pop(idx)
+                if not items:
+                    await self.notifier.send_message("搭配列表已清空")
+                    return []
+                await self._send_items_card(items, topic_hint)
+                continue
 
-                add_text = form_data.get("add_items", "").strip()
-                if add_text:
-                    for name in re.split(r"[,，、\s]+", add_text):
-                        name = name.strip()
-                        if name:
-                            confirmed.append(OutfitItem(name=name))
+            # 补充物品：匹配 "加xxx" / "添加xxx"
+            add_match = re.match(r"(?:加|添加)\s*(.+)", text)
+            if add_match:
+                for name in re.split(r"[,，、]+", add_match.group(1)):
+                    name = name.strip()
+                    if name:
+                        items.append(OutfitItem(name=name))
+                await self._send_items_card(items, topic_hint)
+                continue
 
-                return confirmed
+    def _build_items_card(
+        self,
+        items: list[OutfitItem],
+        topic_hint: str = "",
+    ) -> dict:
+        """构建搭配单品列表卡片 JSON（每个物品带删除按钮）"""
+        title = f"**📋 穿搭搭配：{topic_hint}**" if topic_hint else "**📋 穿搭搭配确认**"
+        elements: list[dict] = [
+            {"tag": "markdown", "content": f"{title}\n\n你的搭配包含以下单品："},
+        ]
 
-            # 兼容文本回复
-            if text in ("确认列表", "确认"):
-                return items
-            if text in ("跳过",):
-                return []
+        for i, item in enumerate(items):
+            desc = f" — {item.description}" if item.description else ""
+            elements.append({
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": f"{i+1}. {item.name}{desc}"},
+                        "type": "default",
+                        "value": {"keyword": ""},
+                    },
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "❌"},
+                        "type": "danger",
+                        "value": {"keyword": f"删除_{i}", "toast": f"已删除「{item.name}」"},
+                    },
+                ],
+            })
+
+        elements.append({"tag": "markdown", "content": '回复"加 物品名"可补充'})
+
+        elements.append({
+            "tag": "action",
+            "actions": [
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "确认列表"},
+                    "type": "primary",
+                    "value": {"keyword": "确认列表"},
+                },
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "全部跳过"},
+                    "type": "danger",
+                    "value": {"keyword": "全部跳过"},
+                },
+            ],
+        })
+
+        return {"elements": elements}
+
+    async def _send_items_card(
+        self,
+        items: list[OutfitItem],
+        topic_hint: str = "",
+    ) -> str | None:
+        """发送搭配单品列表卡片"""
+        if self.notifier.client is None:
+            return None
+        card = self._build_items_card(items, topic_hint)
+        return await self.notifier.send_card_message_raw(card)
 
     # ========================================================================
     # Phase 1.5: 询问风格方向
