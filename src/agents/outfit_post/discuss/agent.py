@@ -196,7 +196,6 @@ class DiscussAgent(BaseAgent):
             input_name="add_items",
             input_placeholder="补充单品（多个用逗号分隔）",
             submit_label="确认",
-            cancel_label="全部跳过",
         )
 
         while True:
