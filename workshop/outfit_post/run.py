@@ -1,15 +1,21 @@
 """
-执行 OutfitPostPipeline 完整工作流（含飞书交互和发布）。
+执行 OutfitPostPipeline 完整工作流。
 
-支持两种模式：
-1. Live 模式（默认）：通过飞书与用户讨论搭配物品、收集参考图片
-2. Mock 模式（--mock）：跳过飞书交互，使用 topics.json 中预设的搭配单品
+默认模式（feishu-only）：生成内容+图片后发送到飞书审核，不发布到小红书。
+加 --publish 才会实际发布到小红书。
 
 用法:
+    # 默认：生成内容 → 发送飞书审核（不发布小红书）
     uv run python workshop/outfit_post/run.py
+
+    # Mock 模式（跳过飞书讨论，用预设单品）
     uv run python workshop/outfit_post/run.py --mock
+
+    # 实际发布到小红书
+    uv run python workshop/outfit_post/run.py --publish
+
+    # 指定范围
     uv run python workshop/outfit_post/run.py --start-index 2 --limit 1
-    uv run python workshop/outfit_post/run.py --no-publish
 """
 
 from __future__ import annotations
@@ -74,6 +80,46 @@ def load_topics(path: Path) -> list[dict[str, Any]]:
         if not isinstance(item, dict) or not item.get("audience"):
             raise ValueError(f"第 {i} 项缺少 audience")
     return raw
+
+
+# ---------------------------------------------------------------------------
+# Feishu content review helper
+# ---------------------------------------------------------------------------
+
+FEISHU_MAX_TEXT_LEN = 3500
+
+
+async def send_content_to_feishu(result: OutfitPostOutput, items_str: str) -> None:
+    """将生成的完整内容（标题+正文+话题标签+图片）发送到飞书群审核。"""
+    notifier = get_feishu_notifier()
+
+    output_dir = Path(result.output_dir)
+    content_file = output_dir / "content.json"
+    full_body = ""
+    if content_file.exists():
+        content_data = json.loads(content_file.read_text(encoding="utf-8"))
+        full_body = content_data.get("body") or ""
+
+    title = result.title or items_str
+    hashtags = " ".join(result.hashtags) if result.hashtags else "无"
+
+    header = f"📋 穿搭帖内容审核\n单品：{items_str}\n标题：{title}\n话题：{hashtags}"
+
+    if full_body and len(full_body) > FEISHU_MAX_TEXT_LEN:
+        await notifier.send_message(header)
+        for i in range(0, len(full_body), FEISHU_MAX_TEXT_LEN):
+            chunk = full_body[i:i + FEISHU_MAX_TEXT_LEN]
+            part_num = i // FEISHU_MAX_TEXT_LEN + 1
+            await notifier.send_message(f"--- 正文 (第{part_num}段) ---\n{chunk}")
+    else:
+        body_section = f"\n---\n{full_body}" if full_body else ""
+        await notifier.send_message(f"{header}{body_section}")
+
+    image_paths = result.image_paths or []
+    for idx, img_path in enumerate(image_paths, 1):
+        p = Path(img_path)
+        if p.exists():
+            await notifier.send_image(p, caption=f"图片 {idx}/{len(image_paths)}")
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +193,7 @@ async def run_mock_single(
     save_json(output_dir / "image.json", image_result.model_dump())
     image_paths = [img.image_path for img in image_result.images]
 
-    # Phase 6: 发布
+    # Phase 6: 发布（仅当 --publish 时）
     publish_result = None
     if publish:
         publisher_agent = PublisherAgent()
@@ -179,8 +225,9 @@ async def run_single(
     total: int,
     max_retries: int,
     retry_delay: int,
-    publish: bool,
-    mock: bool,
+    *,
+    publish: bool = False,
+    mock: bool = False,
     notify_feishu: bool = True,
 ) -> dict[str, Any]:
     topic_hint = item.get("topic", "").strip()
@@ -191,6 +238,7 @@ async def run_single(
     if topic_hint:
         logger.info("  风格提示: %s", topic_hint)
     logger.info("  受众: %s", audience)
+    logger.info("  发布: %s", "小红书" if publish else "仅飞书审核")
     if mock:
         logger.info("  模式: MOCK")
 
@@ -215,24 +263,29 @@ async def run_single(
             payload["items"] = items_str
 
             if result.success:
-                logger.info("  成功: %s", result.title or topic)
+                logger.info("  成功: %s", result.title or items_str)
 
-                if result.published and notify_feishu:
+                if notify_feishu:
                     try:
-                        notifier = get_feishu_notifier()
-                        lines = [
-                            "✅ 穿搭帖子发布成功",
-                            f"单品：{items_str}",
-                            f"标题：{result.title or '无'}",
-                            f"话题：{' '.join(result.hashtags) if result.hashtags else '无'}",
-                            f"图片数：{result.image_count} 张",
-                            f"帖子链接：{result.post_url or '未获取到'}",
-                        ]
-                        await notifier.send_message("\n".join(lines))
-                        if result.image_paths:
-                            await notifier.send_image(Path(result.image_paths[0]), caption="封面图")
+                        if result.published:
+                            # 发布成功通知
+                            notifier = get_feishu_notifier()
+                            lines = [
+                                "✅ 穿搭帖子发布成功",
+                                f"单品：{items_str}",
+                                f"标题：{result.title or '无'}",
+                                f"话题：{' '.join(result.hashtags) if result.hashtags else '无'}",
+                                f"图片数：{result.image_count} 张",
+                                f"帖子链接：{result.post_url or '未获取到'}",
+                            ]
+                            await notifier.send_message("\n".join(lines))
+                            if result.image_paths:
+                                await notifier.send_image(Path(result.image_paths[0]), caption="封面图")
+                        else:
+                            # 未发布 → 发送完整内容到飞书审核
+                            await send_content_to_feishu(result, items_str)
                     except Exception:
-                        logger.warning("飞书通知发送失败", exc_info=True)
+                        logger.warning("飞书发送失败", exc_info=True)
 
                 return payload
 
@@ -265,11 +318,13 @@ async def run_batch(args: argparse.Namespace) -> int:
     total = len(selected)
     base_idx = args.start_index
 
+    mode_label = "MOCK" if args.mock else "LIVE"
+    publish_label = "发布到小红书" if args.publish else "仅飞书审核"
+
     logger.info("=" * 60)
-    logger.info("XHS Outfit Post %s", "批量执行 (MOCK)" if args.mock else "批量执行 (LIVE)")
+    logger.info("XHS Outfit Post 批量执行 (%s / %s)", mode_label, publish_label)
     logger.info("话题文件: %s", args.topics_file)
     logger.info("范围: #%d ~ #%d (共 %d 个)", base_idx, base_idx + total - 1, total)
-    logger.info("发布: %s", "是" if not args.no_publish else "否")
     logger.info("=" * 60)
 
     results: list[dict[str, Any]] = []
@@ -280,7 +335,7 @@ async def run_batch(args: argparse.Namespace) -> int:
         result = await run_single(
             item, idx, base_idx + total - 1,
             args.max_retries, args.retry_delay,
-            publish=not args.no_publish,
+            publish=args.publish,
             mock=args.mock,
             notify_feishu=not args.no_feishu,
         )
@@ -324,9 +379,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-retries", type=int, default=10, help="单个话题最大重试次数")
     p.add_argument("--retry-delay", type=int, default=5, help="重试间隔秒数")
     p.add_argument("--sleep", type=int, default=None, help="话题之间固定休眠秒数")
-    p.add_argument("--mock", action="store_true", default=False, help="Mock 模式：跳过飞书交互，使用 topics.json 中预设的单品")
-    p.add_argument("--no-publish", action="store_true", default=False, help="跳过发布步骤")
-    p.add_argument("--no-feishu", action="store_true", default=False, help="禁用飞书通知")
+    p.add_argument("--mock", action="store_true", default=False, help="Mock 模式：跳过飞书讨论，使用 topics.json 预设单品")
+    p.add_argument("--publish", action="store_true", default=False, help="发布到小红书（默认仅发送飞书审核）")
+    p.add_argument("--no-feishu", action="store_true", default=False, help="禁用飞书发送")
     return p.parse_args()
 
 

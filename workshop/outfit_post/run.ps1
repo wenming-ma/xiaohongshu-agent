@@ -1,19 +1,20 @@
 # ================================================
 # XHS Outfit Post 执行脚本
-# 穿搭搭配帖子（含飞书交互和发布）
+# 默认：生成内容+图片 → 发送飞书审核（不发布小红书）
+# 加 -Publish 才发布到小红书
 # ================================================
 #
 # 用法:
-#   # Live 模式（飞书交互）
+#   # 默认：飞书审核模式
 #   .\workshop\outfit_post\run.ps1
 #
-#   # Mock 模式（跳过飞书，用预设单品）
+#   # Mock 模式（跳过飞书讨论，用预设单品）
 #   .\workshop\outfit_post\run.ps1 -Mock
 #
-#   # 不发布
-#   .\workshop\outfit_post\run.ps1 -NoPublish
+#   # 发布到小红书
+#   .\workshop\outfit_post\run.ps1 -Publish
 #
-#   # 指定话题范围
+#   # 指定范围
 #   .\workshop\outfit_post\run.ps1 -StartIndex 2 -Limit 1
 # ================================================
 
@@ -25,7 +26,7 @@ param(
     [int]$RetryDelay = 5,
     [int]$Sleep = 0,
     [switch]$Mock = $false,
-    [switch]$NoPublish = $false,
+    [switch]$Publish = $false,
     [switch]$NoFeishu = $false
 )
 
@@ -46,21 +47,21 @@ $pyArgs = @($pyScript, "--topics-file", $resolvedTopicsFile, "--start-index", $S
 if ($Sleep -gt 0) { $pyArgs += @("--sleep", $Sleep) }
 if ($Limit -gt 0) { $pyArgs += @("--limit", $Limit) }
 if ($Mock) { $pyArgs += "--mock" }
-if ($NoPublish) { $pyArgs += "--no-publish" }
+if ($Publish) { $pyArgs += "--publish" }
 if ($NoFeishu) { $pyArgs += "--no-feishu" }
 
 $topics = Get-Content -Raw -Path $resolvedTopicsFile -Encoding UTF8 | ConvertFrom-Json
 $totalCount = $topics.Count
 $endIndex = if ($Limit -gt 0) { [Math]::Min($StartIndex + $Limit - 1, $totalCount) } else { $totalCount }
 
-$mode = if ($Mock) { "MOCK (预设单品)" } else { "LIVE (飞书交互)" }
+$mode = if ($Mock) { "MOCK" } else { "LIVE" }
+$target = if ($Publish) { "发布到小红书" } else { "仅飞书审核" }
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "XHS Outfit Post Runner" -ForegroundColor Cyan
-Write-Host "Mode: $mode" -ForegroundColor Cyan
+Write-Host "Mode: $mode / $target" -ForegroundColor Cyan
 Write-Host "Topics file: $resolvedTopicsFile" -ForegroundColor Cyan
 Write-Host "Topics: #$StartIndex ~ #$endIndex / $totalCount" -ForegroundColor Cyan
-Write-Host "Publish: $(if ($NoPublish) { 'No' } else { 'Yes' })" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
