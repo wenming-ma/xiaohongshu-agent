@@ -18,7 +18,7 @@ from ..schemas import (
 from ....utils.providers import get_text_model
 from ....utils.feishu_notifier import get_feishu_notifier
 from ....utils.logger import get_logger
-from ....config.settings import ReferenceImageConfig
+from ....config.settings import ReferenceImageConfig, RetryConfig
 from .prompts import (
     item_parser_system_prompt,
     item_parser_user_prompt,
@@ -46,18 +46,19 @@ class DiscussAgent(BaseAgent):
 
     def init_agent(self) -> None:
         model = get_text_model()
+        parser_retries = max(8, RetryConfig.AGENT_RETRIES)
         self.item_parser = Agent(
             model=model,
             output_type=OutfitItemList,
             system_prompt=(item_parser_system_prompt(),),
-            retries=3,
+            retries=parser_retries,
             instrument=True,
         )
         self.style_suggester = Agent(
             model=model,
             output_type=StyleSuggestion,
             system_prompt=(style_suggestion_system_prompt(),),
-            retries=3,
+            retries=parser_retries,
             instrument=True,
         )
 
@@ -319,9 +320,13 @@ class DiscussAgent(BaseAgent):
 
         # LLM 根据单品推荐风格选项
         logger.info("分析单品风格方向...")
-        prompt = style_suggestion_user_prompt(items_text=items_str)
-        result = await self.style_suggester.run(prompt)
-        suggestion = result.output
+        try:
+            prompt = style_suggestion_user_prompt(items_text=items_str)
+            result = await self.style_suggester.run(prompt)
+            suggestion = result.output
+        except Exception as e:
+            logger.warning("风格推荐失败，跳过风格选择: %s", e)
+            return ""
 
         if not suggestion.options:
             return ""
