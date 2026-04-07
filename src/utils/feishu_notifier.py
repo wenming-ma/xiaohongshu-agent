@@ -173,7 +173,7 @@ class FeishuNotifier:
                     text = content.get("text", "")
                 except (json.JSONDecodeError, TypeError):
                     text = str(msg.content)
-                logger.debug(f"收到飞书消息: {text[:50]}...")
+                logger.info(f"收到飞书文本消息: {text[:80]}")
                 self._record("user", "text", text)
                 asyncio.run_coroutine_threadsafe(
                     self._reply_queue.put(text), self._loop
@@ -216,7 +216,7 @@ class FeishuNotifier:
             if form_value:
                 form_json = json.dumps(form_value, ensure_ascii=False)
                 queue_text = f"__FORM__:{form_json}"
-                logger.debug(f"收到表单提交: {form_json[:100]}")
+                logger.info(f"收到表单提交: {form_json[:200]}")
                 self._record("user", "form", form_json[:200])
                 asyncio.run_coroutine_threadsafe(
                     self._reply_queue.put(queue_text), self._loop
@@ -232,7 +232,7 @@ class FeishuNotifier:
 
             # 普通按钮点击
             if keyword:
-                logger.debug(f"收到卡片按钮点击: {keyword}")
+                logger.info(f"收到卡片按钮点击: {keyword}")
                 self._record("user", "button", keyword)
                 asyncio.run_coroutine_threadsafe(
                     self._reply_queue.put(keyword), self._loop
@@ -293,6 +293,8 @@ class FeishuNotifier:
                 logger.warning(f"飞书 WebSocket 连接异常退出: {e}")
             finally:
                 self._polling_thread = None
+
+        self._polling_thread = threading.Thread(
             target=_run_ws, daemon=True, name="feishu-ws"
         )
         self._polling_thread.start()
@@ -1011,6 +1013,7 @@ class FeishuNotifier:
             await self.start_polling()
 
         text, image_path = await self._media_queue.get()
+        logger.info("wait_for_image_or_text 出队: text=%r image=%s", text, image_path)
         return image_path, text
 
     async def collect_images(
