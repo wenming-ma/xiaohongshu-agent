@@ -117,7 +117,7 @@ class DiscussAgent(BaseAgent):
     # ========================================================================
 
     async def discuss_items(self, topic_hint: str = "") -> list[OutfitItem]:
-        """通过飞书与用户讨论确定穿搭搭配物品"""
+        """通过飞书与用户讨论确定穿搭搭配物品，支持分多次发送单品。"""
         if self.notifier.client is None:
             logger.warning("飞书客户端未初始化，无法与用户讨论")
             return []
@@ -128,16 +128,18 @@ class DiscussAgent(BaseAgent):
                 f"**👗 穿搭搭配帖子 — {topic_hint}**\n\n"
                 "请告诉我这次要分享的穿搭搭配包含哪些单品？\n\n"
                 "例如：白色衬衫、高腰阔腿裤、小白鞋、帆布包\n\n"
-                "可以一次性列出，也可以分多次发送。"
+                "可以一次性列出，也可以分多次发送。发完后回复“确认列表”。"
             )
         else:
             greeting = (
                 "**👗 穿搭搭配帖子**\n\n"
                 "请告诉我这次要分享的穿搭搭配包含哪些单品？\n\n"
                 "例如：白色衬衫、高腰阔腿裤、小白鞋、帆布包\n\n"
-                "可以一次性列出，也可以分多次发送。"
+                "可以一次性列出，也可以分多次发送。发完后回复“确认列表”。"
             )
         await self.notifier.send_message(greeting)
+
+        items: list[OutfitItem] = []
 
         # 等待用户输入
         while True:
@@ -151,22 +153,37 @@ class DiscussAgent(BaseAgent):
             if not text:
                 continue
 
-            if text in ("取消", "算了"):
+            if text in ("取消", "算了", "全部跳过", "跳过"):
                 return []
 
-            # LLM 解析用户文本
-            items = await self._parse_items(text)
+            # 用户确认当前列表
+            if text in ("确认列表", "确认"):
+                if not items:
+                    await self.notifier.send_message("还没有记录到单品，请先发送搭配单品")
+                    continue
+                return await self._confirm_items(items, topic_hint)
 
-            if not items:
+            # 解析本轮输入并追加到列表
+            parsed = await self._parse_items(text)
+            if not parsed:
                 await self.notifier.send_message(
                     "没有识别到具体的穿搭单品，请重新描述。\n"
                     "例如：白色衬衫、黑色阔腿裤、小白鞋"
                 )
                 continue
 
-            # 确认列表
-            confirmed = await self._confirm_items(items, topic_hint)
-            return confirmed
+            seen = {item.name for item in items}
+            added = 0
+            for item in parsed:
+                if item.name not in seen:
+                    seen.add(item.name)
+                    items.append(item)
+                    added += 1
+
+            if added == 0:
+                await self.notifier.send_message("这些单品已经记录过了，可以继续补充，或回复“确认列表”进入下一步")
+            else:
+                await self._send_items_card(items, topic_hint)
 
     async def _parse_items(self, user_text: str) -> list[OutfitItem]:
         """LLM 解析用户文本为单品列表"""
