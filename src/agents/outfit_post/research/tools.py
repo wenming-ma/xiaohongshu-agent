@@ -186,6 +186,7 @@ class PostImageReaderAgent:
 
     def __init__(self, mcp_server):
         self._mcp_server = mcp_server
+        self._vision_semaphore = asyncio.Semaphore(3)
 
         # 视觉分析 Agent（Google 模型，用于 OCR + 理解）
         self._vision_agent = Agent(
@@ -195,6 +196,7 @@ class PostImageReaderAgent:
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(image_reader_system_prompt(),),
         )
+
 
         # 自定义工具
         custom_tools = [
@@ -223,7 +225,10 @@ class PostImageReaderAgent:
             system_prompt=(post_image_reader_system_prompt(),),
         )
 
-    # ── 自定义工具 ──
+    async def _run_vision_with_limit(self, payload):
+        """以受限并发调用 vision model，避免一次性打爆 Gemini 导致 503。"""
+        async with self._vision_semaphore:
+            return await self._vision_agent.run(payload)
 
     async def _download_and_analyze(
         self, url: str, index: int, question: str = ""
@@ -259,7 +264,7 @@ class PostImageReaderAgent:
             img.save(buf, format="JPEG", quality=85, optimize=True)
 
             user_prompt = image_reader_user_prompt(question=(question or "").strip())
-            r = await self._vision_agent.run(
+            r = await self._run_vision_with_limit(
                 [user_prompt, BinaryContent(data=buf.getvalue(), media_type="image/jpeg")]
             )
             out = r.output
@@ -301,7 +306,7 @@ class PostImageReaderAgent:
 
             image_data = await compress_image_for_review(path, max_size_mb=5.0)
             user_prompt = image_reader_user_prompt(question=(question or "").strip())
-            r = await self._vision_agent.run(
+            r = await self._run_vision_with_limit(
                 [user_prompt, BinaryContent(data=image_data, media_type="image/jpeg")]
             )
             out = r.output
