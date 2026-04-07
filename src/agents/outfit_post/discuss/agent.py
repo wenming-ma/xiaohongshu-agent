@@ -141,7 +141,6 @@ class DiscussAgent(BaseAgent):
 
         items: list[OutfitItem] = []
 
-        # 等待用户输入
         while True:
             image_path, text = await self.notifier.wait_for_image_or_text()
 
@@ -156,14 +155,59 @@ class DiscussAgent(BaseAgent):
             if text in ("取消", "算了", "全部跳过", "跳过"):
                 return []
 
-            # 用户确认当前列表
+            # 确认当前列表（第一张卡片就是最终确认卡片，不再进入第二层确认流程）
             if text in ("确认列表", "确认"):
                 if not items:
                     await self.notifier.send_message("还没有记录到单品，请先发送搭配单品")
                     continue
-                return await self._confirm_items(items, topic_hint)
+                return items
 
-            # 解析本轮输入并追加到列表
+            # 单个删除按钮：删除_N
+            delete_btn = re.match(r"删除_(\d+)", text)
+            if delete_btn:
+                idx = int(delete_btn.group(1))
+                if 0 <= idx < len(items):
+                    removed = items.pop(idx)
+                    logger.info("用户删除单品: %s", removed.name)
+                    if not items:
+                        await self.notifier.send_message("搭配列表已清空，请重新发送单品")
+                    else:
+                        await self._send_items_card(items, topic_hint)
+                continue
+
+            # 文字批量删除：支持 "删除 1,2,3"
+            delete_match = re.match(r"删除?\s*([\d,，、\s]+)", text)
+            if delete_match:
+                raw = delete_match.group(1)
+                indices = sorted(
+                    {int(n) - 1 for n in re.findall(r"\d+", raw)},
+                    reverse=True,
+                )
+                for idx in indices:
+                    if 0 <= idx < len(items):
+                        items.pop(idx)
+                if not items:
+                    await self.notifier.send_message("搭配列表已清空，请重新发送单品")
+                else:
+                    await self._send_items_card(items, topic_hint)
+                continue
+
+            # 补充物品：匹配 "加xxx" / "添加xxx"
+            add_match = re.match(r"(?:加|添加)\s*(.+)", text)
+            if add_match:
+                added = 0
+                seen = {item.name for item in items}
+                for name in re.split(r"[,，、]+", add_match.group(1)):
+                    name = name.strip()
+                    if name and name not in seen:
+                        seen.add(name)
+                        items.append(OutfitItem(name=name))
+                        added += 1
+                if added > 0:
+                    await self._send_items_card(items, topic_hint)
+                continue
+
+            # 普通文本：解析并追加到列表
             parsed = await self._parse_items(text)
             if not parsed:
                 await self.notifier.send_message(
@@ -196,69 +240,8 @@ class DiscussAgent(BaseAgent):
         items: list[OutfitItem],
         topic_hint: str = "",
     ) -> list[OutfitItem]:
-        """通过飞书卡片（按钮+文字）让用户确认/删除/补充物品列表"""
-        if self.notifier.client is None:
-            return items
-
-        items = list(items)
-        await self._send_items_card(items, topic_hint)
-
-        while True:
-            image_path, text = await self.notifier.wait_for_image_or_text()
-
-            if image_path is not None:
-                await self.notifier.send_message("当前是确认搭配列表阶段，请先确认列表后再发送图片")
-                continue
-
-            text = text.strip()
-
-            # 按钮或文字确认
-            if text in ("确认列表", "确认"):
-                return items
-
-            # 全部跳过
-            if text in ("全部跳过", "跳过"):
-                return []
-
-            # 单个删除按钮：删除_N
-            delete_btn = re.match(r"删除_(\d+)", text)
-            if delete_btn:
-                idx = int(delete_btn.group(1))
-                if 0 <= idx < len(items):
-                    removed = items.pop(idx)
-                    logger.info("用户删除单品: %s", removed.name)
-                    if not items:
-                        await self.notifier.send_message("搭配列表已清空")
-                        return []
-                    await self._send_items_card(items, topic_hint)
-                continue
-
-            # 文字批量删除：支持 "删除 1,2,3"
-            delete_match = re.match(r"删除?\s*([\d,，、\s]+)", text)
-            if delete_match:
-                raw = delete_match.group(1)
-                indices = sorted(
-                    {int(n) - 1 for n in re.findall(r"\d+", raw)},
-                    reverse=True,
-                )
-                for idx in indices:
-                    if 0 <= idx < len(items):
-                        items.pop(idx)
-                if not items:
-                    await self.notifier.send_message("搭配列表已清空")
-                    return []
-                await self._send_items_card(items, topic_hint)
-                continue
-
-            # 补充物品：匹配 "加xxx" / "添加xxx"
-            add_match = re.match(r"(?:加|添加)\s*(.+)", text)
-            if add_match:
-                for name in re.split(r"[,，、]+", add_match.group(1)):
-                    name = name.strip()
-                    if name:
-                        items.append(OutfitItem(name=name))
-                await self._send_items_card(items, topic_hint)
-                continue
+        """兼容保留：当前 discuss_items 已直接处理确认，这里仅返回 items。"""
+        return list(items)
 
     def _build_items_card(
         self,
