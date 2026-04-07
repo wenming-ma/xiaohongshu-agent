@@ -149,9 +149,12 @@ class FeishuNotifier:
             logger.warning("飞书客户端未初始化，无法启动连接")
             return
 
-        if self._polling_thread is not None:
+        if self._polling_thread is not None and self._polling_thread.is_alive():
             logger.debug("WebSocket 连接已在运行")
             return
+        if self._polling_thread is not None and not self._polling_thread.is_alive():
+            logger.warning("检测到飞书 WebSocket 线程已退出，准备重启连接")
+            self._polling_thread = None
 
         self._loop = asyncio.get_running_loop()
 
@@ -287,9 +290,9 @@ class FeishuNotifier:
 
                 ws_client.start()
             except Exception as e:
-                logger.error(f"飞书 WebSocket 连接异常: {e}")
-
-        self._polling_thread = threading.Thread(
+                logger.warning(f"飞书 WebSocket 连接异常退出: {e}")
+            finally:
+                self._polling_thread = None
             target=_run_ws, daemon=True, name="feishu-ws"
         )
         self._polling_thread.start()
