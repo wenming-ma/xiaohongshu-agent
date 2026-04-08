@@ -24,6 +24,7 @@ def test_outfit_pipeline_uses_dedicated_output_dir(monkeypatch, tmp_path: Path) 
     outfit_root = tmp_path / "outfit-posts"
     monkeypatch.setattr(PathConfig, "IMAGE_PROJECT_DIR", image_root)
     monkeypatch.setattr(PathConfig, "OUTFIT_PROJECT_DIR", outfit_root, raising=False)
+    recorded_compute_groups: dict[str, object] = {}
 
     class _FakeDiscussAgent:
         async def forward(self, output_dir: Path, topic_hint: str):
@@ -48,8 +49,15 @@ def test_outfit_pipeline_uses_dedicated_output_dir(monkeypatch, tmp_path: Path) 
             )
 
     class _FakeImageAgent:
-        async def compute_groups(self, research: ResearchResult, topic: str, ref_item_names=None):
-            return [{"title": topic, "indices": [0], "ref_items": []}]
+        async def compute_groups(
+            self,
+            research: ResearchResult,
+            topic: str,
+            outfit_item_names=None,
+            ref_item_names=None,
+        ):
+            recorded_compute_groups["outfit_item_names"] = outfit_item_names
+            return [{"title": topic, "indices": [0], "outfit_items": list(outfit_item_names or []), "ref_items": []}]
 
         async def forward(
             self,
@@ -59,6 +67,7 @@ def test_outfit_pipeline_uses_dedicated_output_dir(monkeypatch, tmp_path: Path) 
             output_dir: Path,
             groups: list[dict] | None = None,
             reference_images: ReferenceImageResult | None = None,
+            outfit_item_names: list[str] | None = None,
         ):
             return ImageResult(
                 images=[
@@ -97,3 +106,4 @@ def test_outfit_pipeline_uses_dedicated_output_dir(monkeypatch, tmp_path: Path) 
     assert Path(result.output_dir).parent == outfit_root
     assert str(result.output_dir).startswith(str(outfit_root))
     assert not str(result.output_dir).startswith(str(image_root))
+    assert recorded_compute_groups["outfit_item_names"] == ["白色衬衫"]

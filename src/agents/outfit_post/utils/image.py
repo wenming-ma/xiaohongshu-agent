@@ -53,7 +53,7 @@ def build_compact_items(items: list) -> list[CompactKeyInfo]:
 
 
 def _normalize_ref_items(ref_items: list[str] | None) -> list[str]:
-    """去重并清理单个分组内的参考图物品名。"""
+    """去重并清理单个分组内的物品名。"""
     normalized: list[str] = []
     seen: set[str] = set()
     for ref_item in ref_items or []:
@@ -67,20 +67,31 @@ def _normalize_ref_items(ref_items: list[str] | None) -> list[str]:
     return normalized
 
 
-def normalize_group_ref_items(
+def normalize_group_assignments(
     groups: list[GroupSpec],
+    allowed_outfit_items: list[str] | None = None,
     allowed_ref_items: list[str] | None = None,
 ) -> list[GroupSpec]:
     """
-    归一化分组中的 ref_items，并在提供参考图清单时校验未知物品。
+    归一化分组中的 outfit_items / ref_items，并校验约束。
 
     - 允许同一个参考图物品出现在多个分组中
+    - 每个分组至少包含 1 个 outfit_items
     - 仅去除单个分组内重复的 ref_items
-    - 若出现未提供参考图的物品，直接抛错，避免后续生成继续执行
+    - ref_items 必须是 outfit_items 的子集
+    - 若出现未知物品，直接抛错，避免后续生成继续执行
     """
-    allowed_set = None
+    allowed_outfit_set = None
+    if allowed_outfit_items is not None:
+        allowed_outfit_set = {
+            outfit_item.strip()
+            for outfit_item in allowed_outfit_items
+            if isinstance(outfit_item, str) and outfit_item.strip()
+        }
+
+    allowed_ref_set = None
     if allowed_ref_items is not None:
-        allowed_set = {
+        allowed_ref_set = {
             ref_item.strip()
             for ref_item in allowed_ref_items
             if isinstance(ref_item, str) and ref_item.strip()
@@ -88,19 +99,40 @@ def normalize_group_ref_items(
 
     normalized_groups: list[GroupSpec] = []
     for group in groups:
+        outfit_items = _normalize_ref_items(group.get("outfit_items", []))
         ref_items = _normalize_ref_items(group.get("ref_items", []))
-        if allowed_set is not None:
-            unknown_items = [ref_item for ref_item in ref_items if ref_item not in allowed_set]
-            if unknown_items:
-                allowed_text = "、".join(sorted(allowed_set)) if allowed_set else "（空）"
+
+        if not outfit_items:
+            raise ValueError("分组缺少 outfit_items，至少需要 1 个用户单品")
+
+        if allowed_outfit_set is not None:
+            unknown_outfit_items = [item for item in outfit_items if item not in allowed_outfit_set]
+            if unknown_outfit_items:
+                allowed_text = "、".join(sorted(allowed_outfit_set)) if allowed_outfit_set else "（空）"
+                raise ValueError(
+                    "分组中出现未识别的用户单品: "
+                    f"{'、'.join(unknown_outfit_items)}。可用用户单品: {allowed_text}"
+                )
+
+        if not set(ref_items).issubset(set(outfit_items)):
+            raise ValueError(
+                "分组中的 ref_items 必须是 outfit_items 的子集: "
+                f"outfit_items={outfit_items}, ref_items={ref_items}"
+            )
+
+        if allowed_ref_set is not None:
+            unknown_ref_items = [ref_item for ref_item in ref_items if ref_item not in allowed_ref_set]
+            if unknown_ref_items:
+                allowed_text = "、".join(sorted(allowed_ref_set)) if allowed_ref_set else "（空）"
                 raise ValueError(
                     "分组中出现未识别的参考图物品: "
-                    f"{'、'.join(unknown_items)}。可用参考图物品: {allowed_text}"
+                    f"{'、'.join(unknown_ref_items)}。可用参考图物品: {allowed_text}"
                 )
 
         normalized_group: GroupSpec = {
             "title": group["title"],
             "indices": list(group.get("indices", [])),
+            "outfit_items": outfit_items,
         }
         if "rationale" in group and group.get("rationale") is not None:
             normalized_group["rationale"] = group["rationale"]
@@ -132,15 +164,28 @@ def calculate_grouping_params(item_count: int) -> tuple[int, int, int]:
 
 def groups_to_image_specs(groups: list[GroupSpec]) -> list[ImageTypeSpec]:
     """将分组列表转换为图片生成规格列表"""
-    image_types: list[ImageTypeSpec] = [
-        {"type": "cover", "desc": "封面图 - 大标题风格，突出主题"}
-    ]
+    image_types: list[ImageTypeSpec] = []
+
+    if groups:
+        hero_group = groups[0]
+        image_types.append({
+            "type": "cover",
+            "desc": "封面图 - 首屏主搭配",
+            "group_title": hero_group["title"],
+            "indices": list(hero_group.get("indices", [])),
+            "outfit_items": _normalize_ref_items(hero_group.get("outfit_items", [])),
+            "ref_items": _normalize_ref_items(hero_group.get("ref_items", [])),
+        })
+    else:
+        image_types.append({"type": "cover", "desc": "封面图 - 大标题风格，突出主题"})
+
     for i, g in enumerate(groups, start=1):
         image_types.append({
             "type": f"detail_{i}",
             "desc": f"详情图{i} - 语义分组：{g['title']}",
             "group_title": g["title"],
             "indices": g["indices"],
+            "outfit_items": _normalize_ref_items(g.get("outfit_items", [])),
             "ref_items": _normalize_ref_items(g.get("ref_items", [])),
         })
     return image_types
@@ -214,6 +259,7 @@ async def run_grouping_with_review(
     target_groups: int,
     target_group_size: int,
     max_group_size_cap: int,
+    outfit_item_names: list[str] | None = None,
     ref_item_names: list[str] | None = None,
 ) -> list[GroupSpec]:
     """语义分组 + 审核循环"""
@@ -236,6 +282,7 @@ async def run_grouping_with_review(
                 key_infos_json=json.dumps(compact_items, ensure_ascii=False, indent=2),
                 max_group_size=target_group_size,
                 target_groups=target_groups,
+                outfit_item_names=", ".join(outfit_item_names) if outfit_item_names else "",
                 ref_item_names=", ".join(ref_item_names) if ref_item_names else "",
             )
             grouping_result = await grouping_agent.run(user_prompt, message_history=messages)
@@ -247,6 +294,7 @@ async def run_grouping_with_review(
                 topic=topic,
                 max_group_size=target_group_size,
                 target_groups=target_groups,
+                outfit_item_names=", ".join(outfit_item_names) if outfit_item_names else "",
                 feedback=feedback,
             )
             grouping_result = await grouping_agent.run(
@@ -258,11 +306,17 @@ async def run_grouping_with_review(
         history_mgr.add_grouping_round(round_messages)
         plan: ImageGroupingPlan = grouping_result.output
 
-        groups = normalize_group_ref_items(
+        groups = normalize_group_assignments(
             [
-                {"title": g.title, "indices": g.indices, "ref_items": g.ref_items}
+                {
+                    "title": g.title,
+                    "indices": g.indices,
+                    "outfit_items": g.outfit_items,
+                    "ref_items": g.ref_items,
+                }
                 for g in plan.groups
             ],
+            allowed_outfit_items=outfit_item_names,
             allowed_ref_items=ref_item_names,
         )
 

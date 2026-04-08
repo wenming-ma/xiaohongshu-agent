@@ -141,6 +141,7 @@ async def run_mock(args: argparse.Namespace) -> OutfitPostOutput:
         groups = await image_agent.compute_groups(
             research=research,
             topic=research_topic,
+            outfit_item_names=[item.name for item in items],
             ref_item_names=ref_images.get_item_names_with_images(),
         )
         save_json(output_dir / "groups.json", groups)
@@ -172,6 +173,7 @@ async def run_mock(args: argparse.Namespace) -> OutfitPostOutput:
             output_dir=output_dir,
             groups=groups,
             reference_images=ref_images,
+            outfit_item_names=[item.name for item in items],
         )
         save_json(output_dir / "image.json", image_result.model_dump())
 

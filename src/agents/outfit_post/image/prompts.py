@@ -206,6 +206,8 @@ IMAGE_GROUPING_SYSTEM_PROMPT = """你是"配图分发/编排专家"。你的任�
 - 每个 key_info 必须被分到且只分到 1 个组（覆盖完整、不重复）。
 - 每组建议不超过 max_group_size 条（尽量按语义自然分组）。
 - 尽量输出 target_groups 个组（允许 ±1，但优先满足 target_groups）。
+- 每个分组都必须指定至少 1 个 `outfit_items`，表示这张图里必须实际出现的用户单品。
+- `ref_items` 只能从 `outfit_items` 中选择；有参考图的单品若要严格对齐外观，才放入 `ref_items`。
 
 ## 标题要求
 - group title 必须准确概括本组多数条目的共同主题。
@@ -218,7 +220,7 @@ IMAGE_GROUPING_SYSTEM_PROMPT = """你是"配图分发/编排专家"。你的任�
 
 ## 输出格式（严格遵守）
 - 只输出 JSON，符合 ImageGroupingPlan schema：
-  - groups: list of { title: str, indices: list[int], rationale?: str }
+  - groups: list of { title: str, indices: list[int], outfit_items: list[str], ref_items: list[str], rationale?: str }
 - indices 必须是输入 key_infos_json 里的 index 值。
 - groups 的顺序即为详情图的展示顺序。
 - 不要输出除 JSON 以外的任何文本。
@@ -232,6 +234,7 @@ IMAGE_GROUPING_USER_PROMPT_TEMPLATE = """主题：{topic}
 ```json
 {key_infos_json}
 ```
+{outfit_item_hint}
 {ref_item_hint}
 请按语义分组，输出 ImageGroupingPlan JSON。
 """
@@ -241,6 +244,9 @@ IMAGE_GROUPING_REVISION_USER_PROMPT_TEMPLATE = """主题：{topic}
 每组最大条数（建议）：{max_group_size}
 
 （key_infos 同首轮，请参考上文）
+
+用户给定的单品：
+{outfit_item_names}
 
 上轮分组审核未通过，请根据以下反馈重新分组：
 {feedback}
@@ -263,11 +269,13 @@ IMAGE_GROUPING_REVIEW_SYSTEM_PROMPT = """你是"图片分组审核专家"。你�
 4) 标题匹配：group.title 应概括本组多数条目，避免标题与内容明显冲突。
 5) 组内内容矛盾：同一组内的条目之间不应存在事实或观点上的矛盾（例如一条说"全年开放"另一条说"仅冬季营业"；或一条说"免费入场"另一条说"门票200元"）。如发现矛盾，记录到 issues 并扣分。
 6) 跨组内容矛盾：不同组中如果涉及同一事物或同一建议维度，描述和结论不应互相矛盾（例如 A 组说"黄黑皮避免穿驼色/卡其色"，B 组却推荐驼色大衣显白；或 A 组说某景点"免费开放"，B 组说同一景点"门票80元"）。如发现跨组矛盾，记录到 issues 并扣分。
-7) 参考图物品分配：如果提供了有参考图片的物品名称列表，检查 ref_items 分配是否合理：
+7) 用户单品落地：每个分组都必须有至少 1 个 outfit_items，且这些物品应该与该组风格/内容方向匹配，不能完全脱离用户提供的单品。
+8) 参考图物品分配：如果提供了有参考图片的物品名称列表，检查 ref_items 分配是否合理：
    - 每个参考图物品应分配到与其内容最相关的分组
    - 参考图物品不应被分配到避雷/负面内容为主的分组
    - 同一个参考图物品可以出现在多个分组中，不要因此扣分；也可以出现在多个相关分组的 ref_items 中
    - 同一分组内重复的 ref_items 会被程序归一化，不需要单独扣分
+   - ref_items 必须是 outfit_items 的子集
    - 如有未被分配的参考图物品，记录到 issues
 
 通过标准：
@@ -466,6 +474,18 @@ def image_grouping_system_prompt(**variables: object) -> str:
 
 
 def image_grouping_user_prompt(**variables) -> str:
+    outfit_item_names = variables.pop("outfit_item_names", "")
+    if outfit_item_names:
+        variables["outfit_item_hint"] = (
+            f"\n👗 用户给定的单品：**{outfit_item_names}**\n"
+            "分组时请注意：\n"
+            "- 每个分组都必须指定至少 1 个 outfit_items，表示这张图里必须实际出现的用户单品\n"
+            "- 同一个用户单品可以根据风格需要在多个分组中复用\n"
+            "- 允许少量辅助单品完善搭配，但图片主角必须仍然是 outfit_items\n"
+        )
+    else:
+        variables["outfit_item_hint"] = ""
+
     ref_item_names = variables.pop("ref_item_names", "")
     if ref_item_names:
         variables["ref_item_hint"] = (
@@ -473,7 +493,7 @@ def image_grouping_user_prompt(**variables) -> str:
             "分组时请注意：\n"
             "- 包含这些物品的条目适合放在「推荐」类分组中，与避雷/负面内容分开\n"
             "- 同一个参考图物品可以根据语义需要被多个相关分组复用，不要强行限制为唯一分组\n"
-            "- 在每个分组的 ref_items 字段中列出属于该组的参考图物品名\n"
+            "- 在每个分组的 ref_items 字段中列出属于该组、且需要严格参考图对齐的物品名\n"
         )
     else:
         variables["ref_item_hint"] = ""

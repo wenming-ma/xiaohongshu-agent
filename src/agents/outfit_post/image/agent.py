@@ -44,7 +44,7 @@ from ..utils.image import (
     build_compact_items,
     calculate_grouping_params,
     groups_to_image_specs,
-    normalize_group_ref_items,
+    normalize_group_assignments,
     run_grouping_with_review,
 )
 
@@ -141,6 +141,7 @@ class ImageAgent(BaseAgent):
         self,
         research: ResearchResult,
         topic: str,
+        outfit_item_names: list[str] | None = None,
         ref_item_names: list[str] | None = None,
     ) -> list[GroupSpec]:
         """
@@ -149,6 +150,7 @@ class ImageAgent(BaseAgent):
         Args:
             research: 研究数据
             topic: 主题
+            outfit_item_names: 用户给定的单品名列表（可选，约束每组必须落地的单品）
             ref_item_names: 有参考图片的推荐物品名列表（可选，影响分组策略）
 
         Returns:
@@ -171,6 +173,7 @@ class ImageAgent(BaseAgent):
                 target_groups=target_groups,
                 target_group_size=target_group_size,
                 max_group_size_cap=max_group_size_cap,
+                outfit_item_names=outfit_item_names,
                 ref_item_names=ref_item_names,
             )
         except Exception as e:
@@ -180,6 +183,7 @@ class ImageAgent(BaseAgent):
             return [{
                 "title": topic or "内容要点",
                 "indices": list(range(item_count)),
+                "outfit_items": list(outfit_item_names or []),
                 "ref_items": ref_item_names or [],
             }]
 
@@ -195,6 +199,7 @@ class ImageAgent(BaseAgent):
         output_dir: Path,
         groups: list[GroupSpec] | None = None,
         reference_images: ReferenceImageResult | None = None,
+        outfit_item_names: list[str] | None = None,
     ) -> ImageResult:
         """
         生成配图（主入口）
@@ -212,13 +217,26 @@ class ImageAgent(BaseAgent):
         """
         # 1. 使用预计算分组，或内部计算
         if groups is None:
-            groups = await self.compute_groups(research, topic)
+            groups = await self.compute_groups(
+                research,
+                topic,
+                outfit_item_names=outfit_item_names,
+                ref_item_names=(
+                    reference_images.get_item_names_with_images()
+                    if reference_images and not reference_images.skipped
+                    else None
+                ),
+            )
 
         allowed_ref_items = None
         if reference_images and not reference_images.skipped:
             allowed_ref_items = reference_images.get_item_names_with_images()
 
-        groups = normalize_group_ref_items(groups, allowed_ref_items=allowed_ref_items)
+        groups = normalize_group_assignments(
+            groups,
+            allowed_outfit_items=outfit_item_names,
+            allowed_ref_items=allowed_ref_items,
+        )
 
         # 2. 构建图片生成规格
         item_count = len(research.items)
@@ -235,7 +253,7 @@ class ImageAgent(BaseAgent):
         for spec in image_specs:
             # 从分组 Agent 分配的 ref_items 获取参考图片（不再硬编码子串匹配）
             ref_image_map: dict[str, list[Path]] = {}
-            if global_ref_map and spec["type"].startswith("detail_"):
+            if global_ref_map and spec.get("ref_items"):
                 for ref_name in spec.get("ref_items", []):
                     if ref_name in global_ref_map:
                         ref_image_map[ref_name] = global_ref_map[ref_name]
@@ -365,15 +383,30 @@ class ImageAgent(BaseAgent):
         """生成 Gemini 图片提示词"""
         image_type = image_spec["type"]
         image_desc = image_spec["desc"]
+        group_title = image_spec.get("group_title", "")
+        group_ref_items = image_spec.get("ref_items", []) or []
+        outfit_items = image_spec.get("outfit_items", []) or []
 
         if image_type == "cover":
-            body_excerpt = content.body
+            body_excerpt = (
+                "封面图也必须是一套真实可落地的穿搭展示，不是纯概念海报。"
+                f"\n本图主题板块：{group_title or topic}"
+            )
+            if outfit_items:
+                body_excerpt += f"\n本图必须实际出现这些用户单品：{'、'.join(outfit_items)}"
+                body_excerpt += "\n允许少量加入辅助单品，但用户单品必须是画面主角。"
+            if group_ref_items and gen_ctx.reference_image_map:
+                body_excerpt += (
+                    "\n当前分组的视觉表达必须围绕这些参考单品展开："
+                    f"{'、'.join(group_ref_items)}。"
+                    "\n对于这些有参考图的单品，必须参照其附图中的颜色、版型、材质和细节，不要自行编造。"
+                )
+            if content.body:
+                body_excerpt += f"\n\n正文氛围参考：\n{content.body}"
             title_for_prompt = content.title
         else:
             indices = image_spec.get("indices", [])
             items = [research.items[i] for i in indices if 0 <= i < len(research.items)]
-            group_title = image_spec.get("group_title", "")
-            group_ref_items = image_spec.get("ref_items", []) or []
 
             if items:
                 infos_text = "\n".join([
@@ -383,6 +416,10 @@ class ImageAgent(BaseAgent):
                 body_excerpt = f"本图主题板块：{group_title}\n本图需要展示以下 {len(items)} 个关键信息：\n{infos_text}"
             else:
                 body_excerpt = f"本图主题板块：{group_title or topic}"
+
+            if outfit_items:
+                body_excerpt += f"\n本图必须实际出现这些用户单品：{'、'.join(outfit_items)}"
+                body_excerpt += "\n允许少量加入辅助单品，但用户单品必须是画面主角。"
 
             if group_ref_items and gen_ctx.reference_image_map:
                 ref_items_text = "、".join(group_ref_items)

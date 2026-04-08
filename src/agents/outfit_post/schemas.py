@@ -109,6 +109,7 @@ class ImageGenContext:
 class GroupSpec(TypedDict, total=False):
     title: str
     indices: list[int]
+    outfit_items: list[str]  # 本组图片必须实际出现的用户单品
     ref_items: list[str]  # 属于本组的参考图物品名（由分组 Agent 分配）
 
 
@@ -124,6 +125,7 @@ class ImageTypeSpec(TypedDict, total=False):
     desc: str
     group_title: str
     indices: list[int]
+    outfit_items: list[str]
     ref_items: list[str]
 
 
@@ -209,6 +211,7 @@ class ImageGroupingGroup(BaseModel):
     title: str
     indices: List[int] = []
     rationale: Optional[str] = None
+    outfit_items: List[str] = []  # 本组图片必须实际出现的用户单品
     ref_items: List[str] = []  # 属于本组的参考图物品名
 
 

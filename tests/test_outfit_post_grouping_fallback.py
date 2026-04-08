@@ -32,12 +32,20 @@ def test_compute_groups_falls_back_to_single_group_when_grouping_model_unavailab
         sources=[],
     )
 
-    groups = asyncio.run(agent.compute_groups(research=research, topic="休闲穿搭"))
+    groups = asyncio.run(
+        agent.compute_groups(
+            research=research,
+            topic="休闲穿搭",
+            outfit_item_names=["白色衬衫", "黑色西裤"],
+            ref_item_names=["白色衬衫"],
+        )
+    )
 
     assert groups == [
         {
             "title": "休闲穿搭",
             "indices": [0, 1, 2],
-            "ref_items": [],
+            "outfit_items": ["白色衬衫", "黑色西裤"],
+            "ref_items": ["白色衬衫"],
         }
     ]

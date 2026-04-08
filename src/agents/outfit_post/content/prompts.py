@@ -28,8 +28,14 @@ def build_groups_section(
     for i, g in enumerate(groups, 1):
         title = g.get("title", f"板块{i}") if isinstance(g, dict) else g.title
         indices = g.get("indices", []) if isinstance(g, dict) else g.indices
+        outfit_items = g.get("outfit_items", []) if isinstance(g, dict) else getattr(g, "outfit_items", [])
+        ref_items = g.get("ref_items", []) if isinstance(g, dict) else getattr(g, "ref_items", [])
 
         lines.append(f"### 板块{i}：{title}")
+        if outfit_items:
+            lines.append(f"  - 本板块必须落到这些用户单品：{'、'.join(outfit_items)}")
+        if ref_items:
+            lines.append(f"  - 其中这些单品有参考图，图片外观必须严格对齐：{'、'.join(ref_items)}")
         for idx in indices:
             if 0 <= idx < len(research_items):
                 item = research_items[idx]
