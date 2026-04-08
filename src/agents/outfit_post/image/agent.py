@@ -44,6 +44,7 @@ from ..utils.image import (
     build_compact_items,
     calculate_grouping_params,
     groups_to_image_specs,
+    normalize_group_ref_items,
     run_grouping_with_review,
 )
 
@@ -160,17 +161,27 @@ class ImageAgent(BaseAgent):
         target_groups, target_group_size, max_group_size_cap = calculate_grouping_params(item_count)
         compact_items = build_compact_items(research.items or [])
 
-        return await run_grouping_with_review(
-            grouping_agent=self.grouping_agent,
-            grouping_reviewer=self.grouping_reviewer,
-            topic=topic,
-            research=research,
-            compact_items=compact_items,
-            target_groups=target_groups,
-            target_group_size=target_group_size,
-            max_group_size_cap=max_group_size_cap,
-            ref_item_names=ref_item_names,
-        )
+        try:
+            return await run_grouping_with_review(
+                grouping_agent=self.grouping_agent,
+                grouping_reviewer=self.grouping_reviewer,
+                topic=topic,
+                research=research,
+                compact_items=compact_items,
+                target_groups=target_groups,
+                target_group_size=target_group_size,
+                max_group_size_cap=max_group_size_cap,
+                ref_item_names=ref_item_names,
+            )
+        except Exception as e:
+            if not _is_retryable_error(e):
+                raise
+            logger.warning("语义分组模型暂时不可用，降级为单组继续生成: %s", e)
+            return [{
+                "title": topic or "内容要点",
+                "indices": list(range(item_count)),
+                "ref_items": ref_item_names or [],
+            }]
 
     # ========================================================================
     # 主入口：forward
@@ -202,6 +213,12 @@ class ImageAgent(BaseAgent):
         # 1. 使用预计算分组，或内部计算
         if groups is None:
             groups = await self.compute_groups(research, topic)
+
+        allowed_ref_items = None
+        if reference_images and not reference_images.skipped:
+            allowed_ref_items = reference_images.get_item_names_with_images()
+
+        groups = normalize_group_ref_items(groups, allowed_ref_items=allowed_ref_items)
 
         # 2. 构建图片生成规格
         item_count = len(research.items)
@@ -356,6 +373,7 @@ class ImageAgent(BaseAgent):
             indices = image_spec.get("indices", [])
             items = [research.items[i] for i in indices if 0 <= i < len(research.items)]
             group_title = image_spec.get("group_title", "")
+            group_ref_items = image_spec.get("ref_items", []) or []
 
             if items:
                 infos_text = "\n".join([
@@ -365,6 +383,20 @@ class ImageAgent(BaseAgent):
                 body_excerpt = f"本图主题板块：{group_title}\n本图需要展示以下 {len(items)} 个关键信息：\n{infos_text}"
             else:
                 body_excerpt = f"本图主题板块：{group_title or topic}"
+
+            if group_ref_items and gen_ctx.reference_image_map:
+                ref_items_text = "、".join(group_ref_items)
+                body_excerpt += (
+                    "\n\n本图的参考图片已按物品附上。当前分组的视觉表达必须围绕这些参考单品展开："
+                    f"{ref_items_text}。"
+                    "\n必须结合当前分组中的关键信息与场景，确保参考单品与分组主题一致。"
+                    "\n对于这些有参考图的单品，必须参照其附图中的颜色、版型、材质和细节，不要自行编造。"
+                )
+            elif group_ref_items:
+                body_excerpt += (
+                    "\n\n本图的参考图片已按物品附上。当前分组的视觉表达必须围绕这些参考单品展开："
+                    f"{'、'.join(group_ref_items)}。"
+                )
 
             title_for_prompt = topic
 

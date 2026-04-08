@@ -18,6 +18,7 @@ param(
     [int]$MaxRetries = 10,
     [int]$RetryDelay = 5,
     [int]$Sleep = 0,
+    [switch]$Publish = $false,
     [switch]$NoFeishu = $false
 )
 
@@ -36,6 +37,10 @@ $resolvedTopicsFile = if ($TopicsFile) {
 }
 
 $pyArgs = @($pyScript, "--topics-file", $resolvedTopicsFile, "--start-index", $StartIndex, "--max-retries", $MaxRetries, "--retry-delay", $RetryDelay)
+
+if ($Publish) {
+    $pyArgs += "--publish"
+}
 
 if ($Sleep -gt 0) {
     $pyArgs += @("--sleep", $Sleep)
@@ -59,7 +64,7 @@ $endIndex = if ($Limit -gt 0) { [Math]::Min($StartIndex + $Limit - 1, $totalCoun
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "XHS Image Post Batch Runner" -ForegroundColor Cyan
 Write-Host "Topics file: $resolvedTopicsFile" -ForegroundColor Cyan
-Write-Host "Agent: image_post (direct)" -ForegroundColor Cyan
+Write-Host "Agent: image_post (default: Feishu review, use -Publish to post)" -ForegroundColor Cyan
 Write-Host "Topics: #$StartIndex ~ #$endIndex / $totalCount" -ForegroundColor Cyan
 Write-Host "Max retries: $MaxRetries" -ForegroundColor Cyan
 if ($Sleep -gt 0) {

@@ -88,14 +88,14 @@ class PublisherAgent(BaseAgent):
         """
         logger.info("准备发布到小红书: %s (%d 张图片)", content.title, len(images))
 
+        # 先做确定性输入校验，避免无意义的浏览器初始化和重试
+        self._check_images(images)
+
         # 重新初始化 MCP Server，使其 cwd 指向帖子目录，
         # 这样 Playwright 才能访问该目录下的图片进行上传
         self.init_mcp_server(output_dir)
         self.init_tools()
         self.init_agent()
-
-        # 验证图片输入
-        self._check_images(images)
 
         # 绑定正文到注入工具
         full_body = content.body
@@ -161,10 +161,16 @@ class PublisherAgent(BaseAgent):
 
     def _check_images(self, images: List[Path]) -> None:
         """检查图片输入（内部辅助方法）"""
-        if images:
-            first_image_name = images[0].stem
-            if not first_image_name.startswith('cover'):
-                logger.warning("第一张图片不是封面图: %s", first_image_name)
+        if not images:
+            raise ValueError("图片列表为空，无法发布")
+
+        for img in images:
+            if not img.exists():
+                raise ValueError(f"图片文件不存在: {img}")
+
+        first_image_name = images[0].stem
+        if not first_image_name.startswith('cover'):
+            logger.warning("第一张图片不是封面图: %s", first_image_name)
 
         for i, img in enumerate(images):
             logger.debug("图片 %d: %s", i + 1, img.name)

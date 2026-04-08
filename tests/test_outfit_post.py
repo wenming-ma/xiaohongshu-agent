@@ -102,7 +102,7 @@ async def run_mock(args: argparse.Namespace) -> OutfitPostOutput:
     # 输出目录
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     safe_topic = "".join(c for c in (args.topic or "outfit") if c.isalnum() or c in " -_")[:20]
-    output_dir = PathConfig.IMAGE_PROJECT_DIR / f"{timestamp}-{safe_topic}-outfit"
+    output_dir = PathConfig.OUTFIT_PROJECT_DIR / f"{timestamp}-{safe_topic}-outfit"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info("=" * 60)

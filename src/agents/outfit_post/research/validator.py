@@ -12,6 +12,12 @@ from .prompts import research_review_system_prompt, research_review_user_prompt
 logger = get_logger(__name__)
 
 
+def _review_passed(review: ReviewResult) -> bool:
+    """Normalize reviewer output to the contract defined in the prompt."""
+    has_critical_issue = any(issue.severity == "critical" for issue in review.issues)
+    return review.score >= 70 and not has_critical_issue
+
+
 class ResearchDepthValidator(InternalValidator):
     """研究深度验证器 - 验证内容数量是否达标"""
 
@@ -34,11 +40,19 @@ class ResearchDepthValidator(InternalValidator):
             issues.append(f"内容数量不足：已访问 {tracked_count} 个详情页，需要至少 {self.min_posts} 个")
             score -= (self.min_posts - tracked_count) * 2
 
+        if reported_count < self.min_posts:
+            issues.append(f"来源数量不足：已记录 {reported_count} 个来源，需要至少 {self.min_posts} 个")
+            score -= (self.min_posts - reported_count) * 5
+
         if reported_count > tracked_count * 1.5:
             issues.append(f"数据异常：Agent 自报 {reported_count} 个来源，但追踪仅记录 {tracked_count} 个详情页访问")
             score -= 10
 
-        passed = tracked_count >= self.min_posts
+        passed = (
+            tracked_count >= self.min_posts
+            and reported_count >= self.min_posts
+            and reported_count <= tracked_count * 1.5
+        )
         score = max(0, score)
 
         if passed:
@@ -48,6 +62,7 @@ class ResearchDepthValidator(InternalValidator):
                 f"**研究深度验证未通过**\n\n"
                 f"**当前状态**：\n"
                 f"- 已访问内容详情页: {tracked_count} / {self.min_posts} (最低要求)\n"
+                f"- 已记录来源数: {reported_count} / {self.min_posts} (最低要求)\n"
                 f"- 还需访问: {max(0, self.min_posts - tracked_count)} 个\n\n"
                 f"**问题**：\n"
             )
@@ -104,9 +119,11 @@ class ResearchReviewValidator(InternalValidator):
         review_result = await self.reviewer.run(review_prompt)
         review = review_result.output
 
-        if review.passed:
+        if _review_passed(review):
+            review.passed = True
             validation_result = InternalValidationResult(passed=True, feedback="", score=review.score)
         else:
+            review.passed = False
             feedback = (
                 f"**数据质量审核未通过**\n\n"
                 f"**审核评分**：{review.score:.1f}/100\n\n"

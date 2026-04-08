@@ -228,7 +228,7 @@ async def run_batch(args: argparse.Namespace) -> int:
         result = await run_single(
             item, idx, base_idx + total - 1,
             args.max_retries, args.retry_delay,
-            publish=not args.feishu_only,
+            publish=args.publish and not args.feishu_only,
             notify_feishu=not args.no_feishu,
         )
         results.append(result)
@@ -279,7 +279,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--retry-delay", type=int, default=5, help="重试间隔秒数")
     p.add_argument("--sleep", type=int, default=None, help="话题之间固定休眠秒数 (留空则不休眠)")
     p.add_argument("--no-feishu", action="store_true", default=False, help="禁用飞书通知")
-    p.add_argument("--feishu-only", action="store_true", help="跳过 XHS 发布，仅生成内容并发送到飞书审核")
+    p.add_argument("--publish", action="store_true", default=False, help="发布到小红书（默认仅发送到飞书审核）")
+    p.add_argument("--feishu-only", action="store_true", help="兼容参数：仅生成内容并发送到飞书审核")
     return p.parse_args()
 
 

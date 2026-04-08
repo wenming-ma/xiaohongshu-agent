@@ -168,7 +168,7 @@ class ResearchResult(BaseModel):
 # ============================================================================
 
 class XHSContent(BaseModel):
-    title: str = Field(min_length=10, max_length=30)
+    title: str = Field(min_length=10, max_length=20)
     body: str = Field(min_length=100)
     hashtags: List[str] = Field(default=[], max_length=5)
     call_to_action: str = ""

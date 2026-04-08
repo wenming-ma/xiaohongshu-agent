@@ -1099,13 +1099,18 @@ class FeishuNotifier:
         return await self.wait_for_reply()
 
     def clear_queue(self):
-        """清空回复队列"""
+        """清空回复队列和媒体队列"""
         while not self._reply_queue.empty():
             try:
                 self._reply_queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
-        logger.debug("回复队列已清空")
+        while not self._media_queue.empty():
+            try:
+                self._media_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        logger.debug("回复/媒体队列已清空")
 
 
 # 全局单例

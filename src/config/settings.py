@@ -88,6 +88,7 @@ class PathConfig:
     _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
     DOWNLOADS_DIR = _PROJECT_ROOT / 'output' / 'playwright-downloads'
     IMAGE_PROJECT_DIR = _PROJECT_ROOT / 'posts' / 'image-posts'
+    OUTFIT_PROJECT_DIR = _PROJECT_ROOT / 'posts' / 'outfit-posts'
     ARTICLE_PROJECT_DIR = _PROJECT_ROOT / 'posts' / 'article-posts'
     VIDEO_PROJECT_DIR = _PROJECT_ROOT / 'posts' / 'video-posts'
     BROWSER_SESSION_SHARED = str(_PROJECT_ROOT / 'browser-sessions' / 'shared')

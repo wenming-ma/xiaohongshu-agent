@@ -52,6 +52,64 @@ def build_compact_items(items: list) -> list[CompactKeyInfo]:
     return compact_items
 
 
+def _normalize_ref_items(ref_items: list[str] | None) -> list[str]:
+    """去重并清理单个分组内的参考图物品名。"""
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for ref_item in ref_items or []:
+        if not isinstance(ref_item, str):
+            continue
+        name = ref_item.strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        normalized.append(name)
+    return normalized
+
+
+def normalize_group_ref_items(
+    groups: list[GroupSpec],
+    allowed_ref_items: list[str] | None = None,
+) -> list[GroupSpec]:
+    """
+    归一化分组中的 ref_items，并在提供参考图清单时校验未知物品。
+
+    - 允许同一个参考图物品出现在多个分组中
+    - 仅去除单个分组内重复的 ref_items
+    - 若出现未提供参考图的物品，直接抛错，避免后续生成继续执行
+    """
+    allowed_set = None
+    if allowed_ref_items is not None:
+        allowed_set = {
+            ref_item.strip()
+            for ref_item in allowed_ref_items
+            if isinstance(ref_item, str) and ref_item.strip()
+        }
+
+    normalized_groups: list[GroupSpec] = []
+    for group in groups:
+        ref_items = _normalize_ref_items(group.get("ref_items", []))
+        if allowed_set is not None:
+            unknown_items = [ref_item for ref_item in ref_items if ref_item not in allowed_set]
+            if unknown_items:
+                allowed_text = "、".join(sorted(allowed_set)) if allowed_set else "（空）"
+                raise ValueError(
+                    "分组中出现未识别的参考图物品: "
+                    f"{'、'.join(unknown_items)}。可用参考图物品: {allowed_text}"
+                )
+
+        normalized_group: GroupSpec = {
+            "title": group["title"],
+            "indices": list(group.get("indices", [])),
+        }
+        if "rationale" in group and group.get("rationale") is not None:
+            normalized_group["rationale"] = group["rationale"]
+        normalized_group["ref_items"] = ref_items
+        normalized_groups.append(normalized_group)
+
+    return normalized_groups
+
+
 def calculate_grouping_params(item_count: int) -> tuple[int, int, int]:
     """根据 item 数量计算分组参数"""
     max_detail_images = ImageConfig.MAX_DETAIL_IMAGES
@@ -83,7 +141,7 @@ def groups_to_image_specs(groups: list[GroupSpec]) -> list[ImageTypeSpec]:
             "desc": f"详情图{i} - 语义分组：{g['title']}",
             "group_title": g["title"],
             "indices": g["indices"],
-            "ref_items": g.get("ref_items", []),
+            "ref_items": _normalize_ref_items(g.get("ref_items", [])),
         })
     return image_types
 
@@ -200,10 +258,13 @@ async def run_grouping_with_review(
         history_mgr.add_grouping_round(round_messages)
         plan: ImageGroupingPlan = grouping_result.output
 
-        groups = [
-            {"title": g.title, "indices": g.indices, "ref_items": g.ref_items}
-            for g in plan.groups
-        ]
+        groups = normalize_group_ref_items(
+            [
+                {"title": g.title, "indices": g.indices, "ref_items": g.ref_items}
+                for g in plan.groups
+            ],
+            allowed_ref_items=ref_item_names,
+        )
 
         review, review_round_messages = await review_groups(
             reviewer=grouping_reviewer,

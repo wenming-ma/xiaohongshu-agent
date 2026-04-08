@@ -38,6 +38,12 @@ from ..utils.content import build_review_feedback
 logger = get_logger(__name__)
 
 
+def _review_passed(review: ReviewResult) -> bool:
+    """Normalize reviewer output to the contract defined in the prompt."""
+    has_critical_issue = any(issue.severity == "critical" for issue in review.issues)
+    return review.score >= 70 and not has_critical_issue
+
+
 class ContentAgent(BaseAgent):
     """小红书内容创作 Agent"""
 
@@ -221,9 +227,11 @@ class ContentAgent(BaseAgent):
         state.current_review = review_result.output
         state.review_history.extend(review_result.new_messages())
 
-        if state.current_review.passed:
+        if _review_passed(state.current_review):
+            state.current_review.passed = True
             return ValidationResult.success(f"审核通过，评分: {state.current_review.score:.1f}/100")
         else:
+            state.current_review.passed = False
             feedback = build_review_feedback(state.current_review, state.research)
             return ValidationResult.failure(feedback)
 

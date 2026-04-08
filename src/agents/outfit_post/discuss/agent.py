@@ -122,6 +122,8 @@ class DiscussAgent(BaseAgent):
             logger.warning("飞书客户端未初始化，无法与用户讨论")
             return []
 
+        self._clear_notifier_queue()
+
         # 发送初始提示
         if topic_hint:
             greeting = (
@@ -343,6 +345,7 @@ class DiscussAgent(BaseAgent):
         )
 
         while True:
+            self._clear_notifier_queue()
             image_path, text = await self.notifier.wait_for_image_or_text()
             if image_path is not None:
                 await self.notifier.send_message("请先选择风格方向，再发送图片")
@@ -377,6 +380,7 @@ class DiscussAgent(BaseAgent):
             item_dir.mkdir(parents=True, exist_ok=True)
 
             prompt = self._build_item_prompt(item, item_idx, total_items)
+            self._clear_notifier_queue()
             images, stop_reason = await self.notifier.collect_images(
                 prompt=prompt,
                 save_dir=item_dir,
@@ -395,6 +399,7 @@ class DiscussAgent(BaseAgent):
                     f'**⚠️ 还没有收到「{item.name}」的参考图片**\n'
                     f'点击"确定"跳过，或发送图片继续'
                 )
+                self._clear_notifier_queue()
                 more_images, reason2 = await self.notifier.collect_images(
                     prompt=confirm_msg,
                     save_dir=item_dir,
@@ -418,6 +423,10 @@ class DiscussAgent(BaseAgent):
                 logger.info("物品「%s」: 已跳过", item.name)
 
         return collected
+
+    def _clear_notifier_queue(self) -> None:
+        if hasattr(self.notifier, "clear_queue"):
+            self.notifier.clear_queue()
 
     # ========================================================================
     # 构建研究主题
