@@ -19,6 +19,7 @@ from ....utils.providers import get_text_model
 from ....utils.feishu_notifier import get_feishu_notifier
 from ....utils.logger import get_logger
 from ....config.settings import ReferenceImageConfig, RetryConfig
+from ....utils.feishu_sessions import FeishuWorkflowSession
 from .prompts import (
     item_parser_system_prompt,
     item_parser_user_prompt,
@@ -43,6 +44,7 @@ class DiscussAgent(BaseAgent):
 
     def init_tools(self) -> None:
         self.notifier = get_feishu_notifier()
+        self.session: FeishuWorkflowSession | None = None
 
     def init_agent(self) -> None:
         model = get_text_model()
@@ -139,15 +141,21 @@ class DiscussAgent(BaseAgent):
                 "例如：白色衬衫、高腰阔腿裤、小白鞋、帆布包\n\n"
                 "可以一次性列出，也可以分多次发送。发完后回复“确认列表”。"
             )
-        await self.notifier.send_message(greeting)
+        await self._send_message(greeting, phase="discuss_items", summary=topic_hint or "讨论搭配单品")
 
         items: list[OutfitItem] = []
 
         while True:
-            image_path, text = await self.notifier.wait_for_image_or_text()
+            image_path, text = await self._wait_for_image_or_text(
+                phase="discuss_items",
+                summary=topic_hint or "讨论搭配单品",
+            )
 
             if image_path is not None:
-                await self.notifier.send_message("请先用文字告诉我搭配包含哪些单品，确认后再发送参考图片")
+                await self._send_message(
+                    "请先用文字告诉我搭配包含哪些单品，确认后再发送参考图片",
+                    phase="discuss_items",
+                )
                 continue
 
             text = text.strip()
@@ -160,7 +168,7 @@ class DiscussAgent(BaseAgent):
             # 确认当前列表（第一张卡片就是最终确认卡片，不再进入第二层确认流程）
             if text in ("确认列表", "确认"):
                 if not items:
-                    await self.notifier.send_message("还没有记录到单品，请先发送搭配单品")
+                    await self._send_message("还没有记录到单品，请先发送搭配单品", phase="discuss_items")
                     continue
                 return items
 
@@ -172,7 +180,7 @@ class DiscussAgent(BaseAgent):
                     removed = items.pop(idx)
                     logger.info("用户删除单品: %s", removed.name)
                     if not items:
-                        await self.notifier.send_message("搭配列表已清空，请重新发送单品")
+                        await self._send_message("搭配列表已清空，请重新发送单品", phase="discuss_items")
                     else:
                         await self._send_items_card(items, topic_hint)
                 continue
@@ -189,7 +197,7 @@ class DiscussAgent(BaseAgent):
                     if 0 <= idx < len(items):
                         items.pop(idx)
                 if not items:
-                    await self.notifier.send_message("搭配列表已清空，请重新发送单品")
+                    await self._send_message("搭配列表已清空，请重新发送单品", phase="discuss_items")
                 else:
                     await self._send_items_card(items, topic_hint)
                 continue
@@ -212,9 +220,10 @@ class DiscussAgent(BaseAgent):
             # 普通文本：解析并追加到列表
             parsed = await self._parse_items(text)
             if not parsed:
-                await self.notifier.send_message(
+                await self._send_message(
                     "没有识别到具体的穿搭单品，请重新描述。\n"
-                    "例如：白色衬衫、黑色阔腿裤、小白鞋"
+                    "例如：白色衬衫、黑色阔腿裤、小白鞋",
+                    phase="discuss_items",
                 )
                 continue
 
@@ -227,7 +236,10 @@ class DiscussAgent(BaseAgent):
                     added += 1
 
             if added == 0:
-                await self.notifier.send_message("这些单品已经记录过了，可以继续补充，或回复“确认列表”进入下一步")
+                await self._send_message(
+                    "这些单品已经记录过了，可以继续补充，或回复“确认列表”进入下一步",
+                    phase="discuss_items",
+                )
             else:
                 await self._send_items_card(items, topic_hint)
 
@@ -307,7 +319,11 @@ class DiscussAgent(BaseAgent):
         if self.notifier.client is None:
             return None
         card = self._build_items_card(items, topic_hint)
-        return await self.notifier.send_card_message_raw(card)
+        return await self._send_card_message_raw(
+            card,
+            phase="discuss_items",
+            summary=topic_hint or "讨论搭配单品",
+        )
 
     # ========================================================================
     # Phase 1.5: 询问风格方向
@@ -339,16 +355,22 @@ class DiscussAgent(BaseAgent):
         if not any(kw == _NO_STYLE for _, kw in buttons):
             buttons.append(("不限风格", _NO_STYLE))
 
-        await self.notifier.send_card_message(
-            text=f"**🎨 {items_str}**\n\n这套搭配主要想分享什么风格？",
-            buttons=buttons,
+        # 在发送新阶段卡片前清空旧阶段残留事件，避免误消费确认卡片/旧图片。
+        self._clear_notifier_queue()
+        await self._send_card_message(
+            f"**🎨 {items_str}**\n\n这套搭配主要想分享什么风格？",
+            buttons,
+            phase="style_direction",
+            summary=items_str,
         )
 
         while True:
-            self._clear_notifier_queue()
-            image_path, text = await self.notifier.wait_for_image_or_text()
+            image_path, text = await self._wait_for_image_or_text(
+                phase="style_direction",
+                summary=items_str,
+            )
             if image_path is not None:
-                await self.notifier.send_message("请先选择风格方向，再发送图片")
+                await self._send_message("请先选择风格方向，再发送图片", phase="style_direction")
                 continue
             text = text.strip()
             if not text:
@@ -381,7 +403,9 @@ class DiscussAgent(BaseAgent):
 
             prompt = self._build_item_prompt(item, item_idx, total_items)
             self._clear_notifier_queue()
-            images, stop_reason = await self.notifier.collect_images(
+            phase = f"reference_images_{item_idx}"
+            images, stop_reason = await self._collect_images(
+                phase=phase,
                 prompt=prompt,
                 save_dir=item_dir,
                 done_keyword="完成",
@@ -400,7 +424,8 @@ class DiscussAgent(BaseAgent):
                     f'点击"确定"跳过，或发送图片继续'
                 )
                 self._clear_notifier_queue()
-                more_images, reason2 = await self.notifier.collect_images(
+                more_images, reason2 = await self._collect_images(
+                    phase=phase,
                     prompt=confirm_msg,
                     save_dir=item_dir,
                     done_keyword="完成",
@@ -425,8 +450,106 @@ class DiscussAgent(BaseAgent):
         return collected
 
     def _clear_notifier_queue(self) -> None:
+        if self.session is not None:
+            return
         if hasattr(self.notifier, "clear_queue"):
             self.notifier.clear_queue()
+
+    async def _send_message(
+        self,
+        text: str,
+        *,
+        phase: str,
+        summary: str | None = None,
+    ) -> str | None:
+        if self.session is not None and hasattr(self.notifier, "send_session_message"):
+            return await self.notifier.send_session_message(
+                self.session,
+                text,
+                phase=phase,
+                summary=summary,
+            )
+        return await self.notifier.send_message(text)
+
+    async def _send_card_message(
+        self,
+        text: str,
+        buttons,
+        *,
+        phase: str,
+        summary: str | None = None,
+    ) -> str | None:
+        if self.session is not None and hasattr(self.notifier, "send_session_card_message"):
+            return await self.notifier.send_session_card_message(
+                self.session,
+                text,
+                buttons,
+                phase=phase,
+                summary=summary,
+            )
+        return await self.notifier.send_card_message(text=text, buttons=buttons)
+
+    async def _send_card_message_raw(
+        self,
+        card: dict,
+        *,
+        phase: str,
+        summary: str | None = None,
+    ) -> str | None:
+        if self.session is not None and hasattr(self.notifier, "send_session_card_message_raw"):
+            return await self.notifier.send_session_card_message_raw(
+                self.session,
+                card,
+                phase=phase,
+                summary=summary,
+            )
+        return await self.notifier.send_card_message_raw(card)
+
+    async def _wait_for_image_or_text(
+        self,
+        *,
+        phase: str,
+        summary: str | None = None,
+    ) -> tuple[Path | None, str]:
+        if self.session is not None and hasattr(self.notifier, "wait_for_session_image_or_text"):
+            return await self.notifier.wait_for_session_image_or_text(
+                self.session,
+                phase=phase,
+                summary=summary,
+            )
+        return await self.notifier.wait_for_image_or_text()
+
+    async def _collect_images(
+        self,
+        *,
+        phase: str,
+        prompt: str,
+        save_dir: Path,
+        done_keyword: str = "完成",
+        skip_keyword: str = "跳过",
+        next_keyword: str = "下一个",
+        max_images: int,
+    ) -> tuple[list[Path], str]:
+        if self.session is not None and hasattr(self.notifier, "collect_session_images"):
+            return await self.notifier.collect_session_images(
+                self.session,
+                phase=phase,
+                prompt=prompt,
+                save_dir=save_dir,
+                done_keyword=done_keyword,
+                skip_keyword=skip_keyword,
+                next_keyword=next_keyword,
+                max_images=max_images,
+                summary=prompt,
+            )
+        return await self.notifier.collect_images(
+            prompt=prompt,
+            save_dir=save_dir,
+            done_keyword=done_keyword,
+            skip_keyword=skip_keyword,
+            next_keyword=next_keyword,
+            max_images=max_images,
+        )
 
     # ========================================================================
     # 构建研究主题

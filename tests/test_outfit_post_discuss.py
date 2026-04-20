@@ -54,6 +54,23 @@ class _CollectImagesFakeNotifier(_QueueAwareFakeNotifier):
         return self._collect_responses.pop(0)
 
 
+class _ImmediateStyleClickNotifier(_FakeNotifier):
+    def __init__(self, reply_text: str):
+        super().__init__([])
+        self.reply_text = reply_text
+        self.clear_queue_called = 0
+
+    def clear_queue(self):
+        self.clear_queue_called += 1
+        self._replies.clear()
+
+    async def send_card_message(self, text: str, buttons, *args, **kwargs):
+        self.sent_cards.append({"text": text, "buttons": buttons})
+        # 模拟用户在卡片刚发出后立刻点击按钮
+        self._replies.append((None, self.reply_text))
+        return "card"
+
+
 def test_discuss_items_accumulates_multiple_text_messages_before_confirm():
     agent = DiscussAgent()
     agent.notifier = _FakeNotifier([
@@ -124,6 +141,33 @@ def test_ask_style_direction_clears_stale_media_queue_before_waiting_for_choice(
     assert selected == "法式通勤"
     assert agent.notifier.clear_queue_called == 1
     assert all("请先选择风格方向" not in msg for msg in agent.notifier.sent_messages)
+
+
+def test_ask_style_direction_keeps_immediate_button_click_after_card_is_sent():
+    agent = DiscussAgent()
+    agent.notifier = _ImmediateStyleClickNotifier("__no_style__")
+
+    class _FakeStyleSuggester:
+        async def run(self, prompt):
+            class _Result:
+                output = type(
+                    "_Suggestion",
+                    (),
+                    {
+                        "options": [
+                            type("_Option", (), {"label": "法式通勤", "keyword": "法式通勤"})(),
+                        ]
+                    },
+                )()
+
+            return _Result()
+
+    agent.style_suggester = _FakeStyleSuggester()
+
+    selected = asyncio.run(agent.ask_style_direction([OutfitItem(name="白色衬衫")]))
+
+    assert selected == ""
+    assert agent.notifier.clear_queue_called == 1
 
 
 def test_collect_images_clears_stale_queue_before_each_item_prompt():

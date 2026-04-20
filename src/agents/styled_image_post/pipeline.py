@@ -12,6 +12,7 @@ from ...core.pipeline_registry import PipelineRegistry
 from ...config.settings import PathConfig
 from ...utils.logger import get_logger
 from ...utils.file_ops import save_json
+from ...utils.feishu_sessions import FeishuWorkflowSession, SessionOwnershipError
 from .schemas import StyledImagePostInput, StyledImagePostOutput
 
 logger = get_logger(__name__)
@@ -50,6 +51,14 @@ class StyledImagePostPipeline(BasePipeline[StyledImagePostInput, StyledImagePost
     input_schema = StyledImagePostInput
     output_schema = StyledImagePostOutput
 
+    def __init__(self, interactive_session: FeishuWorkflowSession | None = None) -> None:
+        self.interactive_session = interactive_session
+
+    async def _update_session_phase(self, phase: str, summary: str) -> None:
+        if self.interactive_session is None:
+            return
+        await self.interactive_session.update_phase(phase, summary=summary)
+
     async def execute(self, input_data: StyledImagePostInput) -> StyledImagePostOutput:
         """执行图文帖子工作流"""
         from .research import ResearchAgent
@@ -75,6 +84,7 @@ class StyledImagePostPipeline(BasePipeline[StyledImagePostInput, StyledImagePost
             logger.info("-" * 40)
             logger.info("Phase 1: 研究主题")
             logger.info("-" * 40)
+            await self._update_session_phase("research", input_data.topic)
 
             research_agent = ResearchAgent()
             research = await research_agent.forward(
@@ -89,8 +99,10 @@ class StyledImagePostPipeline(BasePipeline[StyledImagePostInput, StyledImagePost
             logger.info("-" * 40)
             logger.info("Phase 2: 识别推荐物品与收集参考图片")
             logger.info("-" * 40)
+            await self._update_session_phase("collect_references", input_data.topic)
 
             collect_agent = CollectAgent()
+            collect_agent.session = self.interactive_session
             ref_images = await collect_agent.forward(
                 research=research,
                 topic=input_data.topic,
@@ -109,6 +121,7 @@ class StyledImagePostPipeline(BasePipeline[StyledImagePostInput, StyledImagePost
             logger.info("-" * 40)
             logger.info("Phase 3: 语义分组")
             logger.info("-" * 40)
+            await self._update_session_phase("grouping", input_data.topic)
 
             image_agent = ImageAgent()
             groups = await image_agent.compute_groups(
@@ -123,6 +136,7 @@ class StyledImagePostPipeline(BasePipeline[StyledImagePostInput, StyledImagePost
             logger.info("-" * 40)
             logger.info("Phase 4: 内容创作")
             logger.info("-" * 40)
+            await self._update_session_phase("content", input_data.topic)
 
             content_agent = ContentAgent()
             content = await content_agent.forward(
@@ -137,6 +151,7 @@ class StyledImagePostPipeline(BasePipeline[StyledImagePostInput, StyledImagePost
             logger.info("-" * 40)
             logger.info("Phase 5: 图片生成")
             logger.info("-" * 40)
+            await self._update_session_phase("image_generation", "图片生成")
 
             image_result = await image_agent.forward(
                 content=content,
@@ -157,6 +172,7 @@ class StyledImagePostPipeline(BasePipeline[StyledImagePostInput, StyledImagePost
                 logger.info("-" * 40)
                 logger.info("Phase 6: 发布到小红书")
                 logger.info("-" * 40)
+                await self._update_session_phase("publish", "发布到小红书")
 
                 publisher_agent = PublisherAgent()
                 publish_result = await publisher_agent.forward(
@@ -170,6 +186,7 @@ class StyledImagePostPipeline(BasePipeline[StyledImagePostInput, StyledImagePost
                 logger.info("-" * 40)
                 logger.info("Phase 6: 跳过发布")
                 logger.info("-" * 40)
+                await self._update_session_phase("review_complete", "跳过发布")
 
             logger.info("=" * 60)
             logger.info("StyledImagePostPipeline 执行完成")
@@ -187,6 +204,8 @@ class StyledImagePostPipeline(BasePipeline[StyledImagePostInput, StyledImagePost
                 output_dir=str(output_dir),
             )
 
+        except SessionOwnershipError:
+            raise
         except Exception as e:
             logger.error(f"StyledImagePostPipeline 执行失败: {e}")
             import traceback

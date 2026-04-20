@@ -61,7 +61,12 @@ from src.agents.outfit_post.schemas import (  # noqa: E402
 from src.config.settings import PathConfig  # noqa: E402
 from src.utils.logger import get_logger, setup_logging  # noqa: E402
 from src.utils.feishu_notifier import get_feishu_notifier  # noqa: E402
+from src.utils.feishu_interactive_workflow import (  # noqa: E402
+    acquire_interactive_session,
+    finalize_interactive_session,
+)
 from src.utils.file_ops import save_json  # noqa: E402
+from src.utils.feishu_sessions import SessionOwnershipError  # noqa: E402
 
 
 setup_logging()
@@ -244,6 +249,8 @@ async def run_single(
 
     last_error = ""
     for attempt in range(1, max_retries + 1):
+        session = None
+        session_status = "cancelled"
         if attempt > 1:
             logger.warning("  重试 %d/%d，等待 %ds …", attempt, max_retries, retry_delay)
             await asyncio.sleep(retry_delay)
@@ -252,15 +259,34 @@ async def run_single(
             if mock:
                 result = await run_mock_single(item, publish=publish)
             else:
-                pipeline = OutfitPostPipeline()
+                notifier = get_feishu_notifier()
+                session, blocked_reason = await acquire_interactive_session(
+                    notifier=notifier,
+                    workflow="outfit_post",
+                    summary=topic_hint or audience,
+                    current_phase="startup",
+                )
+                if blocked_reason:
+                    return {
+                        "success": False,
+                        "run_status": "blocked",
+                        "items": items_str,
+                        "audience": audience,
+                        "topic": topic_hint,
+                        "error_message": blocked_reason,
+                    }
+
+                pipeline = OutfitPostPipeline(interactive_session=session)
                 result = await pipeline.execute(
                     OutfitPostInput(topic=topic_hint, audience=audience, publish=publish)
                 )
+                session_status = "completed" if result.success else "cancelled"
 
             payload = result.model_dump()
             payload["topic"] = topic_hint
             payload["audience"] = audience
             payload["items"] = items_str
+            payload["run_status"] = "success" if result.success else "failed"
 
             if result.success:
                 logger.info("  成功: %s", result.title or items_str)
@@ -291,12 +317,24 @@ async def run_single(
 
             last_error = result.error_message or "未知错误"
             logger.error("  失败: %s", last_error)
+        except SessionOwnershipError as exc:
+            return {
+                "success": False,
+                "run_status": "blocked",
+                "items": items_str,
+                "audience": audience,
+                "topic": topic_hint,
+                "error_message": str(exc),
+            }
         except Exception:
             import traceback
             last_error = traceback.format_exc()
             logger.exception("  执行异常")
+        finally:
+            if not mock and session is not None:
+                await finalize_interactive_session(session, status=session_status)
 
-    return {"success": False, "items": items_str, "audience": audience, "error_message": last_error}
+    return {"success": False, "run_status": "failed", "items": items_str, "audience": audience, "error_message": last_error}
 
 
 # ---------------------------------------------------------------------------

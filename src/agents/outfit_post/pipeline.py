@@ -13,6 +13,7 @@ from ...core.pipeline_registry import PipelineRegistry
 from ...config.settings import PathConfig
 from ...utils.logger import get_logger
 from ...utils.file_ops import save_json
+from ...utils.feishu_sessions import FeishuWorkflowSession, SessionOwnershipError
 from .schemas import OutfitPostInput, OutfitPostOutput
 
 logger = get_logger(__name__)
@@ -52,6 +53,14 @@ class OutfitPostPipeline(BasePipeline[OutfitPostInput, OutfitPostOutput]):
     input_schema = OutfitPostInput
     output_schema = OutfitPostOutput
 
+    def __init__(self, interactive_session: FeishuWorkflowSession | None = None) -> None:
+        self.interactive_session = interactive_session
+
+    async def _update_session_phase(self, phase: str, summary: str) -> None:
+        if self.interactive_session is None:
+            return
+        await self.interactive_session.update_phase(phase, summary=summary)
+
     async def execute(self, input_data: OutfitPostInput) -> OutfitPostOutput:
         """执行穿搭搭配帖子工作流"""
         from .discuss import DiscussAgent
@@ -77,8 +86,10 @@ class OutfitPostPipeline(BasePipeline[OutfitPostInput, OutfitPostOutput]):
             logger.info("-" * 40)
             logger.info("Phase 1: 讨论搭配物品与收集参考图片")
             logger.info("-" * 40)
+            await self._update_session_phase("discuss", "讨论搭配物品与收集参考图片")
 
             discuss_agent = DiscussAgent()
+            discuss_agent.session = self.interactive_session
             items, ref_images, research_topic = await discuss_agent.forward(
                 output_dir=output_dir,
                 topic_hint=input_data.topic,
@@ -103,6 +114,7 @@ class OutfitPostPipeline(BasePipeline[OutfitPostInput, OutfitPostOutput]):
             logger.info("-" * 40)
             logger.info("Phase 2: 研究穿法灵感")
             logger.info("-" * 40)
+            await self._update_session_phase("research", research_topic or input_data.topic or "研究穿法灵感")
 
             research_agent = ResearchAgent()
             research = await research_agent.forward(
@@ -117,6 +129,7 @@ class OutfitPostPipeline(BasePipeline[OutfitPostInput, OutfitPostOutput]):
             logger.info("-" * 40)
             logger.info("Phase 3: 语义分组")
             logger.info("-" * 40)
+            await self._update_session_phase("grouping", research_topic or "语义分组")
 
             image_agent = ImageAgent()
             groups = await image_agent.compute_groups(
@@ -132,6 +145,7 @@ class OutfitPostPipeline(BasePipeline[OutfitPostInput, OutfitPostOutput]):
             logger.info("-" * 40)
             logger.info("Phase 4: 内容创作")
             logger.info("-" * 40)
+            await self._update_session_phase("content", "内容创作")
 
             content_agent = ContentAgent()
             content = await content_agent.forward(
@@ -146,6 +160,7 @@ class OutfitPostPipeline(BasePipeline[OutfitPostInput, OutfitPostOutput]):
             logger.info("-" * 40)
             logger.info("Phase 5: 图片生成")
             logger.info("-" * 40)
+            await self._update_session_phase("image_generation", "图片生成")
 
             image_result = await image_agent.forward(
                 content=content,
@@ -167,6 +182,7 @@ class OutfitPostPipeline(BasePipeline[OutfitPostInput, OutfitPostOutput]):
                 logger.info("-" * 40)
                 logger.info("Phase 6: 发布到小红书")
                 logger.info("-" * 40)
+                await self._update_session_phase("publish", "发布到小红书")
 
                 publisher_agent = PublisherAgent()
                 publish_result = await publisher_agent.forward(
@@ -180,6 +196,7 @@ class OutfitPostPipeline(BasePipeline[OutfitPostInput, OutfitPostOutput]):
                 logger.info("-" * 40)
                 logger.info("Phase 6: 跳过发布")
                 logger.info("-" * 40)
+                await self._update_session_phase("review_complete", "跳过发布")
 
             logger.info("=" * 60)
             logger.info("OutfitPostPipeline 执行完成")
@@ -197,6 +214,8 @@ class OutfitPostPipeline(BasePipeline[OutfitPostInput, OutfitPostOutput]):
                 output_dir=str(output_dir),
             )
 
+        except SessionOwnershipError:
+            raise
         except Exception as e:
             logger.error(f"OutfitPostPipeline 执行失败: {e}")
             import traceback

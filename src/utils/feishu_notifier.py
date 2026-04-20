@@ -13,8 +13,9 @@ import asyncio
 import json
 import threading
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import (
@@ -40,8 +41,22 @@ from lark_oapi.event.callback.model.p2_card_action_trigger import (
 
 from .logger import get_logger
 from ..config.settings import FeishuConfig, PathConfig
+from .feishu_sessions import (
+    FeishuWorkflowSession,
+    get_feishu_session_manager,
+)
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class FeishuInputEvent:
+    kind: str
+    text: str = ""
+    image_path: Path | None = None
+    phase: str | None = None
+    action: str | None = None
+    payload: dict[str, Any] | None = None
 
 
 class FeishuNotifier:
@@ -79,6 +94,8 @@ class FeishuNotifier:
             self.receive_id = FeishuConfig.CHAT_ID
             self.receive_id_type = "chat_id"
         self.chat_id = self.receive_id
+        self._session_manager = get_feishu_session_manager()
+        self._session_queues: dict[str, asyncio.Queue[FeishuInputEvent]] = {}
 
         if not self.app_id or not self.app_secret:
             logger.warning("FEISHU_APP_ID / FEISHU_APP_SECRET 未配置，飞书通知功能将不可用")
@@ -175,12 +192,7 @@ class FeishuNotifier:
                     text = str(msg.content)
                 logger.info(f"收到飞书文本消息: {text[:80]}")
                 self._record("user", "text", text)
-                asyncio.run_coroutine_threadsafe(
-                    self._reply_queue.put(text), self._loop
-                )
-                asyncio.run_coroutine_threadsafe(
-                    self._media_queue.put((text, None)), self._loop
-                )
+                self._route_text_event(chat_id=msg.chat_id or self.chat_id, text=text)
             elif msg.message_type == "image":
                 logger.debug("收到图片消息")
                 self._record("user", "image", "[图片]")
@@ -193,7 +205,7 @@ class FeishuNotifier:
                     image_key = json.loads(msg.content).get("image_key", "")
                     if image_key and msg.message_id:
                         asyncio.run_coroutine_threadsafe(
-                            self._download_and_queue_image(msg.message_id, image_key),
+                            self._download_and_queue_image(msg.message_id, image_key, msg.chat_id or self.chat_id),
                             self._loop,
                         )
                 except Exception as e:
@@ -231,15 +243,8 @@ class FeishuNotifier:
                 return resp
 
             # 普通按钮点击
-            if keyword:
-                logger.info(f"收到卡片按钮点击: {keyword}")
-                self._record("user", "button", keyword)
-                asyncio.run_coroutine_threadsafe(
-                    self._reply_queue.put(keyword), self._loop
-                )
-                asyncio.run_coroutine_threadsafe(
-                    self._media_queue.put((keyword, None)), self._loop
-                )
+            if keyword or action_value.get("control_action"):
+                self._route_card_action_value(action_value)
             resp = P2CardActionTriggerResponse()
             resp.toast = CallBackToast()
             resp.toast.type = "info"
@@ -302,6 +307,74 @@ class FeishuNotifier:
         # 等待连接建立
         await asyncio.sleep(1.5)
         logger.info("飞书 WebSocket 长连接已启动")
+
+    def _get_session_queue(self, session_id: str) -> asyncio.Queue[FeishuInputEvent]:
+        queue = self._session_queues.get(session_id)
+        if queue is None:
+            queue = asyncio.Queue()
+            self._session_queues[session_id] = queue
+        return queue
+
+    def _enqueue_session_event(self, session_id: str, event: FeishuInputEvent) -> None:
+        self._get_session_queue(session_id).put_nowait(event)
+
+    def _route_text_event(self, *, chat_id: str | None, text: str) -> None:
+        routing_state = self._session_manager.get_routing_state(chat_id or self.chat_id)
+        if routing_state is not None:
+            self._enqueue_session_event(
+                routing_state.session_id,
+                FeishuInputEvent(kind="text", text=text),
+            )
+            return
+        if self._loop is not None:
+            asyncio.run_coroutine_threadsafe(self._reply_queue.put(text), self._loop)
+            asyncio.run_coroutine_threadsafe(self._media_queue.put((text, None)), self._loop)
+        else:
+            self._reply_queue.put_nowait(text)
+            self._media_queue.put_nowait((text, None))
+
+    def _route_card_action_value(self, action_value: dict[str, Any]) -> None:
+        chat_id = action_value.get("chat_id") or self.chat_id
+        control_action = action_value.get("control_action")
+        if control_action:
+            challenger_session_id = action_value.get("challenger_session_id", "")
+            if challenger_session_id and chat_id:
+                self._session_manager.resolve_challenger(
+                    chat_id=chat_id,
+                    challenger_session_id=challenger_session_id,
+                    action=control_action,
+                )
+            return
+
+        keyword = action_value.get("keyword", "")
+        session_id = action_value.get("session_id", "")
+        phase = action_value.get("phase")
+        if keyword:
+            logger.info(f"收到卡片按钮点击: {keyword}")
+            self._record("user", "button", keyword)
+        if session_id:
+            routing_state = self._session_manager.get_routing_state(chat_id)
+            if routing_state is None or routing_state.session_id != session_id:
+                logger.info("忽略过期/非当前会话按钮: %s", session_id)
+                return
+            self._enqueue_session_event(
+                session_id,
+                FeishuInputEvent(
+                    kind="button",
+                    text=keyword,
+                    phase=phase,
+                    action=action_value.get("action"),
+                    payload=dict(action_value),
+                ),
+            )
+            return
+
+        if self._loop is not None:
+            asyncio.run_coroutine_threadsafe(self._reply_queue.put(keyword), self._loop)
+            asyncio.run_coroutine_threadsafe(self._media_queue.put((keyword, None)), self._loop)
+        else:
+            self._reply_queue.put_nowait(keyword)
+            self._media_queue.put_nowait((keyword, None))
 
     async def stop_polling(self):
         """停止 WebSocket 连接"""
@@ -482,6 +555,239 @@ class FeishuNotifier:
         except Exception as e:
             logger.error(f"发送卡片失败: {e}")
             return None
+
+    def _inject_session_button_values(
+        self,
+        node: Any,
+        *,
+        session: FeishuWorkflowSession,
+        phase: str,
+    ) -> Any:
+        if isinstance(node, list):
+            return [self._inject_session_button_values(item, session=session, phase=phase) for item in node]
+        if isinstance(node, dict):
+            updated = dict(node)
+            if updated.get("tag") == "button":
+                value = dict(updated.get("value") or {})
+                value.setdefault("action", "button")
+                value["session_id"] = session.handle.session_id
+                value["chat_id"] = session.chat_id
+                value["phase"] = phase
+                updated["value"] = value
+            for key, value in list(updated.items()):
+                if isinstance(value, (list, dict)):
+                    updated[key] = self._inject_session_button_values(value, session=session, phase=phase)
+            return updated
+        return node
+
+    async def send_session_message(
+        self,
+        session: FeishuWorkflowSession,
+        text: str,
+        *,
+        phase: str | None = None,
+        summary: str | None = None,
+    ) -> Optional[str]:
+        await session.ensure_active()
+        if phase is not None:
+            await session.update_phase(phase, summary=summary)
+        return await self.send_message(text, chat_id=session.chat_id)
+
+    async def send_session_card_message(
+        self,
+        session: FeishuWorkflowSession,
+        text: str,
+        buttons: list[tuple[str, str]],
+        *,
+        phase: str,
+        summary: str | None = None,
+    ) -> Optional[str]:
+        await session.ensure_active()
+        await session.update_phase(phase, summary=summary)
+        actions = []
+        for label, keyword in buttons:
+            btn_type = "danger" if keyword in ("跳过",) else (
+                "primary" if keyword in ("完成",) else "default"
+            )
+            actions.append({
+                "tag": "button",
+                "text": {"tag": "plain_text", "content": label},
+                "type": btn_type,
+                "value": {
+                    "action": "button",
+                    "keyword": keyword,
+                    "session_id": session.handle.session_id,
+                    "chat_id": session.chat_id,
+                    "phase": phase,
+                },
+            })
+
+        card = {
+            "elements": [
+                {"tag": "markdown", "content": text},
+                {"tag": "action", "actions": actions},
+            ],
+        }
+        return await self.send_card_message_raw(card, chat_id=session.chat_id)
+
+    async def send_session_card_message_raw(
+        self,
+        session: FeishuWorkflowSession,
+        card: dict,
+        *,
+        phase: str,
+        summary: str | None = None,
+    ) -> Optional[str]:
+        await session.ensure_active()
+        await session.update_phase(phase, summary=summary)
+        patched = self._inject_session_button_values(card, session=session, phase=phase)
+        return await self.send_card_message_raw(patched, chat_id=session.chat_id)
+
+    async def wait_for_session_image_or_text(
+        self,
+        session: FeishuWorkflowSession,
+        *,
+        phase: str,
+        summary: str | None = None,
+    ) -> tuple[Path | None, str]:
+        if self.client is None:
+            return None, ""
+
+        if self._polling_thread is None:
+            await self.start_polling()
+
+        await session.update_phase(phase, summary=summary)
+        queue = self._get_session_queue(session.handle.session_id)
+        while True:
+            await session.ensure_active()
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=1.0)
+            except asyncio.TimeoutError:
+                continue
+            if event.kind == "button" and event.phase and event.phase != phase:
+                logger.info("忽略旧阶段按钮事件: expected=%s actual=%s", phase, event.phase)
+                continue
+            return event.image_path, event.text
+
+    async def collect_session_images(
+        self,
+        session: FeishuWorkflowSession,
+        *,
+        phase: str,
+        prompt: str,
+        save_dir: Path,
+        done_keyword: str = "完成",
+        skip_keyword: str = "跳过",
+        next_keyword: str = "下一个",
+        next_group_keyword: str = "",
+        max_images: int = 5,
+        summary: str | None = None,
+    ) -> tuple[list[Path], str]:
+        buttons: list[tuple[str, str]] = []
+        if next_keyword:
+            buttons.append((next_keyword, next_keyword))
+        if next_group_keyword:
+            buttons.append((next_group_keyword, next_group_keyword))
+        if skip_keyword:
+            buttons.append((skip_keyword, skip_keyword))
+        if done_keyword:
+            buttons.append((done_keyword, done_keyword))
+
+        if buttons:
+            await self.send_session_card_message(
+                session,
+                prompt,
+                buttons,
+                phase=phase,
+                summary=summary,
+            )
+        else:
+            await self.send_session_message(session, prompt, phase=phase, summary=summary)
+
+        collected: list[Path] = []
+        while len(collected) < max_images:
+            image_path, text = await self.wait_for_session_image_or_text(
+                session,
+                phase=phase,
+                summary=summary,
+            )
+            if image_path is not None:
+                dest = save_dir / f"ref_{len(collected) + 1:03d}{image_path.suffix or '.jpg'}"
+                import shutil
+
+                shutil.copy2(image_path, dest)
+                collected.append(dest)
+                logger.debug(f"收集参考图片 {len(collected)}: {dest}")
+                continue
+
+            text_lower = text.strip().lower()
+            if text_lower == done_keyword or text == done_keyword:
+                return collected, "done"
+            if text_lower == skip_keyword or text == skip_keyword:
+                return collected, "skip"
+            if text_lower == next_keyword or text == next_keyword:
+                return collected, "next"
+            if next_group_keyword and (text_lower == next_group_keyword or text == next_group_keyword):
+                return collected, "next_group"
+
+            logger.debug(f"收到未知文本回复: {text}, 继续等待图片")
+
+        return collected, "max_reached"
+
+    async def send_takeover_control_card(
+        self,
+        *,
+        chat_id: str,
+        workflow: str,
+        challenger_session_id: str,
+        active_workflow: str,
+        active_phase: str,
+        active_summary: str,
+        active_started_at: str,
+        active_heartbeat_at: str,
+    ) -> Optional[str]:
+        card = {
+            "elements": [
+                {
+                    "tag": "markdown",
+                    "content": (
+                        f"**⚠️ 检测到活跃交互会话**\n\n"
+                        f"当前工作流: {active_workflow}\n"
+                        f"当前阶段: {active_phase}\n"
+                        f"摘要: {active_summary or '无'}\n"
+                        f"开始时间: {active_started_at}\n"
+                        f"最近心跳: {active_heartbeat_at}\n\n"
+                        f"新请求工作流: {workflow}"
+                    ),
+                },
+                {
+                    "tag": "action",
+                    "actions": [
+                        {
+                            "tag": "button",
+                            "text": {"tag": "plain_text", "content": "继续当前会话"},
+                            "type": "default",
+                            "value": {
+                                "control_action": "continue_existing",
+                                "challenger_session_id": challenger_session_id,
+                                "chat_id": chat_id,
+                            },
+                        },
+                        {
+                            "tag": "button",
+                            "text": {"tag": "plain_text", "content": "接管旧会话"},
+                            "type": "primary",
+                            "value": {
+                                "control_action": "takeover",
+                                "challenger_session_id": challenger_session_id,
+                                "chat_id": chat_id,
+                            },
+                        },
+                    ],
+                },
+            ],
+        }
+        return await self.send_card_message_raw(card, chat_id=chat_id)
 
     async def update_card_message(
         self,
@@ -971,7 +1277,7 @@ class FeishuNotifier:
     # 图片下载与多媒体等待
     # ------------------------------------------------------------------
 
-    async def _download_and_queue_image(self, message_id: str, image_key: str) -> None:
+    async def _download_and_queue_image(self, message_id: str, image_key: str, chat_id: str | None = None) -> None:
         """Download image from Feishu and put path in media queue"""
         try:
             from lark_oapi.api.im.v1 import GetMessageResourceRequest
@@ -996,7 +1302,14 @@ class FeishuNotifier:
                 # response.file is a file-like object
                 save_path.write_bytes(response.file.read())
                 logger.debug(f"飞书图片已下载: {save_path}")
-                await self._media_queue.put(("", save_path))
+                routing_state = self._session_manager.get_routing_state(chat_id or self.chat_id)
+                if routing_state is not None:
+                    self._enqueue_session_event(
+                        routing_state.session_id,
+                        FeishuInputEvent(kind="image", image_path=save_path),
+                    )
+                else:
+                    await self._media_queue.put(("", save_path))
             else:
                 logger.warning(f"下载飞书图片失败: code={response.code}, msg={response.msg}")
                 await self._media_queue.put(("[IMAGE_DOWNLOAD_FAILED]", None))

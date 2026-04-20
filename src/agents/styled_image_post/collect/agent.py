@@ -18,6 +18,7 @@ from ....utils.providers import get_text_model
 from ....utils.feishu_notifier import get_feishu_notifier
 from ....utils.logger import get_logger
 from ....config.settings import ReferenceImageConfig
+from ....utils.feishu_sessions import FeishuWorkflowSession
 from .prompts import recommendation_system_prompt, recommendation_user_prompt
 
 logger = get_logger(__name__)
@@ -37,6 +38,7 @@ class CollectAgent(BaseAgent):
 
     def init_tools(self) -> None:
         self.notifier = get_feishu_notifier()
+        self.session: FeishuWorkflowSession | None = None
 
     def init_agent(self) -> None:
         model = get_text_model()
@@ -157,10 +159,16 @@ class CollectAgent(BaseAgent):
 
         # 交互循环
         while True:
-            image_path, text = await self.notifier.wait_for_image_or_text()
+            image_path, text = await self._wait_for_image_or_text(
+                phase="confirm_recommendations",
+                summary=topic,
+            )
 
             if image_path is not None:
-                await self.notifier.send_message("当前是确认推荐列表阶段，请先确认列表后再发送图片")
+                await self._send_message(
+                    "当前是确认推荐列表阶段，请先确认列表后再发送图片",
+                    phase="confirm_recommendations",
+                )
                 continue
 
             text = text.strip()
@@ -181,7 +189,7 @@ class CollectAgent(BaseAgent):
                     removed = items.pop(idx)
                     logger.info("用户删除推荐物品: %s", removed.name)
                     if not items:
-                        await self.notifier.send_message("推荐列表已清空")
+                        await self._send_message("推荐列表已清空", phase="confirm_recommendations")
                         return []
                     # 发送新卡片（App 端不支持原地刷新）
                     await self._send_recommendation_card(items, topic)
@@ -199,7 +207,7 @@ class CollectAgent(BaseAgent):
                     if 0 <= idx < len(items):
                         items.pop(idx)
                 if not items:
-                    await self.notifier.send_message("推荐列表已清空")
+                    await self._send_message("推荐列表已清空", phase="confirm_recommendations")
                     return []
                 await self._send_recommendation_card(items, topic)
                 continue
@@ -281,7 +289,11 @@ class CollectAgent(BaseAgent):
         if self.notifier.client is None:
             return None
         card = self._build_recommendation_card(items, topic)
-        return await self.notifier.send_card_message_raw(card)
+        return await self._send_card_message_raw(
+            card,
+            phase="confirm_recommendations",
+            summary=topic,
+        )
 
     # ========================================================================
     # Phase 3: 收集参考图片
@@ -305,7 +317,9 @@ class CollectAgent(BaseAgent):
             item_dir.mkdir(parents=True, exist_ok=True)
 
             prompt = self._build_item_prompt(item, item_idx, total_items)
-            images, stop_reason = await self.notifier.collect_images(
+            phase = f"collect_reference_images_{item_idx}"
+            images, stop_reason = await self._collect_images(
+                phase=phase,
                 prompt=prompt,
                 save_dir=item_dir,
                 done_keyword="完成",
@@ -323,7 +337,8 @@ class CollectAgent(BaseAgent):
                     f'**⚠️ 还没有收到「{item.name}」的参考图片**\n'
                     f'点击"确定"跳过，或发送图片继续'
                 )
-                more_images, reason2 = await self.notifier.collect_images(
+                more_images, reason2 = await self._collect_images(
+                    phase=phase,
                     prompt=confirm_msg,
                     save_dir=item_dir,
                     done_keyword="完成",
@@ -375,3 +390,81 @@ class CollectAgent(BaseAgent):
         for q in item.visual_questions:
             lines.append(f"   - {q}")
         return "\n".join(lines)
+
+    async def _send_message(
+        self,
+        text: str,
+        *,
+        phase: str,
+        summary: str | None = None,
+    ) -> str | None:
+        if self.session is not None and hasattr(self.notifier, "send_session_message"):
+            return await self.notifier.send_session_message(
+                self.session,
+                text,
+                phase=phase,
+                summary=summary,
+            )
+        return await self.notifier.send_message(text)
+
+    async def _send_card_message_raw(
+        self,
+        card: dict,
+        *,
+        phase: str,
+        summary: str | None = None,
+    ) -> str | None:
+        if self.session is not None and hasattr(self.notifier, "send_session_card_message_raw"):
+            return await self.notifier.send_session_card_message_raw(
+                self.session,
+                card,
+                phase=phase,
+                summary=summary,
+            )
+        return await self.notifier.send_card_message_raw(card)
+
+    async def _wait_for_image_or_text(
+        self,
+        *,
+        phase: str,
+        summary: str | None = None,
+    ) -> tuple[Path | None, str]:
+        if self.session is not None and hasattr(self.notifier, "wait_for_session_image_or_text"):
+            return await self.notifier.wait_for_session_image_or_text(
+                self.session,
+                phase=phase,
+                summary=summary,
+            )
+        return await self.notifier.wait_for_image_or_text()
+
+    async def _collect_images(
+        self,
+        *,
+        phase: str,
+        prompt: str,
+        save_dir: Path,
+        done_keyword: str = "完成",
+        skip_keyword: str = "跳过",
+        next_keyword: str = "下一个",
+        max_images: int,
+    ) -> tuple[list[Path], str]:
+        if self.session is not None and hasattr(self.notifier, "collect_session_images"):
+            return await self.notifier.collect_session_images(
+                self.session,
+                phase=phase,
+                prompt=prompt,
+                save_dir=save_dir,
+                done_keyword=done_keyword,
+                skip_keyword=skip_keyword,
+                next_keyword=next_keyword,
+                max_images=max_images,
+                summary=prompt,
+            )
+        return await self.notifier.collect_images(
+            prompt=prompt,
+            save_dir=save_dir,
+            done_keyword=done_keyword,
+            skip_keyword=skip_keyword,
+            next_keyword=next_keyword,
+            max_images=max_images,
+        )
