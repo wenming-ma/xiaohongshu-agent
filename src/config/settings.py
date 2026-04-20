@@ -107,6 +107,7 @@ class APIConfig:
     MINIMAX_ANTHROPIC_BASE_URL = _resolve_minimax_anthropic_base_url()
     MINIMAX_OPENAI_BASE_URL = _resolve_minimax_openai_base_url()
     GOOGLE_MODEL = os.getenv("GOOGLE_MODEL", "gemini-2.5-flash")
+    GOOGLE_VISION_MODEL = os.getenv("GOOGLE_VISION_MODEL", "gemini-2.5-pro")
     MODEL_PROVIDER = os.getenv("MODEL_PROVIDER", "minimax")
     GEMINI_URL = os.getenv("GEMINI_URL", "https://gemini.google.com/app")
     _GEMINI_ALL_KEYS = _split_csv_env("GEMINI_API_KEY")

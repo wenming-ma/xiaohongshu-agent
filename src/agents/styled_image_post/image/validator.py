@@ -30,7 +30,7 @@ class ImageQualityValidator(ExternalValidator):
         if self._agent is None:
             from ....config.settings import RetryConfig
             self._agent = Agent(
-                model=get_google_model("gemini-2.5-pro"),
+                model=get_google_model(APIConfig.GOOGLE_VISION_MODEL),
                 output_type=ImageQualityReview,
                 instrument=True,
                 retries=RetryConfig.AGENT_RETRIES,

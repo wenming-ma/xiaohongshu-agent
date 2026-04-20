@@ -83,7 +83,7 @@ class ImageReaderAgent:
 
     def __init__(self):
         self._agent = Agent(
-            model=get_google_model(),
+            model=get_google_model(APIConfig.GOOGLE_VISION_MODEL),
             output_type=ImageReadResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
@@ -189,7 +189,7 @@ class PostImageReaderAgent:
 
         # 视觉分析 Agent（Google 模型，用于 OCR + 理解）
         self._vision_agent = Agent(
-            model=get_google_model(),
+            model=get_google_model(APIConfig.GOOGLE_VISION_MODEL),
             output_type=ImageReadResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
