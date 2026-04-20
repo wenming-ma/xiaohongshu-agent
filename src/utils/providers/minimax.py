@@ -5,7 +5,7 @@ MiniMax Model 工厂
 使用 pydantic-ai 的 Anthropic 兼容层（MiniMax 官方 Anthropic 端点）：
 - 支持 MiniMax-M2.7 模型
 - 支持 Tool Use & Interleaved Thinking
-- Base URL: https://api.minimaxi.com/anthropic
+- Base URL: https://api.minimax.io/anthropic
 """
 import os
 import logging

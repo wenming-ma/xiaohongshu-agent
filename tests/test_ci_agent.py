@@ -187,7 +187,7 @@ def test_cluster_config_prefers_minimax_openai_base_url(tmp_path: Path, monkeypa
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / ".env").write_text(
-        "MINIMAX_ANTHROPIC_BASE_URL=https://api.minimaxi.com/anthropic\n"
+        "MINIMAX_ANTHROPIC_BASE_URL=https://api.minimax.io/anthropic\n"
         "MINIMAX_OPENAI_BASE_URL=https://api.minimaxi.com/v1\n",
         encoding="utf-8",
     )

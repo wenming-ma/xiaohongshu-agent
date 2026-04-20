@@ -14,7 +14,7 @@ IMAGE_SYSTEM_PROMPT = """# 角色定义
 #### 1️⃣ 人物特写风格（适合：人物故事、情感共鸣、生活方式）
 - **场景**：博主自拍、街拍、生活瞬间、工作场景、运动健身
 - **特点**：真实人物、自然表情、生活化场景、情感共鸣
-- **技术关键词**：portrait photography, candid shot, natural expression, lifestyle photography, shot on Sony A7IV with 85mm f/1.4 lens, shallow depth of field, natural window light, genuine emotion, visible skin pores, subtle under-eye texture, natural skin imperfections, slight hair flyaways, caught mid-gesture, unposed moment, Kodak Portra 400 color science
+- **技术关键词**：portrait photography, candid shot, natural expression, lifestyle photography, shot on Sony A7IV with 85mm f/1.4 lens, shallow depth of field, natural window light, genuine emotion, visible skin pores, healthy natural skin texture, bright eyes, slight hair flyaways, engaged expression, upright relaxed posture, Kodak Portra 400 color science
 
 #### 2️⃣ 写实美景风格（适合：旅行攻略、城市探索、自然风光、打卡推荐）
 - **场景**：风景名胜、城市街景、自然风光、建筑摄影、日出日落
@@ -96,7 +96,7 @@ Gemini 的核心优势是语言理解力，用完整的场景描述段落远优�
 - **相机型号**：Sony A7IV, Canon EOS R5, Nikon Z9, Fujifilm X-T5, Leica M11
 - **镜头参数**：85mm f/1.4, 50mm f/1.8, 35mm f/2, 24mm f/2.8, 90mm macro
 - **光圈效果**：specify aperture for bokeh depth (f/1.4 for creamy blur, f/8 for sharp throughout)
-- **示例**："captured handheld on a Sony A7IV with 85mm f/1.4 lens, slight motion softness at edges"
+- **示例**："captured handheld on a Sony A7IV with 85mm f/1.4 lens, crisp focus on the eyes with natural depth falloff"
 
 ### 🎞️ 胶片质感模拟（写实风格强烈推荐）
 引用真实胶片型号，让 AI 复刻模拟色彩科学和有机颗粒感：
@@ -106,7 +106,7 @@ Gemini 的核心优势是语言理解力，用完整的场景描述段落远优�
 
 ### 🔍 自然瑕疵（打破AI的"完美感"，极其关键）
 真实照片总有细微瑕疵，这些瑕疵反而让画面更可信：
-- **人物**：visible skin pores, subtle under-eye texture, slight uneven skin tone, slight facial asymmetry, stray hair flyaways, genuine laugh lines
+- **人物**：visible skin pores, healthy natural skin texture, subtle tonal variation, stray hair flyaways, genuine laugh lines, bright eyes
 - **环境**：chipped paint, cracked pavement, dust on surfaces, water stains, scratched metal, worn edges, peeling stickers
 - **食物**：crumbs scattered naturally, uneven plating, condensation on glass, sauce drips
 - **光线**：mixed color temperature (warm lamp + cool daylight), uneven light falloff, natural lens flare, slight overexposure in highlights
@@ -126,7 +126,7 @@ Gemini 的核心优势是语言理解力，用完整的场景描述段落远优�
 - **技巧**：描述光线的方向和衰减，如"warm afternoon light streaming from the left, casting long gentle shadows"
 
 ### 📐 构图策略（打破对称）
-- **推荐**：slightly off-center subject, natural leading lines, rule of thirds placement, candid unposed angles
+- **推荐**：slightly off-center subject, natural leading lines, rule of thirds placement, candid but alert angles
 - **避免**：perfectly centered composition, mathematically symmetrical layout
 - **技巧**：加入"captured from a slightly low angle"或"shot at eye level with slight tilt"等自然机位描述
 
@@ -135,8 +135,10 @@ Gemini 的核心优势是语言理解力，用完整的场景描述段落远优�
 当图片中需要出现人物时，除非用户有特殊要求，默认使用以下设定：
 - **种族**：Asian（亚洲人）
 - **气质**：confident, beautiful/handsome, approachable（自信、漂亮/帅气、亲和力强）
-- **表情**：natural smile, genuine expression, warm and inviting（自然微笑、真实表情、温暖亲切）
-- **关键词**：Asian woman/man, beautiful, confident, radiant, elegant, stylish
+- **表情**：natural smile, lively expression, bright eyes, warm and inviting（自然微笑、有精神的表情、眼神清亮、温暖亲切）
+- **姿态**：upright relaxed posture, responsive body language, energetic presence（姿态放松但挺拔，有回应感，有精神）
+- **避免**：avoid tired or sleepy expressions, drooping eyelids, hollow under-eye shadows, slumped posture（避免疲惫困倦、眼皮耷拉、明显黑眼圈阴影、含胸驼背）
+- **关键词**：Asian woman/man, beautiful, confident, radiant, bright eyes, elegant, stylish
 
 ## 🔴 提示词写作方法（极其重要）
 
@@ -149,7 +151,7 @@ photorealistic, portrait, Asian woman, 85mm, bokeh, golden hour, natural skin, f
 
 ### ✅ 好的提示词（叙事性描述）
 ```
-A candid photograph of a young Asian woman captured mid-laugh at a sunlit café terrace. Shot on a Sony A7IV with an 85mm f/1.4 lens, the background melts into a creamy bokeh of warm city lights. Late afternoon golden hour sunlight streams from the left, casting a gentle Rembrandt triangle on her cheek. Her skin shows natural texture—visible pores, slight uneven skin tone on her cheeks, subtle under-eye shadows. A few stray hairs catch the backlight. The color grading has the warm, slightly desaturated tones of Kodak Portra 400 film stock, with fine organic grain visible in the shadow areas. She wears a slightly wrinkled linen blouse; a half-finished iced coffee with condensation dripping down the glass sits on the weathered wooden table beside her. The composition is slightly off-center, as if the photographer captured this genuine moment from across the table.
+A candid photograph of a young Asian woman captured mid-laugh at a sunlit café terrace. Shot on a Sony A7IV with an 85mm f/1.4 lens, the background melts into a creamy bokeh of warm city lights. Late afternoon golden hour sunlight streams from the left, casting a gentle Rembrandt triangle on her cheek. Her skin shows natural texture with visible pores, healthy tonal variation, and a fresh natural glow. Her bright eyes and lively expression make the frame feel warm, responsive, and fully present. A few stray hairs catch the backlight. The color grading has the warm, clean tones of Kodak Portra 400 film stock, with fine organic grain visible in the shadow areas. She wears a softly textured linen blouse; a freshly served iced coffee with light condensation sits on the sunlit wooden table beside her. The composition is slightly off-center, giving the scene candid energy while keeping her posture upright and relaxed.
 ```
 
 ## 输出格式
@@ -174,6 +176,7 @@ IMAGE_USER_PROMPT_TEMPLATE = """## 配图生成任务
 - **只为上述 {image_type} 生成一个 Gemini 提示词**，不要生成其他图片的提示词
 - 根据话题选择最合适的视觉风格（参考系统提示中的风格类型），不要默认使用信息图
 - 写实风格务必用叙事性段落描述，加入相机/镜头参数、自然瑕疵、真实光线方向
+- 如果画面里有人物，优先写清 bright eyes、lively expression、upright relaxed posture；避免 tired、sleepy、listless、slumped posture 一类描述
 - 禁止在写实提示词中使用 perfect/flawless/symmetrical 等词
 - 直接输出提示词，不要输出风格分析或解释
 """
@@ -336,6 +339,7 @@ IMAGE_QUALITY_REVIEW_SYSTEM_PROMPT = """# 角色定义
 - 色彩过度饱和或过于鲜艳
 - 物体表面无任何磨损/使用痕迹
 - 背景虚化过于均匀完美（真实镜头的虚化有光学特征）
+- 人物显得没精神、眼神涣散、眼皮耷拉、明显疲惫或含胸驼背，且主题并未明确要求这种状态
 
 ### 3. 图片比例 (aspect_ratio_correct: bool)
 
@@ -406,6 +410,7 @@ IMAGE_QUALITY_REVIEW_USER_PROMPT_TEMPLATE = """## 图片质量验证任务
    - 图片视觉效果是否有吸引力？
    - 是否适合在小红书发布？
    - 根据实际风格评判：摄影看真实感，插画看设计感，信息图看排版
+   - 如果画面里有人物，人物应自然但有精神，避免明显疲态、困倦感或松垮站姿
    - 评分 0-100
 
 3. **图片比例** (aspect_ratio_correct)

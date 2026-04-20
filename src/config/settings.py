@@ -25,7 +25,7 @@ def _resolve_minimax_anthropic_base_url() -> str:
         if "anthropic" in lowered or "claude" in lowered:
             return legacy
 
-    return "https://api.minimaxi.com/anthropic"
+    return "https://api.minimax.io/anthropic"
 
 
 def _resolve_minimax_openai_base_url() -> str:
