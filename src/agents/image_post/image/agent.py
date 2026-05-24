@@ -37,6 +37,7 @@ from .prompts import (
     image_grouping_system_prompt,
     image_grouping_review_system_prompt,
 )
+from .template_agent import ImagePromptTemplateAgent, format_template_guidance
 from ..utils.image import (
     build_compact_items,
     calculate_grouping_params,
@@ -81,6 +82,7 @@ class ImageAgent(BaseAgent):
             max_retries=RetryConfig.MAX_RETRIES,
             initial_delay=2.0
         )
+        self.template_selector = ImagePromptTemplateAgent()
 
     def init_agent(self) -> None:
         """初始化所有 Agent"""
@@ -149,6 +151,9 @@ class ImageAgent(BaseAgent):
             return []
 
         target_groups, target_group_size, max_group_size_cap = calculate_grouping_params(item_count)
+        if target_groups <= 0:
+            logger.info("详情图数量配置为 0，跳过语义分组")
+            return []
         compact_items = build_compact_items(research.items or [])
 
         return await run_grouping_with_review(
@@ -352,11 +357,43 @@ class ImageAgent(BaseAgent):
             image_desc=image_desc,
         )
 
+        template_guidance = await self._select_template_guidance(
+            content=content,
+            research=research,
+            topic=topic,
+            image_spec=image_spec,
+        )
+        if template_guidance:
+            user_prompt += "\n\n" + template_guidance
+
         if gen_ctx.validation_feedback:
             logger.info("根据验证反馈重新生成提示词: %s", gen_ctx.validation_feedback[:100])
 
         result = await self.prompt_generator.run(user_prompt, deps=gen_ctx)
         return result.output
+
+    async def _select_template_guidance(
+        self,
+        *,
+        content: XHSContent,
+        research: ResearchResult,
+        topic: str,
+        image_spec: ImageTypeSpec,
+    ) -> str:
+        selector = getattr(self, "template_selector", None)
+        if selector is None:
+            return ""
+        try:
+            selection = await selector.select_template(
+                topic=topic,
+                content=content,
+                research=research,
+                image_spec=image_spec,
+            )
+        except Exception as exc:
+            logger.warning("动态提示词模板选择失败，回退固定提示词: %s", exc)
+            return ""
+        return format_template_guidance(selection)
 
     async def generate_via_api(
         self,

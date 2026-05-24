@@ -19,10 +19,13 @@ nul
 # Generated outputs (e.g., Playwright downloads)
 output/
 /test_*
+workshop/image_post/image_post_summary_*.json
+workshop/image_post/image_post_failed_*.json
 *.xlsx
 
 # Local tool state
 .cache/
+.prompt-template-repos/
 .claude/
 .cursor/
 .serena/

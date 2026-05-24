@@ -16,6 +16,7 @@ import asyncio
 import io
 import json
 import sys
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -26,7 +27,10 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-if sys.platform == "win32":
+def configure_windows_stdio() -> None:
+    """Use UTF-8 console streams when this script is executed directly on Windows."""
+    if sys.platform != "win32":
+        return
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
@@ -43,6 +47,7 @@ logfire.configure(
 logfire.instrument_pydantic_ai()
 
 from src.agents.image_post import XHSImagePostInput, XHSImagePostPipeline  # noqa: E402
+from src.config.settings import ImageConfig, ResearchConfig, RetryConfig, ReviewConfig  # noqa: E402
 from src.utils.logger import get_logger, setup_logging  # noqa: E402
 from src.utils.feishu_notifier import get_feishu_notifier  # noqa: E402
 
@@ -74,6 +79,30 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 FEISHU_MAX_TEXT_LEN = 3500
+
+SMOKE_TEST_CONFIG_OVERRIDES = (
+    (ResearchConfig, "MIN_POSTS_RESEARCHED", 1),
+    (ResearchConfig, "VALIDATION_MAX_RETRIES", 1),
+    (ReviewConfig, "MAX_ITERATIONS", 1),
+    (ImageConfig, "GROUPING_REVIEW_MAX_RETRIES", 1),
+    (ImageConfig, "MIN_DETAIL_IMAGES", 0),
+    (ImageConfig, "MAX_DETAIL_IMAGES", 0),
+    (RetryConfig, "MAX_RETRIES", 1),
+    (RetryConfig, "AGENT_RETRIES", 1),
+)
+
+
+@contextmanager
+def temporary_config_overrides(overrides: tuple[tuple[type, str, Any], ...]):
+    """Temporarily override mutable runtime config class attributes."""
+    originals = [(config_cls, name, getattr(config_cls, name)) for config_cls, name, _ in overrides]
+    try:
+        for config_cls, name, value in overrides:
+            setattr(config_cls, name, value)
+        yield
+    finally:
+        for config_cls, name, value in originals:
+            setattr(config_cls, name, value)
 
 
 async def send_content_to_feishu(result: Any, topic: str) -> None:
@@ -197,6 +226,16 @@ async def run_single(
 # ---------------------------------------------------------------------------
 
 async def run_batch(args: argparse.Namespace) -> int:
+    if getattr(args, "smoke_test", False):
+        logger.warning(
+            "启用 image_post smoke-test 模式：降低研究/审核/分组/图片重试参数，仅用于快速验链路"
+        )
+        with temporary_config_overrides(SMOKE_TEST_CONFIG_OVERRIDES):
+            return await _run_batch(args)
+    return await _run_batch(args)
+
+
+async def _run_batch(args: argparse.Namespace) -> int:
     topics = load_topics(args.topics_file)
 
     # 切片: start_index 是 1-based
@@ -281,10 +320,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-feishu", action="store_true", default=False, help="禁用飞书通知")
     p.add_argument("--publish", action="store_true", default=False, help="发布到小红书（默认仅发送到飞书审核）")
     p.add_argument("--feishu-only", action="store_true", help="兼容参数：仅生成内容并发送到飞书审核")
+    p.add_argument("--smoke-test", action="store_true", help="快速验链路：临时降低研究/审核/分组/图片重试参数")
     return p.parse_args()
 
 
 def main() -> None:
+    configure_windows_stdio()
     args = parse_args()
     exit_code = asyncio.run(run_batch(args))
     raise SystemExit(exit_code)

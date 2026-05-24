@@ -112,21 +112,28 @@ class ImageQualityValidator(ExternalValidator):
         if not isinstance(indices, list) or not indices:
             return "\n".join(parts) if parts else "（未提供）"
 
-        key_infos = getattr(research, "key_infos", None) if research is not None else None
-        if not isinstance(key_infos, list) or not key_infos:
+        research_items = getattr(research, "items", None) if research is not None else None
+        if not isinstance(research_items, list) or not research_items:
             return "\n".join(parts) if parts else "（未提供）"
 
-        selected_infos: list[dict] = []
+        selected_infos: list[tuple[str, str]] = []
         for idx in indices:
-            if isinstance(idx, int) and 0 <= idx < len(key_infos):
-                info = key_infos[idx]
-                if isinstance(info, dict):
-                    selected_infos.append(info)
+            if isinstance(idx, int) and 0 <= idx < len(research_items):
+                item = research_items[idx]
+                if hasattr(item, "title"):
+                    selected_infos.append((item.title, item.content))
+                elif isinstance(item, dict):
+                    selected_infos.append(
+                        (
+                            item.get("title", item.get("name", "未知")),
+                            item.get("content", item.get("description", item.get("detail", ""))),
+                        )
+                    )
 
         if selected_infos:
             infos_text = "\n".join(
-                f"{i+1}. {info.get('name', '未知')}: {info.get('description', info.get('detail', ''))}"
-                for i, info in enumerate(selected_infos)
+                f"{i+1}. {title or '未知'}: {text or ''}"
+                for i, (title, text) in enumerate(selected_infos)
             )
             parts.append(f"本图必须覆盖的关键信息（共 {len(selected_infos)} 条）：\n{infos_text}")
 

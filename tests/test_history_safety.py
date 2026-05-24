@@ -646,12 +646,11 @@ def test_video_research_state_drops_out_of_order_tool_result_even_if_id_matches_
     filtered = state.get_recent_history(2)
     tool_call_ids, tool_return_ids = _collect_tool_call_ids(filtered)
 
-    assert filtered == [
-        state.message_history[0],
-        state.message_history[1],
-        ModelRequest(parts=[UserPromptPart(content="第二次搜索")]),
-        state.message_history[4],
-    ]
+    assert filtered[0] == state.message_history[0]
+    assert filtered[1] == state.message_history[1]
+    assert isinstance(filtered[2], ModelRequest)
+    assert [getattr(part, "content", None) for part in filtered[2].parts] == ["第二次搜索"]
+    assert filtered[3] == state.message_history[4]
     assert tool_call_ids == set()
     assert tool_return_ids == set()
 

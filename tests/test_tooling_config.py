@@ -22,6 +22,8 @@ def test_register_pipelines_only_exposes_implemented_xiaohongshu_pipelines() -> 
     assert set(PipelineRegistry._pipelines) == {
         "xiaohongshu_article_post",
         "xiaohongshu_image_post",
+        "xiaohongshu_outfit_post",
+        "xiaohongshu_styled_image_post",
         "xiaohongshu_video_post",
     }
 
@@ -64,3 +66,13 @@ def test_shared_playwright_mcp_uses_shared_browser_session() -> None:
     assert "--user-data-dir" in args
     assert args[args.index("--user-data-dir") + 1] == str(settings.PathConfig.BROWSER_SESSION_SHARED)
     assert env["USER_DATA_DIR"] == str(settings.PathConfig.BROWSER_SESSION_SHARED)
+
+
+def test_prompt_template_root_defaults_to_project_local_directory(monkeypatch) -> None:
+    monkeypatch.delenv("PROMPT_TEMPLATE_ROOT", raising=False)
+
+    settings = importlib.reload(settings_module)
+
+    assert settings.PathConfig.PROMPT_TEMPLATE_ROOT == (
+        settings.PathConfig._PROJECT_ROOT / ".prompt-template-repos"
+    )

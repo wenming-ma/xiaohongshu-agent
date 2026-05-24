@@ -86,6 +86,7 @@ class TimeoutConfig:
 
 class PathConfig:
     _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+    PROMPT_TEMPLATE_ROOT = Path(os.getenv("PROMPT_TEMPLATE_ROOT", _PROJECT_ROOT / ".prompt-template-repos"))
     DOWNLOADS_DIR = _PROJECT_ROOT / 'output' / 'playwright-downloads'
     FEISHU_SESSION_DIR = _PROJECT_ROOT / 'output' / 'feishu-sessions'
     IMAGE_PROJECT_DIR = _PROJECT_ROOT / 'posts' / 'image-posts'
