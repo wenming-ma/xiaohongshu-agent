@@ -86,7 +86,7 @@ class ExtractAgent(BaseAgent):
         )
         urls = [
             url for url in self._extract_urls_from_payload(result)
-            if "xiaohongshu.com/" in url
+            if self._is_supported_note_page_url(url)
         ]
         return urls[0] if urls else ""
 
@@ -175,3 +175,8 @@ class ExtractAgent(BaseAgent):
         if not match:
             return ""
         return next(group for group in match.groups() if group)
+
+    @staticmethod
+    def _is_supported_note_page_url(url: str) -> bool:
+        host = urlsplit(url or "").hostname or ""
+        return host.endswith("xiaohongshu.com") or host.endswith("rednote.com")

@@ -4,23 +4,44 @@
 提供全局日志配置和模块级 logger 获取功能。
 """
 import logging
+import io
 import sys
 
 
-def setup_logging(level: int = logging.INFO) -> None:
+def _ensure_utf8_console_streams() -> None:
+    if sys.platform != "win32":
+        return
+
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name)
+        if getattr(stream, "encoding", None) and stream.encoding.lower().replace("-", "") == "utf8":
+            continue
+        buffer = getattr(stream, "buffer", None)
+        if buffer is None:
+            continue
+        setattr(
+            sys,
+            stream_name,
+            io.TextIOWrapper(buffer, encoding="utf-8", errors="replace"),
+        )
+
+
+def setup_logging(level: int = logging.INFO, *, force: bool = False) -> None:
     """
     配置全局日志格式和输出
-    
+
     Args:
         level: 日志级别，默认 INFO
     """
+    _ensure_utf8_console_streams()
     logging.basicConfig(
         level=level,
         format='%(asctime)s | %(levelname)-7s | %(name)s | %(message)s',
         datefmt='%H:%M:%S',
         handlers=[
             logging.StreamHandler(sys.stdout)
-        ]
+        ],
+        force=force,
     )
 
 

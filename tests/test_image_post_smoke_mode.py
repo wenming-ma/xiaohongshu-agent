@@ -5,7 +5,7 @@ from pathlib import Path
 
 from src.agents.image_post.image.agent import ImageAgent
 from src.agents.image_post.schemas import ResearchItem, ResearchResult, XHSImagePostOutput
-from src.config.settings import ImageConfig, ResearchConfig, RetryConfig, ReviewConfig
+from src.config.settings import ImageConfig
 
 
 def _load_workshop_module():
@@ -26,21 +26,21 @@ def test_image_post_workshop_smoke_mode_temporarily_lowers_runtime_config(monkey
         encoding="utf-8",
     )
 
-    original_min_posts = ResearchConfig.MIN_POSTS_RESEARCHED
-    original_max_detail_images = ImageConfig.MAX_DETAIL_IMAGES
+    original_min_posts = module.ResearchConfig.MIN_POSTS_RESEARCHED
+    original_max_detail_images = module.ImageConfig.MAX_DETAIL_IMAGES
     captured = {}
 
     class _FastPipeline:
         async def execute(self, input_data):
             captured.update(
                 {
-                    "min_posts": ResearchConfig.MIN_POSTS_RESEARCHED,
-                    "research_retries": ResearchConfig.VALIDATION_MAX_RETRIES,
-                    "content_iterations": ReviewConfig.MAX_ITERATIONS,
-                    "grouping_retries": ImageConfig.GROUPING_REVIEW_MAX_RETRIES,
-                    "min_detail_images": ImageConfig.MIN_DETAIL_IMAGES,
-                    "max_detail_images": ImageConfig.MAX_DETAIL_IMAGES,
-                    "image_retries": RetryConfig.MAX_RETRIES,
+                    "min_posts": module.ResearchConfig.MIN_POSTS_RESEARCHED,
+                    "research_retries": module.ResearchConfig.VALIDATION_MAX_RETRIES,
+                    "content_iterations": module.ReviewConfig.MAX_ITERATIONS,
+                    "grouping_retries": module.ImageConfig.GROUPING_REVIEW_MAX_RETRIES,
+                    "min_detail_images": module.ImageConfig.MIN_DETAIL_IMAGES,
+                    "max_detail_images": module.ImageConfig.MAX_DETAIL_IMAGES,
+                    "image_retries": module.RetryConfig.MAX_RETRIES,
                     "publish": input_data.publish,
                 }
             )
@@ -78,11 +78,11 @@ def test_image_post_workshop_smoke_mode_temporarily_lowers_runtime_config(monkey
         "grouping_retries": 1,
         "min_detail_images": 0,
         "max_detail_images": 0,
-        "image_retries": 1,
+        "image_retries": 3,
         "publish": False,
     }
-    assert ResearchConfig.MIN_POSTS_RESEARCHED == original_min_posts
-    assert ImageConfig.MAX_DETAIL_IMAGES == original_max_detail_images
+    assert module.ResearchConfig.MIN_POSTS_RESEARCHED == original_min_posts
+    assert module.ImageConfig.MAX_DETAIL_IMAGES == original_max_detail_images
 
 
 def test_image_agent_skips_grouping_when_detail_images_are_disabled(monkeypatch):

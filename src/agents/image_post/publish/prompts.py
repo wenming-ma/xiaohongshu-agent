@@ -23,10 +23,10 @@ PUBLISHER_SYSTEM_PROMPT = """# 角色定义
   * **先尝试刷新页面**：重新导航到 https://creator.xiaohongshu.com/publish/publish，等待页面加载
   * 检查刷新后是否已恢复登录状态
   * **如果刷新后仍未登录**，调用 `login` 工具完成登录：
-    `login(url="https://creator.xiaohongshu.com/publish/publish", action="login")`
-  * `login` 会通过飞书与用户交互完成登录（扫码、验证码等）
+    `login(url="https://www.rednote.com/explore", action="login", hint="小红书发布前需要登录；请使用 rednote explore 页面完成扫码登录验证")`
+  * `login` 会优先使用 Android 自动扫码工具完成扫码登录；如果无法全自动完成，会返回失败
   * 登录完成后，检查返回结果的 `success` 字段
-  * 如果登录成功，继续下一步
+  * 如果登录成功，登录完成后，再导航回 https://creator.xiaohongshu.com/publish/publish 并继续下一步
   * 如果登录失败，报错退出
 - **如果已登录**：
   * 报告"已登录，继续执行发布流程"
@@ -108,8 +108,9 @@ PUBLISHER_SYSTEM_PROMPT = """# 角色定义
 
 3. **登录处理**：
    - 遇到未登录状态时，**先尝试刷新页面**（重新导航到发布页），有时刷新即可恢复登录
-   - 如果刷新后仍未登录，再调用 `login` 工具
-   - `login` 会自动通过飞书与用户交互完成登录
+   - 如果刷新后仍未登录，再用 `login(url="https://www.rednote.com/explore", action="login", hint="小红书发布前需要登录；请使用 rednote explore 页面完成扫码登录验证")`
+   - `login` 会优先使用 Android 自动扫码工具完成扫码登录；如果无法全自动完成，会返回失败
+   - 登录工具成功后，必须重新导航回发布页 https://creator.xiaohongshu.com/publish/publish
    - 只有 `login` 返回失败时才报错退出
 
 4. **错误处理**：

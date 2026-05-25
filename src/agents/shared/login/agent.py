@@ -1,6 +1,6 @@
 """
 登录/注册工具 - Agent Delegation 模式
-通过飞书 Bot 与用户交互完成任意网站的登录或注册
+通过 Playwright 和 Android/ADB 自动完成可自动化的登录流程
 
 使用方式：
     login_tool = create_login_tool(mcp_server)
@@ -10,6 +10,7 @@ import asyncio
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from pydantic import BaseModel
 from pydantic_ai import Agent, Tool
@@ -20,14 +21,19 @@ from ....config.settings import (
     RetryConfig,
     PathConfig,
     UserProfileConfig,
-    FeishuConfig,
 )
 from ....utils.providers import get_text_model
-from ....utils.feishu_notifier import get_feishu_notifier
 from ....utils.logger import get_logger
 from ..utils.playwright_artifacts import install_playwright_artifact_guard
+from .android_qr import (
+    AndroidQrLoginAutomator,
+    AndroidQrLoginToolset,
+    build_android_qr_tool_message,
+)
 
 logger = get_logger(__name__)
+
+XHS_EXPLORE_LOGIN_URL = "https://www.rednote.com/explore"
 
 
 # ============================================================================
@@ -63,6 +69,63 @@ def _install_mcp_guard(mcp_server: MCPServerStdio) -> None:
     mcp_server.process_tool_call = wrapped
 
 
+def _normalize_login_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.hostname and (
+        parsed.hostname.endswith("xiaohongshu.com") or parsed.hostname.endswith("rednote.com")
+    ):
+        return XHS_EXPLORE_LOGIN_URL
+    return url
+
+
+def _classify_web_login_text(text: str) -> str:
+    lowered = text.lower()
+    if "ip at risk" in lowered or "安全限制" in text or "error_code=300012" in lowered:
+        return "security_error"
+    if any(token in text for token in ("Explore", "Notifications", "For you", "Me")) and not any(
+        token in lowered for token in ("scan qr", "log in", "sign up")
+    ):
+        return "logged_in"
+    if any(token in lowered for token in ("scan qr", "log in", "sign up", "login")) or any(
+        token in text for token in ("登录", "扫码", "二维码")
+    ):
+        return "login_required"
+    return "unknown"
+
+
+def _extract_state_from_report(report: str) -> str:
+    for line in report.splitlines():
+        key, _, value = line.partition("=")
+        if key.strip() == "state":
+            return value.strip() or "unknown"
+    return "unknown"
+
+
+def _build_session_auth_result(state_report: str, url: str) -> AuthResult | None:
+    state = _extract_state_from_report(state_report)
+    timestamp = datetime.now().isoformat()
+
+    if state == "logged_in":
+        return AuthResult(
+            success=True,
+            auth_type="session",
+            message="共享 Rednote 浏览器 session 已登录，无需扫码。",
+            url=url,
+            timestamp=timestamp,
+        )
+
+    if state == "security_error":
+        return AuthResult(
+            success=False,
+            auth_type="session",
+            message="Rednote 共享浏览器 session 检查命中安全限制，已停止自动登录。",
+            url=url,
+            timestamp=timestamp,
+        )
+
+    return None
+
+
 def _build_system_prompt(user_profile: dict) -> str:
     """构建系统提示词"""
     user_info = ""
@@ -85,14 +148,21 @@ def _build_system_prompt(user_profile: dict) -> str:
 ## 核心能力
 
 1. **网页操作**：使用 Playwright 工具操作浏览器
-2. **用户交互**：通过飞书消息与用户沟通，获取必要的凭证
+2. **Android 自动扫码**：通过 ADB/uiautomator2 控制用户自己的小红书 App 完成扫码确认
 
 ## 可用工具
 
-### 消息交互工具
-- `send_message_to_user(text)`: 发送消息给用户
-- `send_current_page_screenshot(caption)`: 截图当前页面并发送给用户
-- `ask_for_user_reply(prompt)`: 发送提示信息并等待用户回复。**必须传入 prompt 参数**
+### 自动扫码工具
+- `check_rednote_web_login_state()`: 打开 `https://www.rednote.com/explore` 并检查共享浏览器 session 是否已经登录
+- `try_android_qr_login_from_current_page(caption)`: 截图当前网页二维码，并通过 Android/ADB 控制小红书 App 从相册识别二维码、等待登录确认按钮可点后提交
+
+### Android 自动扫码工具
+- `inspect_android_ui()`: 查看手机当前 App/页面/可见文本状态
+- `push_qr_to_android_gallery(image_path)`: 把本地二维码截图推送到手机相册
+- `open_xhs_scanner()`: 打开小红书 App 并进入扫码页
+- `open_scanner_album()`: 打开扫码页的 Album/相册入口
+- `select_latest_album_image()`: 选择相册中的最新二维码图片
+- `submit_xhs_login_confirmation()`: 等待并点击手机端最终 Log in/登录确认按钮
 
 ### Playwright 网页操作工具
 - 导航、点击、输入、截屏等
@@ -110,18 +180,15 @@ def _build_system_prompt(user_profile: dict) -> str:
 2. 获取页面快照，分析登录方式
 3. 识别登录/注册方式（账号密码、短信验证码、扫码等）
 4. **检查并勾选协议**
-5. 如果需要用户提供信息，通过消息询问
-6. 使用获取到的信息完成登录/注册
+5. 如果是小红书扫码登录，使用 Android 自动扫码工具完成
+6. 如果需要密码、短信验证码或其他人工输入，不能请求用户手动输入，直接返回失败并说明缺少全自动凭证通道
 7. 验证登录是否成功
 
 ## 交互规范
 
-用自然、简洁的口语风格和用户沟通，不要用模板化的格式。
-所有需要等待用户输入的场景都必须调用 `ask_for_user_reply(prompt=...)`。
-
-- 需要密码：`ask_for_user_reply(prompt="请发一下密码")`
-- 需要验证码：`ask_for_user_reply(prompt="验证码发到你手机了，发给我")`
-- 扫码登录：先用 `send_current_page_screenshot` 发送二维码截图，再 `ask_for_user_reply(prompt="扫一下这个码，扫完回我")`，用户回复后检查页面状态即可，不要要求用户回复特定格式
+- 登录状态处理：先调用 `check_rednote_web_login_state()`。如果返回 `logged_in`，直接返回成功，不要扫码。
+- 扫码登录：只有确认需要登录时，才调用 `try_android_qr_login_from_current_page(caption="扫码登录二维码")`。如果返回 `confirmation_submitted`，说明手机端已经点了确认，但这不是最终成功，必须继续用 Playwright 检查网页端状态；只有网页端已进入登录后页面，才算成功。
+- 如果 Android 自动扫码返回 `login_failed`、`qr_expired`、`qr_not_identified` 或网页端仍未登录，先尝试刷新/重新生成二维码并再试一次；如果仍然失败，返回 `success=false`，不要请求用户手动处理。
 
 {user_info}## 输出格式
 
@@ -148,15 +215,14 @@ def _build_user_prompt(url: str, action: str, hint: str) -> str:
 1. 首先导航到目标 URL
 2. 分析页面，确定登录/注册方式
 3. 如果是扫码登录：
-   - 截取二维码区域的截图
-   - 发送给用户并等待扫码完成
+   - 先调用 `check_rednote_web_login_state` 验证共享浏览器 session；如果已经登录，直接返回成功
+   - 优先调用 `try_android_qr_login_from_current_page` 做 Android 自动扫码
+   - 手机端返回 `confirmation_submitted` 后，继续检查网页端状态，网页端确认登录后才算成功
+   - 如果 Android 自动扫码不可用、二维码过期、识别失败或网页端仍未登录，刷新/重新生成二维码再试一次；仍失败则返回失败
 4. 如果需要账号密码：
-   - 询问用户密码（账号可能已预设或需要询问）
-   - 填写表单并提交
+   - 如果已有可用凭证则自动填写；没有凭证则返回失败
 5. 如果需要验证码：
-   - 触发验证码发送
-   - 询问用户验证码
-   - 填写验证码并提交
+   - 当前不支持人工验证码输入，返回失败
 6. 验证登录/注册是否成功
 7. 返回结果
 
@@ -176,9 +242,10 @@ def create_login_tool(mcp_server: MCPServerStdio) -> Tool:
     Args:
         mcp_server: 父 Agent 已创建的 Playwright MCP Server 实例
     """
-    notifier = get_feishu_notifier()
     install_playwright_artifact_guard(mcp_server)
     _install_mcp_guard(mcp_server)
+    android_qr_automator = AndroidQrLoginAutomator()
+    android_qr_toolset = AndroidQrLoginToolset(android_qr_automator)
 
     user_profile = {
         "phone": UserProfileConfig.PHONE,
@@ -189,18 +256,10 @@ def create_login_tool(mcp_server: MCPServerStdio) -> Tool:
     }
     PathConfig.DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
-    # ── 子工具（闭包，捕获 notifier + mcp_server）─────────────────────
+    # ── 子工具（闭包，捕获 mcp_server）─────────────────────
 
-    async def send_message_to_user(text: str) -> str:
-        """发送消息给用户"""
-        result = await notifier.send_message(text)
-        if result:
-            return f"消息已发送（ID: {result}）"
-        return "消息发送失败"
-
-    async def send_current_page_screenshot(caption: str = "") -> str:
-        """截图当前页面并发送给用户"""
-        filename = f"login-page-{datetime.now().strftime('%Y%m%d-%H%M%S')}.png"
+    async def _capture_current_page_screenshot(prefix: str = "login-page") -> Path | str:
+        filename = f"{prefix}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.png"
         try:
             await mcp_server.direct_call_tool(
                 name="browser_take_screenshot",
@@ -219,16 +278,48 @@ def create_login_tool(mcp_server: MCPServerStdio) -> Tool:
         if not screenshot_path.exists():
             return f"截图文件不存在: {screenshot_path}"
 
-        result = await notifier.send_image(screenshot_path, caption or "当前页面截图")
-        if result:
-            return f"截图已发送（ID: {result}）"
-        return "截图发送失败"
+        return screenshot_path
 
-    async def ask_for_user_reply(prompt: str) -> str:
-        """发送提示信息并等待用户回复（自动 @指定用户）"""
-        mention = f'<at user_id="{FeishuConfig.MENTION_USER_ID}">{FeishuConfig.MENTION_USER_NAME}</at> '
-        await notifier.send_message(mention + prompt)
-        return await notifier.wait_for_reply()
+    async def check_rednote_web_login_state() -> str:
+        """Open Rednote Explore and classify whether the shared browser session is logged in."""
+        try:
+            await mcp_server.direct_call_tool(
+                name="browser_navigate",
+                args={"url": XHS_EXPLORE_LOGIN_URL},
+            )
+            await asyncio.sleep(2)
+            result = await mcp_server.direct_call_tool(
+                name="browser_evaluate",
+                args={"function": "() => document.body?.innerText || ''"},
+            )
+        except Exception as e:
+            return f"state=unknown\nerror={type(e).__name__}: {str(e)[:200]}"
+
+        text = str(result)
+        state = _classify_web_login_text(text)
+        return (
+            f"state={state}\n"
+            f"url={XHS_EXPLORE_LOGIN_URL}\n"
+            f"hint={text[:500]}"
+        )
+
+    async def try_android_qr_login_from_current_page(caption: str = "") -> str:
+        """截图当前网页二维码，并尝试用已连接的 Android 手机自动扫码确认。"""
+        screenshot_path = await _capture_current_page_screenshot("android-qr-login")
+        if isinstance(screenshot_path, str):
+            return screenshot_path
+
+        result = await asyncio.to_thread(
+            android_qr_automator.attempt_scan_from_album,
+            screenshot_path,
+        )
+        return build_android_qr_tool_message(
+            success=result.success,
+            status=result.status,
+            message=result.message if not caption else f"{caption}: {result.message}",
+            screenshot_path=screenshot_path,
+            remote_image_path=result.remote_image_path,
+        )
 
     # ── 内部 Agent（创建一次，复用）──────────────────────────────────
 
@@ -237,9 +328,9 @@ def create_login_tool(mcp_server: MCPServerStdio) -> Tool:
         output_type=AuthResult,
         toolsets=[mcp_server],
         tools=[
-            Tool(send_message_to_user, takes_ctx=False),
-            Tool(send_current_page_screenshot, takes_ctx=False),
-            Tool(ask_for_user_reply, takes_ctx=False),
+            Tool(check_rednote_web_login_state, takes_ctx=False),
+            Tool(try_android_qr_login_from_current_page, takes_ctx=False),
+            *android_qr_toolset.get_tools(),
         ],
         instrument=True,
         retries=RetryConfig.AGENT_RETRIES,
@@ -286,26 +377,35 @@ def create_login_tool(mcp_server: MCPServerStdio) -> Tool:
             action: 操作类型，"login"（登录）或 "register"（注册）
             hint: 可选的提示信息，例如"需要手机验证码登录"
         """
-        logger.info(f"收到认证请求: {action} @ {url}")
-        await notifier.start_polling()
+        normalized_url = _normalize_login_url(url)
+        logger.info(f"收到认证请求: {action} @ {url} -> {normalized_url}")
 
         try:
             await _close_extra_tabs()
-            prompt = _build_user_prompt(url, action, hint)
+            if normalized_url == XHS_EXPLORE_LOGIN_URL:
+                state_report = await check_rednote_web_login_state()
+                session_result = _build_session_auth_result(state_report, normalized_url)
+                if session_result is not None:
+                    logger.info(
+                        "Rednote 共享 session 预检查结束: success=%s, auth_type=%s",
+                        session_result.success,
+                        session_result.auth_type,
+                    )
+                    return session_result
+
+            prompt = _build_user_prompt(normalized_url, action, hint)
             result = await auth_agent.run(
                 prompt,
                 usage_limits=UsageLimits(request_limit=None),
             )
-            await notifier.send_message("✅ 登录完成")
             return result.output
         except Exception as e:
             logger.error(f"认证失败: {e}")
-            await notifier.send_message(f"❌ LoginAgent 出错: {type(e).__name__}: {str(e)[:200]}")
             return AuthResult(
                 success=False,
                 auth_type="manual",
                 message=f"认证过程出错: {str(e)}",
-                url=url,
+                url=normalized_url,
                 timestamp=datetime.now().isoformat(),
             )
 

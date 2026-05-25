@@ -6,6 +6,7 @@ import asyncio
 import shutil
 import time as _time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import aiohttp
 from pydantic_ai import Tool
@@ -18,6 +19,12 @@ from .extract.agent import ExtractAgent
 from .schemas import VideoReadResult
 
 logger = get_logger(__name__)
+XHS_WEB_REFERER = "https://www.rednote.com/"
+
+
+def _is_xhs_or_rednote_page_url(url: str) -> bool:
+    host = urlsplit(url or "").hostname or ""
+    return host.endswith("xiaohongshu.com") or host.endswith("rednote.com")
 
 
 class XHSVideoExtractTool:
@@ -62,6 +69,14 @@ class XHSVideoExtractTool:
                     )
                     await self._download_video(url, video_path)
                 else:
+                    if _is_xhs_or_rednote_page_url(note_url):
+                        result = VideoReadResult(
+                            error_message=(
+                                "未发现可下载视频直链；当前 Rednote/XHS 页面可能不是视频笔记，"
+                                "或视频请求尚未加载完成"
+                            )
+                        )
+                        return result.model_dump_json(indent=2)
                     logger.info(
                         "XHSVideoExtractTool: xhs extraction failed, fallback to page download: %s",
                         extract_result.error_message,
@@ -97,7 +112,7 @@ class XHSVideoExtractTool:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer": "https://www.xiaohongshu.com/",
+            "Referer": XHS_WEB_REFERER,
         }
         timeout = aiohttp.ClientTimeout(total=120, connect=15)
         async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
@@ -125,9 +140,9 @@ class XHSVideoExtractTool:
                 "merge_output_format": "mp4",
                 "socket_timeout": 30,
                 "retries": 3,
-                "referer": "https://www.xiaohongshu.com/",
+                "referer": XHS_WEB_REFERER,
                 "http_headers": {
-                    "Referer": "https://www.xiaohongshu.com/",
+                    "Referer": XHS_WEB_REFERER,
                     "User-Agent": (
                         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                         "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"

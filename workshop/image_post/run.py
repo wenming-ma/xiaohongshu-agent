@@ -87,7 +87,7 @@ SMOKE_TEST_CONFIG_OVERRIDES = (
     (ImageConfig, "GROUPING_REVIEW_MAX_RETRIES", 1),
     (ImageConfig, "MIN_DETAIL_IMAGES", 0),
     (ImageConfig, "MAX_DETAIL_IMAGES", 0),
-    (RetryConfig, "MAX_RETRIES", 1),
+    (RetryConfig, "MAX_RETRIES", 3),
     (RetryConfig, "AGENT_RETRIES", 1),
 )
 
