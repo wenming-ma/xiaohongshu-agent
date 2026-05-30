@@ -40,6 +40,7 @@ def _sanitize_remote_name(path: Path) -> str:
 class AndroidQrLoginConfig:
     enabled: bool = True
     serial: str | None = None
+    wireless_endpoint: str | None = None
     package_name: str = "com.xingin.xhs"
     remote_dir: str = "/sdcard/Pictures/xhs-auto-login"
     launch_wait_seconds: float = 3.0
@@ -50,6 +51,7 @@ class AndroidQrLoginConfig:
         return cls(
             enabled=_env_bool("XHS_ANDROID_QR_ENABLED", True),
             serial=os.getenv("ANDROID_SERIAL") or os.getenv("XHS_ANDROID_SERIAL") or None,
+            wireless_endpoint=os.getenv("XHS_ANDROID_WIRELESS_ENDPOINT") or None,
             package_name=os.getenv("XHS_ANDROID_XHS_PACKAGE", "com.xingin.xhs"),
             remote_dir=os.getenv("XHS_ANDROID_QR_REMOTE_DIR", "/sdcard/Pictures/xhs-auto-login"),
         )
@@ -301,6 +303,7 @@ class AndroidQrLoginAutomator:
     ) -> None:
         self.config = config or AndroidQrLoginConfig.from_env()
         self._adb_runner = adb_runner or self._run_adb
+        self._resolved_serial: str | None = None
 
     def push_image_to_gallery(self, image_path: Path) -> str:
         if not image_path.exists():
@@ -697,16 +700,90 @@ class AndroidQrLoginAutomator:
         except ImportError as exc:
             raise RuntimeError("install uiautomator2 to enable Android UI control") from exc
 
-        if self.config.serial:
-            return u2.connect(self.config.serial)
-        return u2.connect()
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                serial = self._resolve_device_serial(force_refresh=attempt > 0)
+                return u2.connect(serial)
+            except Exception as exc:
+                last_error = exc
+                self._resolved_serial = None
+        assert last_error is not None
+        raise last_error
 
     def _adb(self, args: list[str]) -> str:
-        command = ["adb"]
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                serial = self._resolve_device_serial(force_refresh=attempt > 0)
+                return self._run_device_adb(serial, args)
+            except Exception as exc:
+                last_error = exc
+                self._resolved_serial = None
+        assert last_error is not None
+        raise last_error
+
+    def _resolve_device_serial(self, *, force_refresh: bool = False) -> str:
+        if self._resolved_serial and not force_refresh:
+            return self._resolved_serial
+
+        online_devices = self._list_online_devices()
+        resolved = self._select_online_device(online_devices)
+        if resolved is None and self.config.wireless_endpoint:
+            self._run_plain_adb(["connect", self.config.wireless_endpoint])
+            online_devices = self._list_online_devices()
+            resolved = self._select_online_device(online_devices)
+
+        if resolved is None:
+            raise RuntimeError(self._build_device_resolution_error(online_devices))
+
+        self._resolved_serial = resolved
+        return resolved
+
+    def _list_online_devices(self) -> list[str]:
+        output = self._run_plain_adb(["devices", "-l"])
+        devices: list[str] = []
+        for line in output.splitlines():
+            line = line.strip()
+            if not line or line.startswith("List of devices attached"):
+                continue
+            parts = line.split()
+            if len(parts) < 2 or parts[1] != "device":
+                continue
+            devices.append(parts[0])
+        return devices
+
+    def _select_online_device(self, online_devices: list[str]) -> str | None:
+        configured_serial = self.config.serial
+        wireless_endpoint = self.config.wireless_endpoint
+
+        if configured_serial and configured_serial in online_devices:
+            return configured_serial
+        if wireless_endpoint and wireless_endpoint in online_devices:
+            return wireless_endpoint
+        if configured_serial:
+            return None
+        if len(online_devices) == 1:
+            return online_devices[0]
+        return None
+
+    def _build_device_resolution_error(self, online_devices: list[str]) -> str:
+        if len(online_devices) > 1:
+            return (
+                "Multiple Android devices are online; set ANDROID_SERIAL/XHS_ANDROID_SERIAL "
+                "or XHS_ANDROID_WIRELESS_ENDPOINT to disambiguate."
+            )
         if self.config.serial:
-            command.extend(["-s", self.config.serial])
-        command.extend(args)
-        return self._adb_runner(command)
+            return f"Configured Android serial is not online: {self.config.serial}"
+        if self.config.wireless_endpoint:
+            return f"Configured Android wireless endpoint is not online: {self.config.wireless_endpoint}"
+        return "No online Android devices found."
+
+    def _run_plain_adb(self, args: list[str]) -> str:
+        return self._adb_runner(["adb", *args])
+
+    def _run_device_adb(self, serial: str, args: list[str]) -> str:
+        return self._adb_runner(["adb", "-s", serial, *args])
 
     @staticmethod
     def _run_adb(command: list[str]) -> str:

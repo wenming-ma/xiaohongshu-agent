@@ -1,12 +1,12 @@
 """
 图片生成 Agent - ML 模型风格
-使用 Gemini API 生成小红书配图
+使用 Vertex AI 生成小红书配图
 
 使用方式：
     agent = ImageAgent()
     result = await agent.forward(content, research, topic, output_dir)
 
-通过 OpenAI 兼容 API 调用 Gemini 图片生成服务
+通过 Vertex AI Gemini 图片模型调用图片生成服务
 """
 from datetime import datetime
 from pathlib import Path
@@ -27,9 +27,9 @@ from ..schemas import (
     ImageTypeSpec,
     ImageGenContext,
 )
-from ....utils.providers import get_text_model, get_google_model, get_openai_model, GeminiImageClient, GeminiWebImageClient
+from ....utils.providers import VertexAIImageClient, get_openai_model, get_text_model
 from ....utils.logger import get_logger
-from ....config.settings import APIConfig, RetryConfig
+from ....config.settings import RetryConfig
 from .validator import ImageQualityValidator
 from .prompts import (
     image_system_prompt,
@@ -47,13 +47,6 @@ from ..utils.image import (
 
 logger = get_logger(__name__)
 
-
-def _is_retryable_error(e: Exception) -> bool:
-    """判断是否为可降级到 Web 的可重试错误"""
-    msg = str(e).lower()
-    return any(kw in msg for kw in ("503", "unavailable", "overloaded", "timeout", "disconnected"))
-
-
 class ImageAgent(BaseAgent):
     """Gemini 图片生成 Agent"""
 
@@ -69,15 +62,8 @@ class ImageAgent(BaseAgent):
         super().__init__()
 
     def init_tools(self) -> None:
-        """初始化 Gemini 图片 API 客户端和质量验证器"""
-        provider = APIConfig.GEMINI_IMAGE_PROVIDER
-        if provider == "web":
-            self.image_client = GeminiWebImageClient()
-        elif provider == "api":
-            self.image_client = GeminiImageClient()
-        else:  # "auto"
-            self.image_client = GeminiImageClient()
-            self.web_image_client = GeminiWebImageClient()
+        """初始化图片客户端和质量验证器"""
+        self.image_client = VertexAIImageClient()
         self.image_quality_validator = ImageQualityValidator(
             max_retries=RetryConfig.MAX_RETRIES,
             initial_delay=2.0
@@ -266,7 +252,7 @@ class ImageAgent(BaseAgent):
 
         gen_ctx = ImageGenContext(topic=topic, image_type=image_type)
 
-        logger.info("启动 Gemini API 图片生成...")
+        logger.info("启动 Sub2API 图片生成...")
         image_path, final_prompt = await self.generate_via_api(
             output_dir=output_dir,
             image_type=image_type,
@@ -323,7 +309,7 @@ class ImageAgent(BaseAgent):
         image_spec: ImageTypeSpec,
         gen_ctx: ImageGenContext,
     ) -> str:
-        """生成 Gemini 图片提示词"""
+        """生成图片提示词"""
         image_type = image_spec["type"]
         image_desc = image_spec["desc"]
 
@@ -407,7 +393,7 @@ class ImageAgent(BaseAgent):
         max_retries: int = RetryConfig.MAX_RETRIES,
     ) -> tuple[Path, str]:
         """
-        通过 Gemini API 生成图片（带质量验证和重试）
+        通过 Sub2API 生成图片（带质量验证和重试）
 
         Args:
             output_dir: 输出目录
@@ -431,24 +417,13 @@ class ImageAgent(BaseAgent):
                 prompt = await self.generate_prompt(content, research, topic, image_spec, gen_ctx)
                 final_prompt = prompt
 
-                # 2. 通过 API 生成图片（auto 模式下 API 失败时降级到 Web）
+                # 2. 通过 API 生成图片
                 output_path = output_dir / f"{image_type}.png"
-                try:
-                    image_path = await self.image_client.generate_image(
-                        prompt=prompt,
-                        output_path=output_path,
-                        aspect_ratio="3:4",
-                    )
-                except Exception as api_err:
-                    if hasattr(self, 'web_image_client') and _is_retryable_error(api_err):
-                        logger.warning("API 失败，降级到 Gemini Web: %s", api_err)
-                        image_path = await self.web_image_client.generate_image(
-                            prompt=prompt,
-                            output_path=output_path,
-                            aspect_ratio="3:4",
-                        )
-                    else:
-                        raise
+                image_path = await self.image_client.generate_image(
+                    prompt=prompt,
+                    output_path=output_path,
+                    aspect_ratio="3:4",
+                )
                 image_path = await finalize_generated_image(image_path)
 
                 # 3. 质量验证（可选，如果验证器可用）

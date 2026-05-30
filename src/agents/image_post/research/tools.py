@@ -19,13 +19,13 @@ from urllib.parse import urlsplit, parse_qs, unquote, urlunsplit, parse_qsl, url
 import httpx
 import logfire
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent, Tool, BinaryContent
+from pydantic_ai import Agent, Tool
 
 from ..schemas import ImageReadResult, PostImageItem, PostImagesReadResult
 from ...shared.utils.image_compression import compress_image_for_review
 from ....utils.logger import get_logger
-from ....config.settings import RetryConfig, APIConfig, PathConfig
-from ....utils.providers import get_text_model, get_google_model
+from ....config.settings import RetryConfig, PathConfig
+from ....utils.providers import VertexAIVisionClient, get_text_model
 from .prompts import (
     image_reader_system_prompt,
     image_reader_user_prompt,
@@ -82,13 +82,7 @@ class ImageReaderAgent:
     """读图 Agent（输出结构化的 ImageReadResult），并提供 Tool 包装。"""
 
     def __init__(self):
-        self._agent = Agent(
-            model=get_google_model(APIConfig.GOOGLE_VISION_MODEL),
-            output_type=ImageReadResult,
-            instrument=True,
-            retries=RetryConfig.AGENT_RETRIES,
-            system_prompt=(image_reader_system_prompt(),),
-        )
+        self._vision_client = VertexAIVisionClient()
 
     @staticmethod
     def _error_result(message: str) -> str:
@@ -149,11 +143,12 @@ class ImageReaderAgent:
         logger.debug("ImageReaderAgent: reading image %s (question=%s)", path.name, bool(question))
 
         try:
-            r = await self._agent.run(
-                [
-                    user_prompt,
-                    BinaryContent(data=image_data, media_type="image/jpeg"),
-                ]
+            result = await self._vision_client.analyze_image_bytes_structured(
+                image_bytes=image_data,
+                media_type="image/jpeg",
+                prompt=user_prompt,
+                system_prompt=image_reader_system_prompt(),
+                response_model=ImageReadResult,
             )
         except Exception as exc:
             logger.warning("ImageReaderAgent: model read failed for %s: %s", path, exc)
@@ -161,7 +156,7 @@ class ImageReaderAgent:
                 f"图片识别失败: {type(exc).__name__}: {exc}"
             )
 
-        return r.output.model_dump_json(indent=2)
+        return result.model_dump_json(indent=2)
 
     def get_tool(self) -> Tool:
         """获取可供其它 Agent 使用的 Tool。"""
@@ -186,15 +181,7 @@ class PostImageReaderAgent:
 
     def __init__(self, mcp_server):
         self._mcp_server = mcp_server
-
-        # 视觉分析 Agent（Google 模型，用于 OCR + 理解）
-        self._vision_agent = Agent(
-            model=get_google_model(APIConfig.GOOGLE_VISION_MODEL),
-            output_type=ImageReadResult,
-            instrument=True,
-            retries=RetryConfig.AGENT_RETRIES,
-            system_prompt=(image_reader_system_prompt(),),
-        )
+        self._vision_client = VertexAIVisionClient()
 
         # 自定义工具
         custom_tools = [
@@ -259,10 +246,13 @@ class PostImageReaderAgent:
             img.save(buf, format="JPEG", quality=85, optimize=True)
 
             user_prompt = image_reader_user_prompt(question=(question or "").strip())
-            r = await self._vision_agent.run(
-                [user_prompt, BinaryContent(data=buf.getvalue(), media_type="image/jpeg")]
+            out = await self._vision_client.analyze_image_bytes_structured(
+                image_bytes=buf.getvalue(),
+                media_type="image/jpeg",
+                prompt=user_prompt,
+                system_prompt=image_reader_system_prompt(),
+                response_model=ImageReadResult,
             )
-            out = r.output
             return PostImageItem(
                 index=index, url=url,
                 extracted_text=out.extracted_text, description=out.description,
@@ -301,10 +291,13 @@ class PostImageReaderAgent:
 
             image_data = await compress_image_for_review(path, max_size_mb=5.0)
             user_prompt = image_reader_user_prompt(question=(question or "").strip())
-            r = await self._vision_agent.run(
-                [user_prompt, BinaryContent(data=image_data, media_type="image/jpeg")]
+            out = await self._vision_client.analyze_image_bytes_structured(
+                image_bytes=image_data,
+                media_type="image/jpeg",
+                prompt=user_prompt,
+                system_prompt=image_reader_system_prompt(),
+                response_model=ImageReadResult,
             )
-            out = r.output
             return PostImageItem(
                 index=index,
                 extracted_text=out.extracted_text, description=out.description,

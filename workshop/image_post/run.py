@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import io
 import json
 import sys
 from contextlib import contextmanager
@@ -31,8 +30,15 @@ def configure_windows_stdio() -> None:
     """Use UTF-8 console streams when this script is executed directly on Windows."""
     if sys.platform != "win32":
         return
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None:
+            continue
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
+configure_windows_stdio()
 
 from dotenv import load_dotenv  # noqa: E402
 load_dotenv(PROJECT_ROOT / ".env")
@@ -325,7 +331,6 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    configure_windows_stdio()
     args = parse_args()
     exit_code = asyncio.run(run_batch(args))
     raise SystemExit(exit_code)

@@ -1,30 +1,25 @@
-"""
-Vertex AI Gemini 图片生成 API 客户端
+"""Vertex AI image generation client."""
 
-通过 Google Gen AI SDK (vertexai=True) 调用 Vertex AI 端点
-使用 Application Default Credentials 认证
-"""
+from __future__ import annotations
+
+import asyncio
 import mimetypes
 from pathlib import Path
 from typing import Optional
 
-import httpx
-from google import genai
 from google.genai import types
 
-from ...config.settings import APIConfig, TimeoutConfig
-from ..logger import get_logger
+from src.config.settings import APIConfig
+from src.utils.logger import get_logger
+from src.utils.providers.vertex_ai_common import build_vertex_client, is_retryable_vertex_error
 
 logger = get_logger(__name__)
 
 
 class VertexAIImageClient:
-    """
-    Vertex AI Gemini 图片生成客户端
+    """Generate images through Vertex AI Gemini image models."""
 
-    通过 Vertex AI 端点调用，使用 Application Default Credentials 认证
-    需设置 VERTEX_AI_PROJECT_ID 环境变量
-    """
+    _MAX_RETRIES = 12
 
     def __init__(
         self,
@@ -33,31 +28,67 @@ class VertexAIImageClient:
         model: Optional[str] = None,
         image_size: Optional[str] = None,
         aspect_ratio: Optional[str] = None,
-    ):
-        self.project = project or APIConfig.VERTEX_AI_PROJECT_ID
-        if not self.project:
-            raise ValueError("VERTEX_AI_PROJECT_ID 环境变量未设置")
-
-        self.location = location or APIConfig.VERTEX_AI_LOCATION
+    ) -> None:
+        self.client, self.project, self.location = build_vertex_client(
+            project=project,
+            location=location,
+        )
         self.model = model or APIConfig.VERTEX_AI_IMAGE_MODEL
         self.image_size = image_size or APIConfig.GEMINI_IMAGE_SIZE
         self.aspect_ratio = aspect_ratio
 
-        timeout = TimeoutConfig.GEMINI_WAIT
-        http_options = types.HttpOptions(timeout=timeout * 1000)
-        self.client = genai.Client(
-            vertexai=True,
-            project=self.project,
-            location=self.location,
-            http_options=http_options,
-        )
-
         logger.debug(
-            "VertexAIImageClient 初始化: project=%s, location=%s, model=%s, image_size=%s, aspect_ratio=%s",
-            self.project, self.location, self.model, self.image_size, self.aspect_ratio,
+            "VertexAIImageClient initialized: project=%s, location=%s, model=%s, image_size=%s, aspect_ratio=%s",
+            self.project,
+            self.location,
+            self.model,
+            self.image_size,
+            self.aspect_ratio,
         )
 
-    _MAX_RETRIES = 12
+    @staticmethod
+    def _build_parts(
+        prompt: str,
+        reference_images: list[tuple[str, Path]] | list[Path] | None = None,
+    ) -> list[types.Part]:
+        parts: list[types.Part] = []
+        current_label: str | None = None
+
+        for item in reference_images or []:
+            if isinstance(item, tuple):
+                label, ref_path = item
+            else:
+                label, ref_path = "reference", item
+            if not ref_path.exists():
+                continue
+            if label != current_label:
+                parts.append(types.Part.from_text(text=f"[Reference image: {label}]"))
+                current_label = label
+            mime = mimetypes.guess_type(str(ref_path))[0] or "image/jpeg"
+            parts.append(types.Part.from_bytes(data=ref_path.read_bytes(), mime_type=mime))
+
+        parts.append(types.Part.from_text(text=prompt))
+        return parts
+
+    @staticmethod
+    def _extract_image_bytes(chunks: list[object]) -> tuple[bytes, str]:
+        image_data: bytes | None = None
+        mime_type = "image/png"
+
+        for chunk in chunks:
+            for candidate in getattr(chunk, "candidates", []) or []:
+                content = getattr(candidate, "content", None)
+                for part in getattr(content, "parts", []) or []:
+                    inline_data = getattr(part, "inline_data", None)
+                    if inline_data and getattr(inline_data, "data", None):
+                        image_data = inline_data.data
+                        mime_type = getattr(inline_data, "mime_type", None) or mime_type
+                    elif getattr(part, "text", None):
+                        logger.debug("Vertex image generation returned text: %s", part.text[:200])
+
+        if not image_data:
+            raise ValueError("Vertex AI 未返回图片数据")
+        return image_data, mime_type
 
     async def generate_image(
         self,
@@ -66,113 +97,63 @@ class VertexAIImageClient:
         image_size: Optional[str] = None,
         aspect_ratio: Optional[str] = None,
         max_retries: int = _MAX_RETRIES,
+        reference_images: list[tuple[str, Path]] | list[Path] | None = None,
     ) -> Path:
-        """
-        生成图片并保存到指定路径
-
-        Args:
-            prompt: 图片生成提示词
-            output_path: 输出文件路径（包含文件名）
-            image_size: 图片尺寸（可选），覆盖默认值
-            aspect_ratio: 图片比例（可选），覆盖默认值
-            max_retries: 最大重试次数
-
-        Returns:
-            保存的图片路径
-        """
         size = image_size or self.image_size
         ratio = aspect_ratio or self.aspect_ratio
+        parts = self._build_parts(prompt, reference_images=reference_images)
+        contents = [types.Content(role="user", parts=parts)]
+        config = types.GenerateContentConfig(
+            response_modalities=["IMAGE", "TEXT"],
+            image_config=types.ImageConfig(
+                image_size=size,
+                aspect_ratio=ratio,
+            ),
+        )
 
-        logger.info("开始生成图片 (Vertex AI): %s (size=%s, aspect_ratio=%s)", output_path.name, size, ratio)
-        logger.debug("提示词: %s...", prompt[:100])
+        logger.info(
+            "Generating image with Vertex AI: %s (model=%s, image_size=%s, aspect_ratio=%s)",
+            output_path.name,
+            self.model,
+            size,
+            ratio,
+        )
 
-        last_error = None
+        last_error: Exception | None = None
         for attempt in range(max_retries):
             try:
-                contents = [
-                    types.Content(
-                        role="user",
-                        parts=[types.Part.from_text(text=prompt)],
-                    ),
-                ]
-
-                generate_content_config = types.GenerateContentConfig(
-                    response_modalities=["IMAGE", "TEXT"],
-                    image_config=types.ImageConfig(
-                        image_size=size,
-                        aspect_ratio=ratio,
-                    ),
+                chunks = await asyncio.to_thread(
+                    lambda: list(
+                        self.client.models.generate_content_stream(
+                            model=self.model,
+                            contents=contents,
+                            config=config,
+                        )
+                    )
                 )
-
-                image_data = None
-                file_extension = ".png"
-
-                for chunk in self.client.models.generate_content_stream(
-                    model=self.model,
-                    contents=contents,
-                    config=generate_content_config,
-                ):
-                    if (
-                        chunk.candidates is None
-                        or chunk.candidates[0].content is None
-                        or chunk.candidates[0].content.parts is None
-                    ):
-                        continue
-
-                    part = chunk.candidates[0].content.parts[0]
-                    if part.inline_data and part.inline_data.data:
-                        image_data = part.inline_data.data
-                        ext = mimetypes.guess_extension(part.inline_data.mime_type)
-                        if ext:
-                            file_extension = ext
-                    elif hasattr(part, 'text') and part.text:
-                        logger.debug("Vertex AI 返回文本: %s", part.text[:100])
-
-                if not image_data:
-                    raise ValueError("Vertex AI 未返回图片数据")
-
-                if output_path.suffix.lower() != file_extension.lower():
-                    output_path = output_path.with_suffix(file_extension)
-
+                image_bytes, mime_type = self._extract_image_bytes(chunks)
+                ext = mimetypes.guess_extension(mime_type) or ".png"
+                if output_path.suffix.lower() != ext.lower():
+                    output_path = output_path.with_suffix(ext)
                 output_path.parent.mkdir(parents=True, exist_ok=True)
-                output_path.write_bytes(image_data)
-                logger.info("图片已保存: %s (%d KB)", output_path, len(image_data) // 1024)
-
+                output_path.write_bytes(image_bytes)
+                logger.info("Vertex AI image saved: %s (%d KB)", output_path, len(image_bytes) // 1024)
                 return output_path
-
-            except Exception as e:
-                last_error = e
-                error_msg = str(e)
-                error_type = type(e).__name__
-
-                is_retryable = any([
-                    "limited" in error_msg.lower(),
-                    "429" in error_msg,
-                    "quota" in error_msg.lower(),
-                    "503" in error_msg,
-                    "overloaded" in error_msg.lower(),
-                    "unavailable" in error_msg.lower(),
-                    isinstance(e, (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout)),
-                    "disconnected" in error_msg.lower(),
-                    "connection" in error_msg.lower(),
-                    "timeout" in error_msg.lower(),
-                ])
-
-                if not is_retryable:
+            except Exception as exc:
+                last_error = exc
+                if not is_retryable_vertex_error(exc) or attempt >= max_retries - 1:
                     raise
-
+                delay = min(5 * (attempt + 1), 60)
                 logger.warning(
-                    "图片生成失败 (%d/%d): [%s] %s",
-                    attempt + 1, max_retries, error_type, error_msg,
+                    "Vertex AI image generation failed (%d/%d): %s, retrying in %ds",
+                    attempt + 1,
+                    max_retries,
+                    exc,
+                    delay,
                 )
+                await asyncio.sleep(delay)
 
-                if attempt < max_retries - 1:
-                    import asyncio
-                    delay = min(5 * (attempt + 1), 60)
-                    logger.info("等待 %d 秒后重试...", delay)
-                    await asyncio.sleep(delay)
-
-        raise last_error or Exception("图片生成失败，已达最大重试次数")
+        raise last_error or RuntimeError("Vertex AI 图片生成失败")
 
 
 async def generate_vertex_ai_image(
@@ -180,12 +161,13 @@ async def generate_vertex_ai_image(
     output_path: Path,
     image_size: Optional[str] = None,
     aspect_ratio: Optional[str] = None,
+    reference_images: list[tuple[str, Path]] | list[Path] | None = None,
 ) -> Path:
-    """便捷函数：通过 Vertex AI 生成图片"""
-    client = VertexAIImageClient()
+    client = VertexAIImageClient(aspect_ratio=aspect_ratio)
     return await client.generate_image(
-        prompt,
-        output_path,
+        prompt=prompt,
+        output_path=output_path,
         image_size=image_size,
         aspect_ratio=aspect_ratio,
+        reference_images=reference_images,
     )

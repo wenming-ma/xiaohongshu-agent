@@ -1,13 +1,11 @@
 """图片质量验证器"""
 from pathlib import Path
 from typing import Any
-from pydantic_ai import Agent, BinaryContent
 from ....core.base_validator import ExternalValidator
 from ..schemas import ImageQualityReview
 from ...shared.utils.image_compression import compress_image_for_review
-from ....utils.providers import get_google_model
+from ....utils.providers import VertexAIVisionClient
 from ....utils.logger import get_logger
-from ....config.settings import APIConfig
 from .prompts import image_quality_review_system_prompt, image_quality_review_user_prompt
 
 logger = get_logger(__name__)
@@ -25,17 +23,10 @@ class ImageQualityValidator(ExternalValidator):
         return True
 
     @property
-    def agent(self) -> Agent:
-        """延迟初始化 Agent"""
+    def vision_client(self) -> VertexAIVisionClient:
+        """延迟初始化视觉客户端"""
         if self._agent is None:
-            from ....config.settings import RetryConfig
-            self._agent = Agent(
-                model=get_google_model(APIConfig.GOOGLE_VISION_MODEL),
-                output_type=ImageQualityReview,
-                instrument=True,
-                retries=RetryConfig.AGENT_RETRIES,
-                system_prompt=(image_quality_review_system_prompt(),),
-            )
+            self._agent = VertexAIVisionClient()
         return self._agent
 
     async def get_validation_target(
@@ -76,14 +67,13 @@ class ImageQualityValidator(ExternalValidator):
             image_prompt=image_prompt,
         )
 
-        result = await self.agent.run(
-            [
-                user_prompt,
-                BinaryContent(data=image_data, media_type='image/jpeg')
-            ]
+        return await self.vision_client.analyze_image_bytes_structured(
+            image_bytes=image_data,
+            media_type="image/jpeg",
+            prompt=user_prompt,
+            system_prompt=image_quality_review_system_prompt(),
+            response_model=ImageQualityReview,
         )
-
-        return result.output
 
     @staticmethod
     def _build_expected_content(context: dict) -> str:

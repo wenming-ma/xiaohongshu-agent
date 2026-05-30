@@ -18,6 +18,14 @@ def test_android_qr_config_is_enabled_by_default_and_can_be_disabled(monkeypatch
     assert AndroidQrLoginConfig.from_env().enabled is False
 
 
+def test_android_qr_config_reads_wireless_endpoint(monkeypatch):
+    monkeypatch.setenv("XHS_ANDROID_WIRELESS_ENDPOINT", "192.168.0.8:4555")
+
+    config = AndroidQrLoginConfig.from_env()
+
+    assert config.wireless_endpoint == "192.168.0.8:4555"
+
+
 def test_push_image_to_gallery_uses_serial_and_refreshes_media(tmp_path: Path):
     image = tmp_path / "login page.png"
     image.write_bytes(b"png")
@@ -25,6 +33,8 @@ def test_push_image_to_gallery_uses_serial_and_refreshes_media(tmp_path: Path):
 
     def fake_runner(args: list[str]) -> str:
         calls.append(args)
+        if args == ["adb", "devices", "-l"]:
+            return "List of devices attached\nRFCMB00H3HY device usb:1-1 product:test model:Phone device:test\n"
         return ""
 
     config = AndroidQrLoginConfig(serial="RFCMB00H3HY")
@@ -34,6 +44,11 @@ def test_push_image_to_gallery_uses_serial_and_refreshes_media(tmp_path: Path):
 
     assert remote == "/sdcard/Pictures/xhs-auto-login/login_page.png"
     assert calls == [
+        [
+            "adb",
+            "devices",
+            "-l",
+        ],
         [
             "adb",
             "-s",
@@ -79,6 +94,116 @@ def test_attempt_scan_returns_disabled_without_touching_adb(tmp_path: Path):
     assert result.success is False
     assert result.status == "disabled"
     assert calls == []
+
+
+def test_resolve_device_prefers_online_usb_serial_without_connecting_wireless():
+    calls: list[list[str]] = []
+
+    def fake_runner(args: list[str]) -> str:
+        calls.append(args)
+        if args == ["adb", "devices", "-l"]:
+            return "List of devices attached\nRFCMB00H3HY device usb:1-1 product:test model:Phone device:test\n"
+        raise AssertionError(f"unexpected adb command: {args}")
+
+    config = AndroidQrLoginConfig(
+        serial="RFCMB00H3HY",
+        wireless_endpoint="192.168.0.8:4555",
+    )
+    automator = AndroidQrLoginAutomator(config=config, adb_runner=fake_runner)
+
+    serial = automator._resolve_device_serial()
+
+    assert serial == "RFCMB00H3HY"
+    assert calls == [["adb", "devices", "-l"]]
+
+
+def test_resolve_device_connects_wireless_when_no_device_is_online():
+    calls: list[list[str]] = []
+    devices_calls = 0
+
+    def fake_runner(args: list[str]) -> str:
+        nonlocal devices_calls
+        calls.append(args)
+        if args == ["adb", "devices", "-l"]:
+            devices_calls += 1
+            if devices_calls == 1:
+                return "List of devices attached\n\n"
+            return "List of devices attached\n192.168.0.8:4555 device product:test model:Phone device:test transport_id:7\n"
+        if args == ["adb", "connect", "192.168.0.8:4555"]:
+            return "connected to 192.168.0.8:4555"
+        raise AssertionError(f"unexpected adb command: {args}")
+
+    config = AndroidQrLoginConfig(wireless_endpoint="192.168.0.8:4555")
+    automator = AndroidQrLoginAutomator(config=config, adb_runner=fake_runner)
+
+    serial = automator._resolve_device_serial()
+
+    assert serial == "192.168.0.8:4555"
+    assert calls == [
+        ["adb", "devices", "-l"],
+        ["adb", "connect", "192.168.0.8:4555"],
+        ["adb", "devices", "-l"],
+    ]
+
+
+def test_adb_retries_after_cached_serial_becomes_invalid():
+    calls: list[list[str]] = []
+    devices_calls = 0
+
+    def fake_runner(args: list[str]) -> str:
+        nonlocal devices_calls
+        calls.append(args)
+        if args == ["adb", "devices", "-l"]:
+            devices_calls += 1
+            if devices_calls == 1:
+                return "List of devices attached\nRFCMB00H3HY device usb:1-1 product:test model:Phone device:test\n"
+            if devices_calls == 2:
+                return "List of devices attached\n\n"
+            return "List of devices attached\n192.168.0.8:4555 device product:test model:Phone device:test transport_id:7\n"
+        if args == ["adb", "-s", "RFCMB00H3HY", "shell", "true"]:
+            raise RuntimeError("device offline")
+        if args == ["adb", "connect", "192.168.0.8:4555"]:
+            return "already connected to 192.168.0.8:4555"
+        if args == ["adb", "-s", "192.168.0.8:4555", "shell", "true"]:
+            return ""
+        raise AssertionError(f"unexpected adb command: {args}")
+
+    config = AndroidQrLoginConfig(
+        serial="RFCMB00H3HY",
+        wireless_endpoint="192.168.0.8:4555",
+    )
+    automator = AndroidQrLoginAutomator(config=config, adb_runner=fake_runner)
+
+    assert automator._adb(["shell", "true"]) == ""
+
+    assert calls == [
+        ["adb", "devices", "-l"],
+        ["adb", "-s", "RFCMB00H3HY", "shell", "true"],
+        ["adb", "devices", "-l"],
+        ["adb", "connect", "192.168.0.8:4555"],
+        ["adb", "devices", "-l"],
+        ["adb", "-s", "192.168.0.8:4555", "shell", "true"],
+    ]
+
+
+def test_resolve_device_fails_when_multiple_online_devices_cannot_be_disambiguated():
+    def fake_runner(args: list[str]) -> str:
+        if args == ["adb", "devices", "-l"]:
+            return (
+                "List of devices attached\n"
+                "RFCMB00H3HY device usb:1-1 product:test model:Phone device:test\n"
+                "192.168.0.8:4555 device product:test model:Phone device:test transport_id:7\n"
+            )
+        raise AssertionError(f"unexpected adb command: {args}")
+
+    automator = AndroidQrLoginAutomator(config=AndroidQrLoginConfig(), adb_runner=fake_runner)
+
+    try:
+        automator._resolve_device_serial()
+    except RuntimeError as exc:
+        assert "multiple" in str(exc).lower()
+    else:
+        raise AssertionError("expected multiple-device resolution failure")
 
 
 class _FakeXpath:
