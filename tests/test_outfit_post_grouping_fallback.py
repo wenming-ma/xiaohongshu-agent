@@ -11,7 +11,7 @@ class _FailingGroupingAgent:
     async def run(self, prompt, message_history=None):
         raise ModelHTTPError(
             status_code=503,
-            model_name="gpt-5.4",
+            model_name="gpt-5.5",
             body={"message": "Service temporarily unavailable", "type": "api_error"},
         )
 

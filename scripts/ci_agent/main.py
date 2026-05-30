@@ -7,7 +7,7 @@ to diagnose, fix, validate, and retry until the video post pipeline succeeds.
 Usage:
     uv run python scripts/ci_agent/main.py
     uv run python scripts/ci_agent/main.py --max-attempts 30
-    uv run python scripts/ci_agent/main.py --model openai:gpt-5.4
+    uv run python scripts/ci_agent/main.py --model openai:gpt-5.5
     uv run python scripts/ci_agent/main.py --worker-model MiniMax-M2.7
     uv run python scripts/ci_agent/main.py --resume .cache/ci_agent/sessions/<session_id>/state.json
     uv run python scripts/ci_agent/main.py --no-publish
@@ -35,7 +35,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--target", default=None, help="Override target command")
     parser.add_argument("--max-attempts", type=int, default=20)
-    parser.add_argument("--model", default="openai:gpt-5.4")
+    parser.add_argument("--model", default="openai:gpt-5.5")
     parser.add_argument("--worker-model", default=None, help="Override the non-controller worker model")
     parser.add_argument("--resume", type=Path, default=None, help="Resume from state.json")
     parser.add_argument("--branch", default=None, help="Isolated git branch for fixes")

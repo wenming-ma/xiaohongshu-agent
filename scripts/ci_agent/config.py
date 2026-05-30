@@ -16,7 +16,7 @@ RUNBOOK_FILE = PROJECT_ROOT / "scripts" / "ci_agent" / "AGENTS.md"
 class ClusterConfig:
     session_id: str = ""
     # Backward-compatible: `model` is the controller model.
-    model: str = "openai:gpt-5.4"
+    model: str = "openai:gpt-5.5"
     controller_max_retries: int = 20
     controller_timeout_seconds: int = 300
     worker_model: str = "MiniMax-M2.7"

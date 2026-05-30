@@ -64,7 +64,7 @@ def test_sub2api_model_selection_splits_vision_and_image(monkeypatch) -> None:
 
     monkeypatch.setenv("SUB2API_VISION_MODEL", "gpt-5.5")
     monkeypatch.setenv("SUB2API_IMAGE_MODEL", "gpt-image-2")
-    monkeypatch.setenv("SUB2API_MODEL", "gpt-5.4")
+    monkeypatch.setenv("SUB2API_MODEL", "gpt-5.5")
 
     assert module._get_vision_model() == "gpt-5.5"
     assert module._get_image_model() == "gpt-image-2"

@@ -121,7 +121,7 @@ def test_cluster_config_defaults_to_session_scoped_cache_paths(tmp_path: Path) -
         session_id="session123",
     )
 
-    assert config.model == "openai:gpt-5.4"
+    assert config.model == "openai:gpt-5.5"
     assert config.controller_max_retries == 20
     assert config.controller_timeout_seconds == 300
     assert config.worker_model == "MiniMax-M2.7"
@@ -176,7 +176,7 @@ def test_build_controller_model_uses_chat_completions_settings(tmp_path: Path, m
 
     model = config.build_controller_model()
 
-    assert model.model_name == "gpt-5.4"
+    assert model.model_name == "gpt-5.5"
     assert str(model.openai_api_base) == "https://sub2api.wenming-dev.org/v1"
     assert model.use_responses_api is False
     assert model.output_version == "v0"

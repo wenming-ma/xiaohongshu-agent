@@ -49,12 +49,12 @@ def test_api_config_defaults_do_not_embed_credentials(monkeypatch) -> None:
     assert settings.APIConfig.GEMINI_FALLBACK_API_KEYS == []
 
 
-def test_api_config_defaults_openai_model_to_gpt_5_4(monkeypatch) -> None:
+def test_api_config_defaults_openai_model_to_gpt_5_5(monkeypatch) -> None:
     monkeypatch.delenv("OPENAI_MODEL", raising=False)
 
     settings = importlib.reload(settings_module)
 
-    assert settings.APIConfig.OPENAI_MODEL == "gpt-5.4"
+    assert settings.APIConfig.OPENAI_MODEL == "gpt-5.5"
 
 
 def test_shared_playwright_mcp_uses_shared_browser_session() -> None:
