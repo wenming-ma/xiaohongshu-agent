@@ -44,10 +44,13 @@ tutorial repositories.
 Image prompt templates are the primary asset in this library. Their structure is
 also informed by public text-to-image prompt resources such as Stable Diffusion
 prompt template collections, awesome Stable Diffusion prompt lists, DiffusionDB
-research, DALL-E prompt guides, and diffusion-model prompt-engineering studies.
-The useful patterns are subject specificity, composition, lighting, medium,
-reference alignment, negative constraints, model-sensitive limitations, and
-review loops that reject unrelated UI or diagnostic artifacts.
+research, DALL-E prompt guides, diffusion-model prompt-engineering studies, and
+recent high-star GitHub image-prompt collections such as YouMind-OpenLab's Nano
+Banana Pro prompt library, jamez-bondos' GPT-4o image examples, and Hunyuan
+PromptEnhancer's structured prompt rewriting work. The useful patterns are
+subject specificity, composition, camera angle, lighting, material behavior,
+reference alignment, editing intent, negative constraints, model-sensitive
+limitations, and review loops that reject unrelated UI or diagnostic artifacts.
 
 These external sources are used as research inputs only. Do not copy their
 original project templates into this repository. Convert useful ideas into

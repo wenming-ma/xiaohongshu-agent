@@ -159,6 +159,13 @@ def test_image_prompt_library_is_primary_template_asset() -> None:
         "composition",
         "lighting",
         "reference",
+        "camera",
+        "editing",
+        "material",
+        "ads",
+        "character",
+        "poster",
+        "negative",
     }
     subcategories = {
         path.name
@@ -177,5 +184,5 @@ def test_image_prompt_library_is_primary_template_asset() -> None:
         for path in (REPO_ROOT / ".agents" / "prompt").rglob("*.md")
         if path.name != "README.md"
     ]
-    assert len(image_templates) >= 30
+    assert len(image_templates) >= 70
     assert len(image_templates) >= len(all_templates) // 2
