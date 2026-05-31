@@ -9,7 +9,7 @@ The formal product architecture is Feishu-first. Specialist agents live under
 The design system has three first-class citizens:
 
 - Atomic Agents: general specialist capabilities under `src/agents/`, each owning one complete task area and returning structured outputs.
-- Claude-style Skills: reusable experience, workflow rules, style guidance, prompts, references, and checklists under `.agents/skills/`.
+- Skill Protocol: reusable experience, workflow rules, style guidance, prompts, references, and checklists under `.agents/skills/`.
 - Prompt Templates: repository-versioned prompt snippets under `.agents/prompt/` for reusable visual and copywriting patterns.
 
 These citizens are composed at runtime. The Planner Agent or a specialist Agent chooses the needed Skills and Prompt Templates from the user's current goal, constraints, artifacts, and conversation context. Do not encode this composition as keyword triggers or fixed product branches.
@@ -22,7 +22,7 @@ These citizens are composed at runtime. The Planner Agent or a specialist Agent 
 - Agents should expose general task capabilities, not one-off product lines. User-specific style, quantity, format, and topic requirements flow in as dynamic context.
 - Cross-agent data moves through `ResultEnvelope` in the orchestration layer. Local files are artifacts referenced by envelopes, not a separate protocol.
 - Final delivery is a `DeliveryPackage` sent to Feishu. Direct platform publishing is not part of the formal workflow.
-- Claude-style Skills live in `.agents/skills/` and contain experience, style rules, prompts, and checklists only. Runtime schemas stay in Pydantic models.
+- Skill Protocol documents live in `.agents/skills/` and contain experience, style rules, prompts, and checklists only. Runtime schemas stay in Pydantic models.
 - Versioned reusable prompt snippets live in `.agents/prompt/`. Do not add rotating local prompt roots.
 
 ## Layout
@@ -38,7 +38,7 @@ These citizens are composed at runtime. The Planner Agent or a specialist Agent 
 - Agent classes inherit `BaseAgent` and implement `forward`, `step`, and `validate` where applicable.
 - Phase-local prompts stay beside the agent in `prompts.py`.
 - Shared style prompt snippets live in `.agents/prompt/` and are selected by `ImagePromptTemplateAgent` with directory tools using the current request, image group, and `StyleContext`; do not keyword-trigger prompt snippets in `StyleContext` or hard-code style libraries in specialist agents.
-- `ProjectSkillRegistry` only discovers available Claude-style Skills. It must not rank or match them; `PlanningAgent` chooses Skills based on the active user need.
+- `ProjectSkillRegistry` only discovers available Skill Protocol documents. It must not rank or match them; `PlanningAgent` chooses Skills based on the active user need.
 - Content-type helper modules stay under `src/agents/<content_type>/utils/`.
 - Infrastructure helpers stay under `src/utils/`, `src/config/`, or `src/core/`.
 - Do not add new direct runners or platform-publishing phases.

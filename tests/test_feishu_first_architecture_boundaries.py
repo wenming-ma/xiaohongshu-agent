@@ -89,6 +89,48 @@ def test_design_system_first_class_citizens_are_documented_and_present() -> None
 
     assert "three first-class citizens" in agents_doc
     assert "Atomic Agents" in agents_doc
-    assert "Claude-style Skills" in agents_doc
+    assert "Skill Protocol" in agents_doc
     assert "Prompt Templates" in agents_doc
     assert "Agent chooses" in agents_doc
+
+
+def test_skill_protocol_is_not_branded_as_claude_style() -> None:
+    offenders: list[str] = []
+    for path in _tracked_text_files("src", "tests", ".agents"):
+        if path.name == "test_feishu_first_architecture_boundaries.py":
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if "Claude-style" in text or "Claude style" in text:
+            offenders.append(path.relative_to(REPO_ROOT).as_posix())
+
+    assert offenders == []
+
+
+def test_prompt_library_is_categorized_and_substantial() -> None:
+    prompt_root = REPO_ROOT / ".agents" / "prompt"
+    expected_categories = {
+        "image",
+        "copy",
+        "article",
+        "video",
+        "delivery",
+    }
+    categories = {
+        path.name
+        for path in prompt_root.iterdir()
+        if path.is_dir() and not path.name.startswith(".")
+    }
+    assert expected_categories.issubset(categories)
+
+    templates = [
+        path
+        for path in prompt_root.rglob("*.md")
+        if path.name != "README.md"
+    ]
+    assert len(templates) >= 16
+
+    for template in templates:
+        text = template.read_text(encoding="utf-8")
+        assert "## Use When" in text
+        assert "## Constraints" in text
+        assert "## Prompt Template" in text

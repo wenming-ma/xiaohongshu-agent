@@ -17,14 +17,14 @@ class PlanningDecision(BaseModel):
     route: ContentRoute = Field(description="Best content route for this request.")
     selected_skill_names: list[str] = Field(
         default_factory=list,
-        description="Names of Claude-style project skills that should guide the workflow.",
+        description="Names of project Skill Protocol documents that should guide the workflow.",
     )
     rationale: str = Field(default="", description="Short reason for the route and skill choices.")
 
 
 PLANNING_SYSTEM_PROMPT = """你是飞书优先内容系统的主规划 Agent。
 
-你的职责是根据用户当前需求，选择内容路线和需要加载的 Claude-style Skill。
+你的职责是根据用户当前需求，选择内容路线和需要加载的 Skill。
 所有选择都必须基于语义理解和任务目标，不要按固定关键词表、文件名规则或硬编码分类来触发。
 
 架构准则：

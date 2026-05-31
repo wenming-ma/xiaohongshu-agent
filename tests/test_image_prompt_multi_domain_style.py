@@ -73,10 +73,10 @@ def test_image_prompt_injects_dynamic_prompt_library_for_multiple_domains() -> N
             ),
             "image_spec": {"type": "detail_1", "desc": "详情图1", "group_title": "登山 look", "indices": [0]},
             "selected": (
-                ".agents/prompt/fashion-pure-color.md",
-                "Use fashion-pure-color guidance: pure color background and one flat-lay outfit.",
+                ".agents/prompt/image/fashion/pure-color-single-look.md",
+                "Use pure-color-single-look guidance: pure color background and one flat-lay outfit.",
             ),
-            "expected": ["fashion-pure-color", "pure color background", "轻量冲锋衣"],
+            "expected": ["pure-color-single-look", "pure color background", "轻量冲锋衣"],
             "unexpected": ["甜品店"],
         },
         {
@@ -90,10 +90,10 @@ def test_image_prompt_injects_dynamic_prompt_library_for_multiple_domains() -> N
             "research": _research(("柠檬塔和拿铁", "木桌、陶瓷盘、自然光下的甜品组合")),
             "image_spec": {"type": "detail_1", "desc": "详情图1", "group_title": "甜品桌面", "indices": [0]},
             "selected": (
-                ".agents/prompt/food-editorial.md",
-                "Use food-editorial guidance: food editorial photography with warm film color.",
+                ".agents/prompt/image/food/editorial-tabletop.md",
+                "Use editorial-tabletop guidance: food editorial photography with warm film color.",
             ),
-            "expected": ["food-editorial", "food editorial photography", "柠檬塔"],
+            "expected": ["editorial-tabletop", "food editorial photography", "柠檬塔"],
             "unexpected": ["冲锋衣"],
         },
         {
@@ -107,10 +107,10 @@ def test_image_prompt_injects_dynamic_prompt_library_for_multiple_domains() -> N
             "research": _research(("屏障精华", "半透明瓶身、白色标签、浴室货架感陈列")),
             "image_spec": {"type": "detail_1", "desc": "详情图1", "group_title": "产品陈列", "indices": [0]},
             "selected": (
-                ".agents/prompt/product-reference-image.md",
-                "Use product-reference-image guidance: reference image alignment and clean shelf composition.",
+                ".agents/prompt/image/product/reference-alignment.md",
+                "Use reference-alignment guidance: reference image alignment and clean shelf composition.",
             ),
-            "expected": ["product-reference-image", "reference image alignment", "半透明瓶身"],
+            "expected": ["reference-alignment", "reference image alignment", "半透明瓶身"],
             "unexpected": ["蛋糕"],
         },
     ]
