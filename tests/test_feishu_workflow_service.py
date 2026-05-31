@@ -5,6 +5,7 @@ from pathlib import Path
 
 from src.orchestration.conversation import ConversationRequest
 from src.orchestration.conversation import ContentRoute
+from src.orchestration.feishu_interactions import FeishuInteractionTools, InteractionDecision
 from src.orchestration.feishu_workflow import FeishuWorkflowService
 from src.orchestration.schemas import DeliveryPackage, ResultEnvelope
 
@@ -162,6 +163,22 @@ class RecordingInteractionTools:
         self.calls.append(f"delivered:{result.status}")
 
 
+def interaction_tools_for(
+    notifier: FakeNotifier,
+    *,
+    ask_route_choice: bool = False,
+    ask_style_choices: bool = False,
+) -> FeishuInteractionTools:
+    return FeishuInteractionTools(
+        notifier=notifier,
+        route_resolver=lambda request: request.route_hint or ContentRoute.IMAGE_POST,
+        interaction_decider=lambda request: InteractionDecision(
+            ask_route_choice=ask_route_choice,
+            ask_style_choices=ask_style_choices,
+        ),
+    )
+
+
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
@@ -180,6 +197,7 @@ async def test_workflow_service_handles_one_text_request() -> None:
         notifier=notifier,
         orchestrator=orchestrator,
         acquire_session=fake_acquire,
+        interaction_tools=interaction_tools_for(notifier),
     )
 
     await service.handle_text("任务：主题=纯色背景穿搭；受众=通勤女生；路线=image_post；风格=纯色背景,单套展示。请执行。")
@@ -232,6 +250,7 @@ async def test_workflow_service_accepts_free_text_without_fixed_format() -> None
         notifier=notifier,
         orchestrator=orchestrator,
         acquire_session=fake_acquire,
+        interaction_tools=interaction_tools_for(notifier),
     )
 
     await service.handle_text("我想发一组通勤穿搭图片，画面要干净一点，最后发飞书。")
@@ -255,6 +274,7 @@ async def test_workflow_service_asks_route_with_buttons_for_sparse_request() -> 
         notifier=notifier,
         orchestrator=orchestrator,
         acquire_session=fake_acquire,
+        interaction_tools=interaction_tools_for(notifier, ask_route_choice=True),
     )
 
     await service.handle_text("帮我做一条内容")
@@ -263,6 +283,29 @@ async def test_workflow_service_asks_route_with_buttons_for_sparse_request() -> 
     assert request.route_hint is ContentRoute.ARTICLE_POST
     assert notifier.sent_cards
     assert ("你决定，直接开始", "__route__:auto") in notifier.sent_cards[0]["buttons"]
+
+
+@pytest.mark.anyio
+async def test_workflow_service_new_session_shortcut_cancels_current_request() -> None:
+    session = FakeSession()
+    notifier = FakeNotifier(replies=["__control__:new_session"])
+    orchestrator = FakeOrchestrator()
+
+    async def fake_acquire(*, workflow: str, summary: str):
+        return session, None
+
+    service = FeishuWorkflowService(
+        notifier=notifier,
+        orchestrator=orchestrator,
+        acquire_session=fake_acquire,
+        interaction_tools=interaction_tools_for(notifier, ask_route_choice=True),
+    )
+
+    await service.handle_text("帮我做一条内容")
+
+    assert orchestrator.calls == []
+    assert session.finished == ["cancelled"]
+    assert any("新会话" in message for message in notifier.sent_messages)
 
 
 @pytest.mark.anyio
@@ -282,6 +325,7 @@ async def test_workflow_service_collects_style_choices_with_multiselect_form() -
         notifier=notifier,
         orchestrator=orchestrator,
         acquire_session=fake_acquire,
+        interaction_tools=interaction_tools_for(notifier, ask_style_choices=True),
     )
 
     await service.handle_text("帮我做一组通勤穿搭图片")
@@ -307,6 +351,7 @@ async def test_workflow_service_autonomous_request_does_not_force_choices() -> N
         notifier=notifier,
         orchestrator=orchestrator,
         acquire_session=fake_acquire,
+        interaction_tools=interaction_tools_for(notifier),
     )
 
     await service.handle_text("不指定任务，让你自行探索，最后把作品发到飞书。")
@@ -339,6 +384,7 @@ async def test_workflow_service_turns_initial_reference_image_into_request_attac
         notifier=notifier,
         orchestrator=orchestrator,
         acquire_session=fake_acquire,
+        interaction_tools=interaction_tools_for(notifier),
     )
 
     await service.handle_reference_image(reference)

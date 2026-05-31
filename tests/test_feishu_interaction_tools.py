@@ -3,7 +3,11 @@ from __future__ import annotations
 import pytest
 
 from src.orchestration.conversation import ContentRoute, ConversationRequest
-from src.orchestration.feishu_interactions import FeishuInteractionTools
+from src.orchestration.feishu_interactions import (
+    FeishuInteractionTools,
+    FeishuSessionResetRequested,
+    InteractionDecision,
+)
 from src.orchestration.schemas import DeliveryPackage, ResultEnvelope
 
 
@@ -94,10 +98,125 @@ def anyio_backend() -> str:
 
 
 @pytest.mark.anyio
+async def test_interaction_tools_delegates_clarification_decision_without_keyword_rules() -> None:
+    session = FakeSession()
+    notifier = FakeNotifier()
+    decision_calls: list[ConversationRequest] = []
+
+    async def decide(request: ConversationRequest) -> InteractionDecision:
+        decision_calls.append(request)
+        return InteractionDecision(
+            ask_route_choice=False,
+            ask_style_choices=False,
+            rationale="Planner has enough context to proceed.",
+        )
+
+    tools = FeishuInteractionTools(
+        notifier=notifier,
+        interaction_decider=decide,
+        route_resolver=lambda request: ContentRoute.IMAGE_POST,
+    )
+
+    request = ConversationRequest(topic="内容", audience="泛人群", message="帮我做一条内容")
+
+    clarified = await tools.clarify_request_if_needed(session, request)
+
+    assert clarified == request
+    assert decision_calls == [request]
+    assert notifier.sent_cards == []
+    assert notifier.sent_forms == []
+
+
+@pytest.mark.anyio
+async def test_interaction_tools_asks_choices_only_when_decider_requests_them() -> None:
+    session = FakeSession()
+    notifier = FakeNotifier(
+        replies=[
+            "__route__:image_post",
+            '__FORM__:{"style_pure_color":true,"style_single_look":true}',
+        ]
+    )
+
+    async def decide(request: ConversationRequest) -> InteractionDecision:
+        return InteractionDecision(
+            ask_route_choice=True,
+            ask_style_choices=True,
+            rationale="User asked for an image post but needs route/style confirmation.",
+        )
+
+    tools = FeishuInteractionTools(
+        notifier=notifier,
+        interaction_decider=decide,
+        route_resolver=lambda request: ContentRoute.IMAGE_POST,
+    )
+
+    request = ConversationRequest(
+        topic="明确的图文任务",
+        audience="泛人群",
+        message="请直接做图文，正常情况下旧关键词规则不会追问路线。",
+    )
+
+    clarified = await tools.clarify_request_if_needed(session, request)
+
+    assert clarified.route_hint is ContentRoute.IMAGE_POST
+    assert "纯色背景" in clarified.style_constraints
+    assert "每张图只展示一套穿搭" in clarified.style_constraints
+    assert len(notifier.sent_cards) == 1
+    assert len(notifier.sent_forms) == 1
+
+
+@pytest.mark.anyio
+async def test_interaction_tools_exposes_generic_choice_prompt_primitive() -> None:
+    session = FakeSession()
+    notifier = FakeNotifier(replies=["__priority__:when_idle"])
+    tools = FeishuInteractionTools(notifier=notifier)
+
+    reply = await tools.ask_single_choice_prompt(
+        session,
+        title="这条用户消息怎么处理？",
+        options_spec="立即中断::interrupt||当前任务后处理::when_idle",
+        phase="control_priority",
+        value_prefix="__priority__:",
+        summary="消息插入时机",
+    )
+
+    assert reply == "__priority__:when_idle"
+    assert notifier.sent_cards[0]["buttons"] == [
+        ("立即中断", "__priority__:interrupt"),
+        ("当前任务后处理", "__priority__:when_idle"),
+    ]
+
+
+@pytest.mark.anyio
+async def test_interaction_tools_exposes_generic_multiselect_prompt_primitive() -> None:
+    session = FakeSession()
+    notifier = FakeNotifier(replies=['__FORM__:{"flatlay":true,"no_people":true}'])
+    tools = FeishuInteractionTools(notifier=notifier)
+
+    reply = await tools.ask_multi_select_prompt(
+        session,
+        title="请选择图片约束",
+        options_spec="平铺::flatlay||不要人物::no_people",
+        phase="image_constraints",
+        input_name="extra",
+        summary="图片约束",
+    )
+
+    assert reply == '__FORM__:{"flatlay":true,"no_people":true}'
+    assert notifier.sent_forms[0]["checkers"] == [
+        {"name": "flatlay", "text": "平铺", "checked": False},
+        {"name": "no_people", "text": "不要人物", "checked": False},
+    ]
+
+
+@pytest.mark.anyio
 async def test_interaction_tools_clarify_route_with_choice_card() -> None:
     session = FakeSession()
     notifier = FakeNotifier(replies=["__route__:video_post"])
-    tools = FeishuInteractionTools(notifier=notifier)
+    tools = FeishuInteractionTools(
+        notifier=notifier,
+        interaction_decider=lambda request: InteractionDecision(ask_route_choice=True),
+    )
 
     request = ConversationRequest(topic="内容", audience="泛人群", message="帮我做一条内容")
 
@@ -114,7 +233,11 @@ async def test_interaction_tools_collect_style_choices_with_form() -> None:
     notifier = FakeNotifier(
         replies=['__FORM__:{"style_pure_color":true,"style_single_look":true,"style_extra":"不要人物"}']
     )
-    tools = FeishuInteractionTools(notifier=notifier)
+    tools = FeishuInteractionTools(
+        notifier=notifier,
+        interaction_decider=lambda request: InteractionDecision(ask_style_choices=True),
+        route_resolver=lambda request: ContentRoute.IMAGE_POST,
+    )
 
     request = ConversationRequest(topic="通勤穿搭图片", audience="泛人群", message="帮我做一组通勤穿搭图片")
 
@@ -125,6 +248,21 @@ async def test_interaction_tools_collect_style_choices_with_form() -> None:
     assert "不要人物" in clarified.style_constraints
     assert notifier.sent_forms
     assert notifier.sent_forms[0]["phase"] == "clarify_style"
+
+
+@pytest.mark.anyio
+async def test_interaction_tools_new_session_control_raises_reset_request() -> None:
+    session = FakeSession()
+    notifier = FakeNotifier(replies=["__control__:new_session"])
+    tools = FeishuInteractionTools(
+        notifier=notifier,
+        interaction_decider=lambda request: InteractionDecision(ask_route_choice=True),
+    )
+
+    request = ConversationRequest(topic="内容", audience="泛人群", message="帮我做一条内容")
+
+    with pytest.raises(FeishuSessionResetRequested):
+        await tools.clarify_request_if_needed(session, request)
 
 
 @pytest.mark.anyio

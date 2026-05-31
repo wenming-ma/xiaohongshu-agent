@@ -368,6 +368,32 @@ class FeishuNotifier:
                     challenger_session_id=challenger_session_id,
                     action=control_action,
                 )
+                return
+            session_id = action_value.get("session_id", "")
+            phase = action_value.get("phase")
+            if session_id:
+                routing_state = self._session_manager.get_routing_state(chat_id)
+                if routing_state is None or routing_state.session_id != session_id:
+                    logger.info("忽略过期/非当前会话控制事件: %s", session_id)
+                    return
+                self._enqueue_session_event(
+                    session_id,
+                    FeishuInputEvent(
+                        kind="control",
+                        text=f"__control__:{control_action}",
+                        phase=phase,
+                        action=control_action,
+                        payload=dict(action_value),
+                    ),
+                )
+                return
+            if self._loop is not None:
+                asyncio.run_coroutine_threadsafe(
+                    self._media_queue.put((f"__control__:{control_action}", None)),
+                    self._loop,
+                )
+            else:
+                self._media_queue.put_nowait((f"__control__:{control_action}", None))
             return
 
         keyword = action_value.get("keyword", "")

@@ -11,7 +11,7 @@ from src.utils.logger import get_logger
 
 from .controller import FeishuContentOrchestrator
 from .conversation import ContentRoute, ConversationRequest
-from .feishu_interactions import FeishuInteractionTools
+from .feishu_interactions import FeishuInteractionTools, FeishuSessionResetRequested
 from .request_parser import parse_conversation_request
 
 logger = get_logger(__name__)
@@ -54,6 +54,9 @@ class FeishuWorkflowService:
                 await self.interaction_tools.send_runtime_error()
 
     async def handle_text(self, text: str) -> None:
+        if self._is_new_session_control(text):
+            await self.interaction_tools.announce_session_reset()
+            return
         request = parse_conversation_request(text)
         await self._handle_request(request)
 
@@ -113,6 +116,10 @@ class FeishuWorkflowService:
             )
             session_status = "completed" if result.status == "success" else "cancelled"
             await self.interaction_tools.announce_delivery_result(session, result)
+        except FeishuSessionResetRequested:
+            session_status = "cancelled"
+            await self.interaction_tools.announce_session_reset(session)
+            return
         finally:
             if session is not None:
                 await finalize_interactive_session(session, status=session_status)
@@ -132,6 +139,9 @@ class FeishuWorkflowService:
 
     def _build_run_id(self, route: str) -> str:
         return f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{route}"
+
+    def _is_new_session_control(self, text: str) -> bool:
+        return text.strip() == "__control__:new_session"
 
     async def _resolve_route_for_interactions(self, request: ConversationRequest) -> ContentRoute:
         planner = getattr(self.orchestrator, "planner", None)

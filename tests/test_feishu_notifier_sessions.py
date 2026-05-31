@@ -82,6 +82,24 @@ def test_control_card_action_is_resolved_by_session_manager():
     assert notifier._session_queues == {}
 
 
+def test_new_session_shortcut_routes_as_control_event_to_active_session_queue():
+    notifier = _build_notifier()
+
+    notifier._route_card_action_value(
+        {
+            "chat_id": "chat-1",
+            "control_action": "new_session",
+            "session_id": "sess-active",
+        }
+    )
+
+    queue = notifier._session_queues["sess-active"]
+    event = queue.get_nowait()
+    assert event.kind == "control"
+    assert event.action == "new_session"
+    assert event.text == "__control__:new_session"
+
+
 def test_session_wait_starts_polling_before_waiting_for_events():
     notifier = _build_notifier()
     started = False

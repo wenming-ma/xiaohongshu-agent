@@ -6,14 +6,83 @@ from inspect import isawaitable
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent
+
+from src.config.settings import RetryConfig
 from src.utils.feishu_notifier import FeishuNotifier, get_feishu_notifier
+from src.utils.providers import get_text_model
 
 from .conversation import ContentRoute, ConversationRequest
-from .request_parser import is_autonomous_request_text, parse_conversation_request
+from .feishu_translation import FeishuInteractionTranslator, parse_delimited_options
+from .request_parser import parse_conversation_request
 from .schemas import DeliveryPackage, ResultEnvelope
 
 
 RouteResolver = Callable[[ConversationRequest], ContentRoute | Awaitable[ContentRoute]]
+
+
+class InteractionDecision(BaseModel):
+    """Agent decision for Feishu clarification UX."""
+
+    ask_route_choice: bool = Field(
+        default=False,
+        description="Whether Feishu should ask the user to choose image/article/video.",
+    )
+    ask_style_choices: bool = Field(
+        default=False,
+        description="Whether Feishu should ask the user to choose image style constraints.",
+    )
+    rationale: str = Field(default="", description="Brief reason for the decision.")
+
+
+InteractionDecider = Callable[[ConversationRequest], InteractionDecision | Awaitable[InteractionDecision]]
+
+
+class FeishuSessionResetRequested(RuntimeError):
+    """Raised when the Feishu activation layer asks to discard the current session."""
+
+
+INTERACTION_DECISION_SYSTEM_PROMPT = """你是飞书内容系统的交互决策 Agent。
+
+你的职责只是在用户请求进入专项 Agent 前，判断是否需要通过飞书卡片向用户追问。
+不要执行内容任务，不要选择具体图片模板，不要替专项 Agent 工作。
+
+架构准则：
+- 用户可以随意表达，不要求固定格式。
+- 能直接开始就不要追问；缺少关键信息且追问能显著降低误解时才追问。
+- 追问只能是飞书交互墙可以承载的选择：路线选择、图片风格多选。
+- 不要按关键词表触发；根据用户目标、明确程度、歧义和已有结构化字段判断。
+- 输出必须符合结构化 schema。
+"""
+
+
+class InteractionDecisionAgent:
+    """Agent-driven clarification decider for the Feishu interaction wall."""
+
+    def __init__(self) -> None:
+        self.agent = Agent(
+            model=get_text_model(),
+            output_type=InteractionDecision,
+            instrument=True,
+            retries=RetryConfig.AGENT_RETRIES,
+            system_prompt=(INTERACTION_DECISION_SYSTEM_PROMPT,),
+        )
+
+    async def decide(self, request: ConversationRequest) -> InteractionDecision:
+        payload = {
+            "request": request.model_dump(mode="json"),
+            "available_clarifications": [
+                "route_choice: image_post / article_post / video_post / auto",
+                "style_choices: pure color / single look / minimal / low saturation / free text",
+            ],
+        }
+        result = await self.agent.run(
+            "请判断这次飞书会话是否需要追问用户。\n"
+            "不要使用关键词触发规则；只根据任务是否足够明确来决定。\n\n"
+            f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
+        )
+        return result.output
 
 
 class FeishuInteractionTools:
@@ -24,9 +93,13 @@ class FeishuInteractionTools:
         *,
         notifier: FeishuNotifier | Any | None = None,
         route_resolver: RouteResolver | None = None,
+        interaction_decider: InteractionDecider | None = None,
     ) -> None:
         self.notifier = notifier or get_feishu_notifier()
         self.route_resolver = route_resolver
+        self.interaction_decider = interaction_decider
+        self.translator = FeishuInteractionTranslator(notifier=self.notifier)
+        self._decision_agent: InteractionDecisionAgent | None = None
 
     async def send_busy(self, reason: str) -> None:
         await self.notifier.send_message(f"当前会话忙碌中，暂时无法接管：{reason}")
@@ -37,12 +110,25 @@ class FeishuInteractionTools:
     async def send_runtime_error(self) -> None:
         await self.notifier.send_message("处理请求时发生异常，请稍后重试。")
 
+    async def announce_session_reset(self, session: object | None = None) -> None:
+        message = "已开启新会话。后续消息会作为新的主 Agent 会话输入处理。"
+        if session is not None and hasattr(self.notifier, "send_session_message"):
+            await self.notifier.send_session_message(
+                session,
+                message,
+                phase="new_session",
+                summary="新开会话",
+            )
+            return
+        await self.notifier.send_message(message)
+
     async def clarify_request_if_needed(self, session: object, request: ConversationRequest) -> ConversationRequest:
-        if self._needs_route_choice(request):
+        decision = await self._decide_interaction(request)
+        if decision.ask_route_choice and request.route_hint is None:
             request = await self.ask_route_choice(session, request)
 
         route = request.route_hint or await self._resolve_route(request)
-        if route is ContentRoute.IMAGE_POST and self._needs_style_choices(request):
+        if route is ContentRoute.IMAGE_POST and decision.ask_style_choices and not request.style_constraints:
             request = await self.ask_style_choices(session, request)
         return request
 
@@ -85,27 +171,74 @@ class FeishuInteractionTools:
             summary=result.summary,
         )
 
-    async def ask_route_choice(self, session: object, request: ConversationRequest) -> ConversationRequest:
-        await self.notifier.send_session_card_message(
+    async def ask_single_choice_prompt(
+        self,
+        session: object,
+        *,
+        title: str,
+        options_spec: str,
+        phase: str,
+        value_prefix: str = "",
+        summary: str | None = None,
+    ) -> str:
+        await self.translator.ask_single_choice(
             session,
-            (
+            title=title,
+            options=parse_delimited_options(options_spec),
+            phase=phase,
+            value_prefix=value_prefix,
+            summary=summary,
+        )
+        _, reply = await self.notifier.wait_for_session_image_or_text(
+            session,
+            phase=phase,
+            summary=summary,
+        )
+        self._raise_if_control_reply(reply)
+        return reply
+
+    async def ask_multi_select_prompt(
+        self,
+        session: object,
+        *,
+        title: str,
+        options_spec: str,
+        phase: str,
+        input_name: str = "",
+        input_placeholder: str = "",
+        submit_label: str = "确认",
+        summary: str | None = None,
+    ) -> str:
+        await self.translator.ask_multi_select(
+            session,
+            title=title,
+            options=parse_delimited_options(options_spec),
+            phase=phase,
+            input_name=input_name,
+            input_placeholder=input_placeholder,
+            submit_label=submit_label,
+            summary=summary,
+        )
+        _, reply = await self.notifier.wait_for_session_image_or_text(
+            session,
+            phase=phase,
+            summary=summary,
+        )
+        self._raise_if_control_reply(reply)
+        return reply
+
+    async def ask_route_choice(self, session: object, request: ConversationRequest) -> ConversationRequest:
+        reply = await self.ask_single_choice_prompt(
+            session,
+            title=(
                 "我先按你的话理解任务，不需要固定格式。\n\n"
                 f"当前主题：{request.topic}\n"
                 f"当前受众：{request.audience}\n\n"
                 "这次更适合做成哪种交付？如果不想选，点“你决定”。"
             ),
-            [
-                ("图文", "__route__:image_post"),
-                ("文章", "__route__:article_post"),
-                ("视频", "__route__:video_post"),
-                ("你决定，直接开始", "__route__:auto"),
-            ],
+            options_spec="图文::image_post||文章::article_post||视频::video_post||你决定，直接开始::auto",
             phase="clarify_route",
-            summary=request.topic,
-        )
-        _, reply = await self.notifier.wait_for_session_image_or_text(
-            session,
-            phase="clarify_route",
+            value_prefix="__route__:",
             summary=request.topic,
         )
         return self._apply_route_reply(request, reply)
@@ -113,27 +246,20 @@ class FeishuInteractionTools:
     async def ask_style_choices(self, session: object, request: ConversationRequest) -> ConversationRequest:
         if not hasattr(self.notifier, "send_session_form_card"):
             return request
-        await self.notifier.send_session_form_card(
+        reply = await self.ask_multi_select_prompt(
             session,
-            (
+            title=(
                 "图片风格可以点选，也可以不选直接确认。\n\n"
                 "我会把你选的风格作为约束交给后续 Agent。"
             ),
-            [
-                {"name": "style_pure_color", "text": "纯色背景", "checked": False},
-                {"name": "style_single_look", "text": "每张图只展示一套穿搭", "checked": False},
-                {"name": "style_minimal", "text": "极简干净", "checked": False},
-                {"name": "style_low_saturation", "text": "低饱和高级感", "checked": False},
-            ],
+            options_spec=(
+                "纯色背景::style_pure_color||每张图只展示一套穿搭::style_single_look||"
+                "极简干净::style_minimal||低饱和高级感::style_low_saturation"
+            ),
             phase="clarify_style",
             input_name="style_extra",
             input_placeholder="也可以补充一句风格要求",
             submit_label="确认这些要求",
-            summary=request.topic,
-        )
-        _, reply = await self.notifier.wait_for_session_image_or_text(
-            session,
-            phase="clarify_style",
             summary=request.topic,
         )
         return self._apply_style_reply(request, reply)
@@ -177,6 +303,7 @@ class FeishuInteractionTools:
             text = reply.strip()
             if not text:
                 continue
+            self._raise_if_control_reply(text)
             if text == "__reference__:cancel":
                 return None
 
@@ -185,28 +312,15 @@ class FeishuInteractionTools:
                 update={"reference_images": [str(path) for path in reference_images]}
             )
 
-    def _needs_route_choice(self, request: ConversationRequest) -> bool:
-        if request.route_hint is not None:
-            return False
-        text = " ".join([request.topic, request.message]).lower()
-        if is_autonomous_request_text(request.message):
-            return False
-        if any(token in text for token in ("图片", "图文", "image", "文章", "长文", "article", "视频", "video")):
-            return False
-        generic_topics = {"内容", "一个内容", "一条内容", "飞书内容探索"}
-        return request.topic in generic_topics or len(request.message.strip()) <= 14 or any(
-            token in text for token in ("不知道", "不确定", "随便", "帮我想", "你看着办")
-        )
-
-    def _needs_style_choices(self, request: ConversationRequest) -> bool:
-        if request.style_constraints:
-            return False
-        if is_autonomous_request_text(request.message):
-            return False
-        text = " ".join([request.topic, request.message])
-        if any(token in text for token in ("风格", "纯色", "单套", "低饱和", "高级感", "极简", "干净")):
-            return False
-        return len(request.message.strip()) <= 40 or any(token in text for token in ("图片", "图文", "穿搭"))
+    async def _decide_interaction(self, request: ConversationRequest) -> InteractionDecision:
+        if self.interaction_decider is not None:
+            result = self.interaction_decider(request)
+            if isawaitable(result):
+                return await result
+            return result
+        if self._decision_agent is None:
+            self._decision_agent = InteractionDecisionAgent()
+        return await self._decision_agent.decide(request)
 
     async def _resolve_route(self, request: ConversationRequest) -> ContentRoute:
         if self.route_resolver is not None:
@@ -221,6 +335,7 @@ class FeishuInteractionTools:
 
     def _apply_route_reply(self, request: ConversationRequest, reply: str) -> ConversationRequest:
         text = reply.strip()
+        self._raise_if_control_reply(text)
         if text == "__route__:auto":
             return request
         if text.startswith("__route__:"):
@@ -235,6 +350,7 @@ class FeishuInteractionTools:
 
     def _apply_style_reply(self, request: ConversationRequest, reply: str) -> ConversationRequest:
         text = reply.strip()
+        self._raise_if_control_reply(text)
         if text.startswith("__FORM__:"):
             try:
                 values = json.loads(text.removeprefix("__FORM__:"))
@@ -264,6 +380,10 @@ class FeishuInteractionTools:
         if isinstance(extra, str) and extra.strip():
             selected.append(extra.strip())
         return selected
+
+    def _raise_if_control_reply(self, text: str) -> None:
+        if text.strip() == "__control__:new_session":
+            raise FeishuSessionResetRequested("new_session")
 
     def _merge_request(self, base: ConversationRequest, followup: ConversationRequest) -> ConversationRequest:
         styles = list(dict.fromkeys([*base.style_constraints, *followup.style_constraints]))
