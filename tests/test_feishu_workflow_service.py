@@ -14,11 +14,13 @@ class FakeSession:
         self.chat_id = "chat-demo"
         self.handle = type("Handle", (), {"session_id": "session-demo"})()
         self.finished = []
+        self.phases: list[str] = []
 
     async def ensure_active(self):
         return None
 
     async def update_phase(self, phase: str, *, summary: str | None = None):
+        self.phases.append(phase)
         return None
 
     async def finish(self, *, status: str = "completed"):
@@ -213,6 +215,8 @@ async def test_workflow_service_delegates_user_interaction_to_tools() -> None:
     assert interactions.calls == ["clarify", "started:image_post", "delivered:success"]
     assert orchestrator.calls
     assert notifier.sent_cards == []
+    assert "planning" in session.phases
+    assert "running_image_post" in session.phases
 
 
 @pytest.mark.anyio

@@ -8,6 +8,7 @@ from src.agents.image_post.schemas import GeneratedImage, ResearchItem, Research
 from src.agents.shared.login import AuthResult
 from src.orchestration.conversation import ConversationRequest
 from src.orchestration.image_route import ImagePostOrchestrator
+from src.orchestration.run_options import ImagePostRunOptions, ImageRunOptions, ResearchRunOptions
 from src.orchestration.style_context import StyleContext
 
 
@@ -138,6 +139,25 @@ class FailedPreflightResearchAgent(FakeResearchAgent):
     async def forward(self, topic: str, target_audience: str, output_dir: Path | None = None) -> ResearchResult:
         type(self).forward_calls += 1
         return await super().forward(topic=topic, target_audience=target_audience, output_dir=output_dir)
+
+
+class RaisingResearchAgent(FakeResearchAgent):
+    async def forward(self, topic: str, target_audience: str, output_dir: Path | None = None) -> ResearchResult:
+        raise RuntimeError("Exceeded maximum retries for output validation")
+
+
+class OptionsRecordingResearchAgent(FakeResearchAgent):
+    seen_run_options = None
+
+    def __init__(self, run_options=None) -> None:
+        type(self).seen_run_options = run_options
+
+
+class OptionsRecordingImageAgent(FakeImageAgent):
+    seen_run_options = None
+
+    def __init__(self, run_options=None) -> None:
+        type(self).seen_run_options = run_options
 
 
 @pytest.fixture
@@ -372,3 +392,70 @@ async def test_image_post_orchestrator_stops_when_research_access_preflight_fail
     manifest_text = (tmp_path / "run-image-route-auth-failed" / "manifest.json").read_text(encoding="utf-8")
     assert "research_access" in manifest_text
     assert '"step_id": "research"' not in manifest_text
+
+
+@pytest.mark.anyio
+async def test_image_post_orchestrator_passes_run_options_to_specialist_agents(tmp_path: Path) -> None:
+    OptionsRecordingResearchAgent.seen_run_options = None
+    OptionsRecordingImageAgent.seen_run_options = None
+    run_options = ImagePostRunOptions(
+        research=ResearchRunOptions(
+            min_posts_researched=6,
+            validation_max_retries=2,
+            min_key_infos=8,
+            min_cases=5,
+        ),
+        image=ImageRunOptions(
+            max_retries=2,
+            image_size="2K",
+            aspect_ratio="3:4",
+            reference_mode="gemini_content",
+        ),
+    )
+    orchestrator = ImagePostOrchestrator(
+        workspace_root=tmp_path,
+        research_agent_factory=OptionsRecordingResearchAgent,
+        content_agent_factory=FakeContentAgent,
+        image_agent_factory=OptionsRecordingImageAgent,
+    )
+
+    result = await orchestrator.run(
+        ConversationRequest(
+            topic="轻量化测试主题",
+            audience="内容团队",
+            image_count=1,
+            style_constraints=["纯色背景"],
+        ),
+        run_id="run-image-route-options",
+        run_options=run_options,
+        send_to_feishu=False,
+    )
+
+    assert result.status == "success"
+    assert OptionsRecordingResearchAgent.seen_run_options is run_options.research
+    assert OptionsRecordingImageAgent.seen_run_options is run_options.image
+    assert result.payload is not None
+    assert result.payload.metadata["run_options"]["research"]["min_posts_researched"] == 6
+    assert result.payload.metadata["run_options"]["image"]["max_retries"] == 2
+
+
+@pytest.mark.anyio
+async def test_image_post_orchestrator_returns_error_envelope_when_specialist_agent_raises(tmp_path: Path) -> None:
+    orchestrator = ImagePostOrchestrator(
+        workspace_root=tmp_path,
+        research_agent_factory=RaisingResearchAgent,
+        content_agent_factory=FakeContentAgent,
+        image_agent_factory=FakeImageAgent,
+    )
+
+    result = await orchestrator.run(
+        ConversationRequest(topic="异常调研", audience="内容团队", image_count=1),
+        run_id="run-image-route-specialist-error",
+        send_to_feishu=False,
+    )
+
+    assert result.status == "error"
+    assert result.step_id == "workflow"
+    assert "Exceeded maximum retries" in (result.error_message or "")
+    manifest_text = (tmp_path / "run-image-route-specialist-error" / "manifest.json").read_text(encoding="utf-8")
+    assert "workflow-error" in manifest_text

@@ -8,7 +8,7 @@ import pytest
 
 
 _IMAGE_AGENT_MODULES = (
-    ("src.agents.image_post.image.agent", "ImageAgent", {}),
+    ("src.agents.image_post.image.agent", "ImageAgent", {"image_size": "2K", "aspect_ratio": "3:4"}),
     ("src.agents.article_post.image.agent", "ImageAgent", {"aspect_ratio": "16:9"}),
     ("src.agents.video_post.cover.agent", "CoverAgent", {"aspect_ratio": "16:9"}),
 )

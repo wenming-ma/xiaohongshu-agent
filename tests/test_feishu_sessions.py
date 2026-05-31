@@ -6,7 +6,11 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from src.utils.feishu_sessions import FeishuSessionManager, SessionRevokedError
+from src.utils.feishu_sessions import (
+    FeishuSessionManager,
+    SessionRevokedError,
+    wait_for_session_activation,
+)
 
 
 def test_session_manager_blocks_second_session_until_takeover(tmp_path):
@@ -206,4 +210,45 @@ def test_session_manager_reclaims_stale_takeover_pending_session(tmp_path):
     state = manager.assert_active(recovered.session)
     assert state.workflow == "feishu_orchestrator"
     assert state.session_id == recovered.session.session_id
+    assert state.challenger_session_id is None
+
+
+@pytest.mark.anyio
+async def test_waiting_challenger_auto_promotes_when_active_owner_dies(tmp_path, monkeypatch):
+    manager = FeishuSessionManager(state_dir=tmp_path, stale_after_seconds=900)
+    alive_pids = {1001, 1002}
+    monkeypatch.setattr(manager, "_owner_process_alive", lambda pid: pid in alive_pids)
+
+    first = manager.acquire(
+        chat_id="chat-1",
+        workflow="image_post",
+        owner_pid=1001,
+        current_phase="research",
+        summary="first run",
+    )
+    second = manager.acquire(
+        chat_id="chat-1",
+        workflow="feishu_orchestrator",
+        owner_pid=1002,
+        current_phase="startup",
+        summary="new request",
+    )
+
+    assert first.outcome == "acquired"
+    assert second.outcome == "blocked"
+    assert second.reason == "active_session"
+
+    alive_pids.remove(1001)
+    wait_result = await wait_for_session_activation(
+        manager,
+        second.session,
+        timeout_seconds=1,
+        poll_interval_seconds=0.01,
+    )
+
+    assert wait_result.outcome == "acquired"
+    state = manager.assert_active(second.session)
+    assert state.session_id == second.session.session_id
+    assert state.owner_pid == 1002
+    assert state.status == "active"
     assert state.challenger_session_id is None

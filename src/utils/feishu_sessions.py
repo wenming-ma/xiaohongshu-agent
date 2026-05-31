@@ -145,6 +145,46 @@ class FeishuSessionManager:
         state.status = "active"
         return self._clear_challenger(state)
 
+    def _challenger_process_alive(self, state: FeishuChatSessionState) -> bool:
+        if state.challenger_owner_pid is None:
+            return False
+        return self._owner_process_alive(state.challenger_owner_pid)
+
+    def _refresh_takeover_pending_state_unlocked(
+        self,
+        chat_id: str,
+        state: FeishuChatSessionState,
+    ) -> FeishuChatSessionState:
+        if state.status != "takeover_pending":
+            return state
+
+        incumbent_inactive = self._is_stale(state) or self._is_abandoned(state)
+        challenger_alive = self._challenger_process_alive(state)
+
+        if incumbent_inactive and challenger_alive:
+            logger.info(
+                "自动接管孤儿 Feishu 会话: chat_id=%s owner_pid=%s challenger_pid=%s",
+                chat_id,
+                state.owner_pid,
+                state.challenger_owner_pid,
+            )
+            return self._write_state_unlocked(chat_id, self._promote_challenger(state))
+
+        if incumbent_inactive:
+            state.status = "expired"
+            return self._write_state_unlocked(chat_id, self._clear_challenger(state))
+
+        if state.challenger_session_id and not challenger_alive:
+            logger.info(
+                "清理失效 Feishu challenger: chat_id=%s challenger_pid=%s",
+                chat_id,
+                state.challenger_owner_pid,
+            )
+            state.status = "active"
+            return self._write_state_unlocked(chat_id, self._clear_challenger(state))
+
+        return state
+
     def _is_stale(self, state: FeishuChatSessionState) -> bool:
         try:
             heartbeat_at = datetime.fromisoformat(state.heartbeat_at)
@@ -224,6 +264,7 @@ class FeishuSessionManager:
             state = self._read_state_unlocked(chat_id)
             if state is None:
                 return None
+            state = self._refresh_takeover_pending_state_unlocked(chat_id, state)
             if state.status == "active" and (self._is_stale(state) or self._is_abandoned(state)):
                 state.status = "expired"
                 self._write_state_unlocked(chat_id, state)

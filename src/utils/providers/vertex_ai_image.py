@@ -60,11 +60,17 @@ class VertexAIImageClient:
     def _build_parts(
         prompt: str,
         reference_images: list[tuple[str, Path]] | list[Path] | None = None,
+        reference_mode: str = "gemini_content",
     ) -> list[types.Part]:
         parts: list[types.Part] = []
         current_label: str | None = None
 
-        for item in reference_images or []:
+        if reference_mode == "gemini_content":
+            references = reference_images or []
+        else:
+            references = []
+
+        for item in references:
             if isinstance(item, tuple):
                 label, ref_path = item
             else:
@@ -108,10 +114,11 @@ class VertexAIImageClient:
         aspect_ratio: Optional[str] = None,
         max_retries: int = _MAX_RETRIES,
         reference_images: list[tuple[str, Path]] | list[Path] | None = None,
+        reference_mode: str = "gemini_content",
     ) -> Path:
         size = image_size or self.image_size
         ratio = aspect_ratio or self.aspect_ratio
-        parts = self._build_parts(prompt, reference_images=reference_images)
+        parts = self._build_parts(prompt, reference_images=reference_images, reference_mode=reference_mode)
         contents = [types.Content(role="user", parts=parts)]
         config = types.GenerateContentConfig(
             response_modalities=["IMAGE", "TEXT"],
@@ -122,11 +129,12 @@ class VertexAIImageClient:
         )
 
         logger.info(
-            "Generating image with Vertex AI: %s (model=%s, image_size=%s, aspect_ratio=%s)",
+            "Generating image with Vertex AI: %s (model=%s, image_size=%s, aspect_ratio=%s, reference_mode=%s)",
             output_path.name,
             self.model,
             size,
             ratio,
+            reference_mode,
         )
 
         last_error: Exception | None = None
@@ -173,6 +181,7 @@ async def generate_vertex_ai_image(
     image_size: Optional[str] = None,
     aspect_ratio: Optional[str] = None,
     reference_images: list[tuple[str, Path]] | list[Path] | None = None,
+    reference_mode: str = "gemini_content",
 ) -> Path:
     client = VertexAIImageClient(aspect_ratio=aspect_ratio)
     return await client.generate_image(
@@ -181,4 +190,5 @@ async def generate_vertex_ai_image(
         image_size=image_size,
         aspect_ratio=aspect_ratio,
         reference_images=reference_images,
+        reference_mode=reference_mode,
     )

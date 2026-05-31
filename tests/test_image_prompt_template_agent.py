@@ -155,6 +155,14 @@ def test_generate_prompt_passes_style_context_to_template_agent() -> None:
 
     assert selector.calls[0]["style_context"] is style_context
     assert "温暖胶片感" in prompt
+    assert "## 图片提示词增强关键词" in prompt
+    assert "subject:" in prompt
+    assert "action:" in prompt
+    assert "location:" in prompt
+    assert "camera_control:" in prompt
+    assert "lighting:" in prompt
+    assert "style:" in prompt
+    assert "所有关键词都必须被纳入最终 Gemini 图片提示词" in prompt
 
 
 def test_generate_prompt_falls_back_when_template_agent_fails() -> None:
@@ -278,5 +286,8 @@ def test_generate_via_api_passes_reference_images_to_image_client(tmp_path: Path
 
     assert image_path == output_image
     assert image_client.calls[0]["reference_images"] == [("reference_1", reference)]
+    assert image_client.calls[0]["reference_mode"] == "gemini_content"
+    assert image_client.calls[0]["image_size"]
+    assert image_client.calls[0]["aspect_ratio"] == "3:4"
     assert "用户参考图片" in final_prompt
     assert "必须出现在生成图" in final_prompt

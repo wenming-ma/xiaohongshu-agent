@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 import mimetypes
+import inspect
 import re
 from typing import Any
 
@@ -17,6 +18,7 @@ from src.config.settings import PathConfig
 from .conversation import ConversationRequest
 from .image_flow import ImageWorkflowDeps, ImageWorkflowRunner
 from .request_brief import RequestBrief, build_request_brief
+from .run_options import ImagePostRunOptions
 from .schemas import (
     ArtifactRef,
     DeliveryPackage,
@@ -55,6 +57,7 @@ def _build_image_delivery_package(
     content: ResultEnvelope[XHSContent],
     images: list[ResultEnvelope[ImageResult]],
     style_context: StyleContext | None = None,
+    run_options: ImagePostRunOptions | None = None,
 ) -> DeliveryPackage:
     content_payload = content.payload
     research_payload = research.payload
@@ -95,6 +98,7 @@ def _build_image_delivery_package(
             "single_item_per_image": brief.single_item_per_image,
             "style_constraints": list(brief.style_constraints),
             "style_context": style_context.metadata() if style_context is not None else {},
+            "run_options": run_options.model_dump(mode="json") if run_options is not None else {},
         },
     )
 
@@ -132,12 +136,30 @@ class ImagePostOrchestrator:
         research_agent_factory: type[ResearchAgent] = ResearchAgent,
         content_agent_factory: type[ContentAgent] = ContentAgent,
         image_agent_factory: type[ImageAgent] = ImageAgent,
+        run_options: ImagePostRunOptions | None = None,
     ) -> None:
         self.workspace_root = workspace_root or PathConfig.ORCHESTRATION_RUN_DIR
         self.delivery_sender = delivery_sender
         self.research_agent_factory = research_agent_factory
         self.content_agent_factory = content_agent_factory
         self.image_agent_factory = image_agent_factory
+        self.run_options = run_options or ImagePostRunOptions()
+
+    @staticmethod
+    def _instantiate_agent(factory: Any, *, run_options: Any | None = None) -> Any:
+        if run_options is None:
+            return factory()
+        try:
+            signature = inspect.signature(factory)
+        except (TypeError, ValueError):
+            return factory(run_options=run_options)
+        accepts_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        )
+        if "run_options" in signature.parameters or accepts_kwargs:
+            return factory(run_options=run_options)
+        return factory()
 
     async def run(
         self,
@@ -147,9 +169,11 @@ class ImagePostOrchestrator:
         chat_id: str | None = None,
         send_to_feishu: bool = False,
         style_context: StyleContext | None = None,
+        run_options: ImagePostRunOptions | None = None,
     ) -> ResultEnvelope[DeliveryPackage]:
         brief = build_request_brief(request)
         style_context = style_context or StyleContext.from_request(request)
+        resolved_run_options = run_options or self.run_options or ImagePostRunOptions()
         resolved_run_id = run_id or f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{_safe_slug(brief.topic)}"
         workspace = WorkflowWorkspace.create(
             root_dir=self.workspace_root,
@@ -158,9 +182,15 @@ class ImagePostOrchestrator:
             topic=brief.topic,
             audience=brief.audience,
         )
-        research_agent = self.research_agent_factory()
+        research_agent = self._instantiate_agent(
+            self.research_agent_factory,
+            run_options=resolved_run_options.research,
+        )
         content_agent = self.content_agent_factory()
-        image_agent = self.image_agent_factory()
+        image_agent = self._instantiate_agent(
+            self.image_agent_factory,
+            run_options=resolved_run_options.image,
+        )
 
         async def run_research(
             *,
@@ -343,6 +373,7 @@ class ImagePostOrchestrator:
                 content=content,
                 images=images,
                 style_context=style_context,
+                run_options=resolved_run_options,
             )
             envelope = ResultEnvelope[DeliveryPackage].success(
                 agent_name="review_delivery_agent",
@@ -382,17 +413,27 @@ class ImagePostOrchestrator:
                     step_id="research_access",
                 )
 
-        result = await runner.run(
-            topic=brief.topic,
-            audience=brief.audience,
-            run_id=resolved_run_id,
-            workspace_dir=workspace.run_dir,
-            execution_text=brief.execution_text,
-            image_count=brief.image_count,
-            single_item_per_image=brief.single_item_per_image,
-        )
+        try:
+            result = await runner.run(
+                topic=brief.topic,
+                audience=brief.audience,
+                run_id=resolved_run_id,
+                workspace_dir=workspace.run_dir,
+                execution_text=brief.execution_text,
+                image_count=brief.image_count,
+                single_item_per_image=brief.single_item_per_image,
+            )
+        except Exception as exc:
+            result = ResultEnvelope[DeliveryPackage].error(
+                agent_name="feishu_image_post_orchestrator",
+                summary=f"image_post 工作流失败：{exc}",
+                error_message=str(exc),
+                run_id=resolved_run_id,
+                step_id="workflow",
+            )
+            workspace.save_envelope(result, label="workflow-error")
 
-        if send_to_feishu and self.delivery_sender is not None:
+        if send_to_feishu and self.delivery_sender is not None and result.status == "success":
             await self.delivery_sender.send(result, chat_id=chat_id)
 
         return result

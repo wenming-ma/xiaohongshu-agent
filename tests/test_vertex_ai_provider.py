@@ -106,6 +106,21 @@ def test_vertex_ai_image_client_uses_adc_project_and_reference_images(monkeypatc
     assert parts[-1].text == "draw a cover"
 
 
+def test_vertex_ai_image_client_can_disable_reference_image_parts(tmp_path: Path) -> None:
+    module = _load_module("src.utils.providers.vertex_ai_image")
+    ref_path = tmp_path / "reference.png"
+    ref_path.write_bytes(b"ref-bytes")
+
+    parts = module.VertexAIImageClient._build_parts(
+        "draw without reference",
+        reference_images=[("bag", ref_path)],
+        reference_mode="none",
+    )
+
+    assert len(parts) == 1
+    assert parts[0].text == "draw without reference"
+
+
 def test_vertex_ai_vision_client_returns_structured_output(monkeypatch, tmp_path: Path) -> None:
     module = _load_module("src.utils.providers.vertex_ai_vision")
     captured: dict[str, object] = {}

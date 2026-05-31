@@ -96,6 +96,7 @@ class FeishuWorkflowService:
         session_status = "cancelled"
         try:
             request = await self.interaction_tools.clarify_request_if_needed(session, request)
+            await self._update_session_phase(session, "planning", summary=request.topic)
             prepare_request = getattr(self.orchestrator, "prepare_request", None)
             if callable(prepare_request):
                 request = prepare_request(request)
@@ -103,6 +104,7 @@ class FeishuWorkflowService:
             plan = await planner.plan(request) if planner is not None else None
             route_label = plan.route.value if plan is not None else (request.route_hint.value if request.route_hint else "auto")
             await self.interaction_tools.announce_execution_started(session, request, route_label=route_label)
+            await self._update_session_phase(session, f"running_{route_label}", summary=request.topic)
             result = await self.orchestrator.run_request(
                 request,
                 chat_id=session.chat_id,
@@ -122,6 +124,11 @@ class FeishuWorkflowService:
             summary=summary,
             current_phase="startup",
         )
+
+    async def _update_session_phase(self, session: object, phase: str, *, summary: str | None = None) -> None:
+        update_phase = getattr(session, "update_phase", None)
+        if callable(update_phase):
+            await update_phase(phase, summary=summary)
 
     def _build_run_id(self, route: str) -> str:
         return f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{route}"
