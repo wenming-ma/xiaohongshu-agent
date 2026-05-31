@@ -2,7 +2,11 @@ import asyncio
 from pathlib import Path
 
 from src.agents.image_post.image.agent import ImageAgent
-from src.agents.image_post.image.template_agent import ImagePromptTemplateAgent, TemplateSelectionResult
+from src.agents.image_post.image.template_agent import (
+    ImagePromptTemplateAgent,
+    TemplateSelectionResult,
+    build_template_selection_prompt,
+)
 from src.agents.image_post.schemas import ImageGenContext, ResearchItem, ResearchResult, XHSContent
 
 
@@ -18,13 +22,14 @@ class _RecordingTemplateSelector:
     def __init__(self) -> None:
         self.calls = []
 
-    async def select_template(self, *, topic, content, research, image_spec):
+    async def select_template(self, *, topic, content, research, image_spec, style_context):
         self.calls.append(
             {
                 "topic": topic,
                 "content": content,
                 "research": research,
                 "image_spec": image_spec,
+                "style_context": style_context,
             }
         )
         return TemplateSelectionResult(
@@ -84,11 +89,48 @@ def test_generate_prompt_lets_template_agent_explore_for_current_group() -> None
     )
 
     assert selector.calls[0]["image_spec"]["indices"] == [0]
+    assert selector.calls[0]["style_context"] is None
     assert "本图主题板块：早餐路线" in prompt
     assert "肉夹馍" in prompt
     assert "冰峰" not in prompt
     assert "Use the local template as a warm editorial tabletop visual direction." in prompt
     assert "repo/prompt.md" in prompt
+
+
+def test_generate_prompt_passes_style_context_to_template_agent() -> None:
+    from src.orchestration.style_context import StyleContext
+
+    agent = ImageAgent.__new__(ImageAgent)
+    agent.prompt_generator = _EchoPromptGenerator()
+    selector = _RecordingTemplateSelector()
+    agent.template_selector = selector
+    style_context = StyleContext(
+        user_constraints=["温暖胶片感", "桌面美食摄影"],
+        matched_skills=[],
+        prompt_refs=[],
+        hard_constraints=["温暖胶片感"],
+        negative_constraints=[],
+        trace={"source": "test"},
+    )
+
+    prompt = asyncio.run(
+        agent.generate_prompt(
+            content=_content(),
+            research=_research(),
+            topic="西安周末美食路线",
+            image_spec={
+                "type": "detail_1",
+                "desc": "详情图1 - 语义分组：早餐路线",
+                "group_title": "早餐路线",
+                "indices": [0],
+            },
+            gen_ctx=ImageGenContext(topic="西安周末美食路线", image_type="detail_1"),
+            style_context=style_context,
+        )
+    )
+
+    assert selector.calls[0]["style_context"] is style_context
+    assert "温暖胶片感" in prompt
 
 
 def test_generate_prompt_falls_back_when_template_agent_fails() -> None:
@@ -135,3 +177,32 @@ def test_template_agent_skips_model_when_template_root_missing(tmp_path: Path) -
 
     assert result.fallback_used is True
     assert result.prompt_guidance == ""
+
+
+def test_template_selection_prompt_includes_style_context_for_agent_choice() -> None:
+    from src.orchestration.style_context import StyleContext
+
+    prompt = build_template_selection_prompt(
+        topic="周末甜品探店",
+        content=_content(),
+        research=_research(),
+        image_spec={
+            "type": "detail_1",
+            "desc": "详情图1 - 语义分组：早餐路线",
+            "group_title": "早餐路线",
+            "indices": [0],
+        },
+        style_context=StyleContext(
+            user_constraints=["温暖胶片感", "桌面美食摄影"],
+            matched_skills=["feishu-review-delivery"],
+            prompt_refs=[],
+            hard_constraints=["自然光"],
+            negative_constraints=["不要菜单板"],
+            trace={"source": "test"},
+        ),
+    )
+
+    assert "style_context" in prompt
+    assert "温暖胶片感" in prompt
+    assert "桌面美食摄影" in prompt
+    assert "不要菜单板" in prompt

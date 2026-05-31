@@ -1,6 +1,6 @@
 ---
 name: feishu-review-delivery
-description: Use when final content should be packaged for Feishu review instead of direct publishing, especially when the workflow needs a concise summary, structured body text, and attached media artifacts.
+description: Use when final content should be packaged for Feishu review as the formal delivery endpoint, especially when the workflow needs a concise summary, structured body text, and attached media artifacts.
 ---
 
 # Feishu Review Delivery

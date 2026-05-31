@@ -377,6 +377,7 @@ class ImageAgent(BaseAgent):
             research=research,
             topic=topic,
             image_spec=image_spec,
+            style_context=style_context,
         )
         if template_guidance:
             user_prompt += "\n\n" + template_guidance
@@ -399,9 +400,6 @@ class ImageAgent(BaseAgent):
         image_spec: ImageTypeSpec,
         style_context: StyleContext | None = None,
     ) -> str:
-        if style_context is not None and style_context.prompt_refs:
-            return style_context.to_prompt_section()
-
         selector = getattr(self, "template_selector", None)
         if selector is None:
             return ""
@@ -411,6 +409,7 @@ class ImageAgent(BaseAgent):
                 content=content,
                 research=research,
                 image_spec=image_spec,
+                style_context=style_context,
             )
         except Exception as exc:
             logger.warning("动态提示词模板选择失败，回退固定提示词: %s", exc)

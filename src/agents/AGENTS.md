@@ -25,7 +25,7 @@ The formal product architecture is Feishu-first. Specialist agents live under
 
 - Agent classes inherit `BaseAgent` and implement `forward`, `step`, and `validate` where applicable.
 - Phase-local prompts stay beside the agent in `prompts.py`.
-- Shared style prompt snippets are loaded through `StyleContext` from `.agents/prompt/` and Skills; do not hard-code style libraries in specialist agents.
+- Shared style prompt snippets live in `.agents/prompt/` and are selected by `ImagePromptTemplateAgent` with directory tools using the current request, image group, and `StyleContext`; do not keyword-trigger prompt snippets in `StyleContext` or hard-code style libraries in specialist agents.
 - Content-type helper modules stay under `src/agents/<content_type>/utils/`.
 - Infrastructure helpers stay under `src/utils/`, `src/config/`, or `src/core/`.
 - Do not add new direct runners or platform-publishing phases.

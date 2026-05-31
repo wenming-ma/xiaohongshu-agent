@@ -113,52 +113,17 @@ def test_prompt_library_lives_in_agents_prompt_without_legacy_root() -> None:
     assert legacy_root_name not in (PROJECT_ROOT / ".gitignore").read_text(encoding="utf-8")
 
 
-def test_style_context_loads_repository_prompt_library_for_multiple_domains() -> None:
-    registry = ProjectSkillRegistry(skills_root=PathConfig.AGENT_SKILLS_DIR)
-    cases = [
-        (
-            ConversationRequest(
-                topic="登山轻量化穿搭",
-                audience="户外新手女生",
-                message="做 5 张图，衣服平铺在纯色背景上，不要人物",
-                style_constraints=["纯色背景", "平铺", "不要人物", "单套穿搭"],
-                image_count=5,
-            ),
-            "pure color",
-            "fashion",
-        ),
-        (
-            ConversationRequest(
-                topic="周末甜品探店",
-                audience="城市通勤女生",
-                message="要温暖胶片感，桌面上有蛋糕、咖啡和自然光",
-                style_constraints=["温暖胶片感", "桌面美食摄影", "自然光"],
-                image_count=4,
-            ),
-            "food editorial",
-            "food",
-        ),
-        (
-            ConversationRequest(
-                topic="敏感肌精华测评",
-                audience="护肤新手",
-                message="参考产品图做成干净的货架感，不要把品牌名放太大",
-                style_constraints=["产品参考图对齐", "干净货架感", "弱化品牌名"],
-                image_count=3,
-            ),
-            "reference image",
-            "product",
-        ),
-    ]
+def test_style_context_does_not_keyword_select_prompt_library() -> None:
+    request = ConversationRequest(
+        topic="周末甜品探店",
+        audience="城市通勤女生",
+        message="要温暖胶片感，桌面上有蛋糕、咖啡和自然光",
+        style_constraints=["温暖胶片感", "桌面美食摄影", "自然光"],
+        image_count=4,
+    )
 
-    for request, expected_excerpt, expected_source_marker in cases:
-        matched_skills = registry.match(" ".join([request.topic, request.message, *request.style_constraints]))
-        context = StyleContext.from_request(request, matched_skills=matched_skills)
-        prompt_section = context.to_prompt_section().lower()
-        sources = " ".join(ref.source.lower() for ref in context.prompt_refs)
+    context = StyleContext.from_request(request, matched_skills=[])
 
-        assert context.prompt_refs
-        assert ".agents/prompt" in sources
-        assert expected_source_marker in sources
-        assert expected_excerpt in prompt_section
-        assert request.topic in context.trace["query"]
+    assert context.prompt_refs == []
+    assert context.trace["source"] == "conversation_request_and_project_skills"
+    assert context.trace["prompt_ref_count"] == 0

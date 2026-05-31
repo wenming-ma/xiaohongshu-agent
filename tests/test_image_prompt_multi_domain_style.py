@@ -1,6 +1,7 @@
 import asyncio
 
 from src.agents.image_post.image.agent import ImageAgent
+from src.agents.image_post.image.template_agent import TemplateSelectionResult
 from src.agents.image_post.schemas import ImageGenContext, ResearchItem, ResearchResult, XHSContent
 from src.config.settings import PathConfig
 from src.orchestration.conversation import ConversationRequest
@@ -14,6 +15,28 @@ class _EchoPromptGenerator:
             output = prompt
 
         return _Result()
+
+
+class _DomainPromptSelector:
+    def __init__(self, guidance_by_topic: dict[str, tuple[str, str]]) -> None:
+        self.guidance_by_topic = guidance_by_topic
+        self.calls = []
+
+    async def select_template(self, *, topic, content, research, image_spec, style_context):
+        self.calls.append(
+            {
+                "topic": topic,
+                "image_spec": image_spec,
+                "style_context": style_context,
+            }
+        )
+        source_path, guidance = self.guidance_by_topic[topic]
+        return TemplateSelectionResult(
+            source_paths=[source_path],
+            why_this_template="template selector agent chose this prompt from the user's current need",
+            group_content_fit="fits the current detail group",
+            prompt_guidance=guidance,
+        )
 
 
 def _content(topic: str) -> XHSContent:
@@ -52,6 +75,10 @@ def test_image_prompt_injects_dynamic_prompt_library_for_multiple_domains() -> N
                 ("甜品店", "这条内容不属于当前穿搭分组"),
             ),
             "image_spec": {"type": "detail_1", "desc": "详情图1", "group_title": "登山 look", "indices": [0]},
+            "selected": (
+                ".agents/prompt/fashion-pure-color.md",
+                "Use fashion-pure-color guidance: pure color background and one flat-lay outfit.",
+            ),
             "expected": ["fashion-pure-color", "pure color background", "轻量冲锋衣"],
             "unexpected": ["甜品店"],
         },
@@ -65,6 +92,10 @@ def test_image_prompt_injects_dynamic_prompt_library_for_multiple_domains() -> N
             ),
             "research": _research(("柠檬塔和拿铁", "木桌、陶瓷盘、自然光下的甜品组合")),
             "image_spec": {"type": "detail_1", "desc": "详情图1", "group_title": "甜品桌面", "indices": [0]},
+            "selected": (
+                ".agents/prompt/food-editorial.md",
+                "Use food-editorial guidance: food editorial photography with warm film color.",
+            ),
             "expected": ["food-editorial", "food editorial photography", "柠檬塔"],
             "unexpected": ["冲锋衣"],
         },
@@ -78,6 +109,10 @@ def test_image_prompt_injects_dynamic_prompt_library_for_multiple_domains() -> N
             ),
             "research": _research(("屏障精华", "半透明瓶身、白色标签、浴室货架感陈列")),
             "image_spec": {"type": "detail_1", "desc": "详情图1", "group_title": "产品陈列", "indices": [0]},
+            "selected": (
+                ".agents/prompt/product-reference-image.md",
+                "Use product-reference-image guidance: reference image alignment and clean shelf composition.",
+            ),
             "expected": ["product-reference-image", "reference image alignment", "半透明瓶身"],
             "unexpected": ["蛋糕"],
         },
@@ -85,12 +120,19 @@ def test_image_prompt_injects_dynamic_prompt_library_for_multiple_domains() -> N
 
     agent = ImageAgent.__new__(ImageAgent)
     agent.prompt_generator = _EchoPromptGenerator()
-    agent.template_selector = None
+    selector = _DomainPromptSelector(
+        {
+            case["request"].topic: case["selected"]
+            for case in cases
+        }
+    )
+    agent.template_selector = selector
 
     for case in cases:
         request = case["request"]
         matched_skills = registry.match(" ".join([request.topic, request.message, *request.style_constraints]))
         style_context = StyleContext.from_request(request, matched_skills=matched_skills)
+        assert not any(".agents/prompt" in ref.source for ref in style_context.prompt_refs)
         prompt = asyncio.run(
             agent.generate_prompt(
                 content=_content(request.topic),
@@ -106,3 +148,6 @@ def test_image_prompt_injects_dynamic_prompt_library_for_multiple_domains() -> N
             assert expected in prompt
         for unexpected in case["unexpected"]:
             assert unexpected not in prompt
+
+    assert len(selector.calls) == len(cases)
+    assert all(call["style_context"] is not None for call in selector.calls)

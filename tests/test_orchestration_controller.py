@@ -72,7 +72,7 @@ def test_planner_matches_skills_and_prefers_route_hint(tmp_path: Path) -> None:
         skills_root,
         "feishu-delivery",
         name="飞书交付整理",
-        description="Use when final content should be packaged and delivered to Feishu instead of direct publishing.",
+        description="Use when final content should be packaged and delivered to Feishu as the formal endpoint.",
     )
     planner = FeishuContentPlanner(skill_registry=ProjectSkillRegistry(skills_root=skills_root))
 
