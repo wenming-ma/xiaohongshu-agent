@@ -151,6 +151,26 @@ class FeishuInteractionTools:
             summary=request.topic,
         )
 
+    async def announce_request_updated(
+        self,
+        session: object,
+        request: ConversationRequest,
+        *,
+        text: str = "",
+        image_path: Path | None = None,
+    ) -> None:
+        parts = ["收到新的会话输入，已合并到当前任务并重新开始执行。"]
+        if text.strip():
+            parts.append(f"补充内容：{text.strip()[:120]}")
+        if image_path is not None:
+            parts.append(f"补充参考图：{image_path.name}")
+        await self.notifier.send_session_message(
+            session,
+            "\n".join(parts),
+            phase="running_update",
+            summary=request.topic,
+        )
+
     async def announce_delivery_result(
         self,
         session: object,

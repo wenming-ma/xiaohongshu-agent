@@ -9,6 +9,7 @@ from src.agents.image_post.image.template_agent import (
 )
 from src.agents.image_post.image.prompts import image_system_prompt
 from src.agents.image_post.schemas import ImageGenContext, ImageQualityReview, ResearchItem, ResearchResult, XHSContent
+from src.agents.image_post.utils.image import groups_to_image_specs
 from src.orchestration.run_options import ImageRunOptions
 
 
@@ -266,6 +267,37 @@ def test_template_selection_prompt_includes_style_context_for_agent_choice() -> 
     assert "温暖胶片感" in prompt
     assert "桌面美食摄影" in prompt
     assert "不要菜单板" in prompt
+
+
+def test_template_selection_prompt_defaults_to_pure_visual_not_title_card() -> None:
+    prompt = build_template_selection_prompt(
+        topic="雨天通勤鞋包护理",
+        content=_content(),
+        research=_research(),
+        image_spec={"type": "cover", "desc": "封面图"},
+    )
+
+    assert "优先纯视觉" in prompt
+    assert "不生成标题字卡" in prompt
+    assert "明确需要文字海报或信息图" in prompt
+
+
+def test_image_system_prompt_keeps_text_optional_for_realistic_images() -> None:
+    prompt = image_system_prompt()
+
+    assert "普通写实、产品、穿搭、生活方式图片优先做纯视觉图" in prompt
+    assert "不生成标题、副标题、海报字卡或大段文字" in prompt
+    assert "只有当前任务明确要求文字海报、信息图、知识卡或图内文字时" in prompt
+
+
+def test_cover_image_spec_no_longer_requests_big_title_card() -> None:
+    specs = groups_to_image_specs([{"title": "护理组合", "indices": [0]}])
+    cover_desc = str(specs[0]["desc"])
+
+    assert specs[0]["type"] == "cover"
+    assert "纯视觉主图" in cover_desc
+    assert "不要生成标题文字" in cover_desc
+    assert "大标题风格" not in cover_desc
 
 
 def test_generate_via_api_passes_reference_images_to_image_client(tmp_path: Path) -> None:

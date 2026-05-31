@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import pytest
 from pathlib import Path
 
@@ -103,6 +104,34 @@ class FakeNotifier:
         return None, self.replies.pop(0)
 
 
+class LiveEventNotifier(FakeNotifier):
+    def __init__(
+        self,
+        replies: list[str] | None = None,
+        media_replies: list[tuple[Path | None, str]] | None = None,
+        *,
+        release_event: asyncio.Event | None = None,
+    ) -> None:
+        super().__init__(replies=replies, media_replies=media_replies)
+        self.release_event = release_event
+
+    async def wait_for_session_image_or_text(
+        self,
+        session: FakeSession,
+        *,
+        phase: str,
+        summary: str | None = None,
+    ):
+        if self.release_event is not None:
+            await self.release_event.wait()
+            self.release_event = None
+        if self.media_replies:
+            return self.media_replies.pop(0)
+        if self.replies:
+            return None, self.replies.pop(0)
+        await asyncio.Future()
+
+
 class FakeOrchestrator:
     def __init__(self) -> None:
         self.calls: list[tuple[ConversationRequest, str | None]] = []
@@ -131,6 +160,37 @@ class FakeOrchestrator:
 
     async def plan(self, request: ConversationRequest):
         return type("_Plan", (), {"route": request.route_hint or ContentRoute.IMAGE_POST})()
+
+
+class CancellableOrchestrator(FakeOrchestrator):
+    def __init__(self) -> None:
+        super().__init__()
+        self.first_run_started = asyncio.Event()
+        self.cancelled_runs = 0
+
+    async def run_request(
+        self,
+        request: ConversationRequest,
+        *,
+        chat_id: str | None = None,
+        run_id: str | None = None,
+        send_to_feishu: bool = False,
+    ) -> ResultEnvelope[DeliveryPackage]:
+        self.calls.append((request, chat_id))
+        if len(self.calls) == 1:
+            self.first_run_started.set()
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                self.cancelled_runs += 1
+                raise
+        return ResultEnvelope[DeliveryPackage].success(
+            agent_name="delivery",
+            payload=DeliveryPackage(route="image_post", title=request.topic, summary="done"),
+            summary="done",
+            run_id=run_id or "run-demo",
+            step_id="delivery",
+        )
 
 
 class RecordingInteractionTools:
@@ -389,6 +449,63 @@ async def test_workflow_service_autonomous_request_does_not_force_choices() -> N
     assert request.topic == "近期小红书高互动生活方式内容趋势"
     assert notifier.sent_cards == []
     assert notifier.sent_forms == []
+
+
+@pytest.mark.anyio
+async def test_workflow_service_merges_running_followup_and_restarts() -> None:
+    session = FakeSession()
+    orchestrator = CancellableOrchestrator()
+    notifier = LiveEventNotifier(
+        replies=["补充一下：两张图都必须出现帽子和水壶，还是不要人物"],
+        release_event=orchestrator.first_run_started,
+    )
+
+    async def fake_acquire(*, workflow: str, summary: str):
+        return session, None
+
+    service = FeishuWorkflowService(
+        notifier=notifier,
+        orchestrator=orchestrator,
+        acquire_session=fake_acquire,
+        interaction_tools=interaction_tools_for(notifier),
+    )
+
+    await service.handle_text("做一条 2 张图的小红书图文，主题是春夏轻户外通勤穿搭，每张图一套穿搭，最终发飞书。")
+
+    assert len(orchestrator.calls) == 2
+    assert orchestrator.cancelled_runs == 1
+    request, _ = orchestrator.calls[1]
+    assert request.image_count == 2
+    assert "帽子和水壶" in request.message
+    assert any("已合并到当前任务" in message for message in notifier.sent_messages)
+    assert session.finished == ["completed"]
+
+
+@pytest.mark.anyio
+async def test_workflow_service_new_session_control_cancels_running_request() -> None:
+    session = FakeSession()
+    orchestrator = CancellableOrchestrator()
+    notifier = LiveEventNotifier(
+        replies=["__control__:new_session"],
+        release_event=orchestrator.first_run_started,
+    )
+
+    async def fake_acquire(*, workflow: str, summary: str):
+        return session, None
+
+    service = FeishuWorkflowService(
+        notifier=notifier,
+        orchestrator=orchestrator,
+        acquire_session=fake_acquire,
+        interaction_tools=interaction_tools_for(notifier),
+    )
+
+    await service.handle_text("做一条 2 张图的小红书图文，最终发飞书。")
+
+    assert len(orchestrator.calls) == 1
+    assert orchestrator.cancelled_runs == 1
+    assert any("新会话" in message for message in notifier.sent_messages)
+    assert session.finished == ["cancelled"]
 
 
 @pytest.mark.anyio

@@ -21,9 +21,16 @@ def test_parse_image_count_from_free_text() -> None:
     )
 
     assert request.image_count == 5
-    assert "纯色背景" in request.style_constraints
-    assert "不要人物" in request.style_constraints
-    assert "平铺" in request.style_constraints
+    assert request.style_constraints == []
+
+
+def test_parse_free_text_does_not_keyword_extract_style_constraints() -> None:
+    request = parse_conversation_request(
+        "做 2 张图，每张图只展示一套穿搭，背景必须纯色，不要人物，真实摄影质感。"
+    )
+
+    assert request.image_count == 2
+    assert request.style_constraints == []
 
 
 def test_parse_image_count_from_explicit_bare_number_field() -> None:

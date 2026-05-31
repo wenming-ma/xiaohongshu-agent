@@ -161,6 +161,7 @@ def _derive_negative_constraints(user_constraints: Sequence[str]) -> list[str]:
     negatives = [
         "不要生成登录弹窗、应用界面、app screenshots、工具报错、研究限制说明或 session 状态卡片",
         "不要把研究诊断信息、内部审核意见、提示词模板说明画进图片",
+        "除非当前图片任务明确要求文字海报、信息图或文字卡，否则不要生成标题、副标题、大段文字或任何可读文字；文字内容交给飞书正文承载",
     ]
     joined = " ".join(user_constraints)
     if any(marker in joined for marker in ("不要人物", "无人物", "不需要人物", "no people")):

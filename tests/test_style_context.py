@@ -150,6 +150,25 @@ def test_style_context_does_not_keyword_select_prompt_library() -> None:
     assert "query" not in context.trace
 
 
+def test_style_context_default_negative_constraints_prevent_text_cards() -> None:
+    request = ConversationRequest(
+        topic="雨天通勤鞋包护理",
+        audience="通勤女生",
+        message="生成真实摄影质感的产品图，干净纯色背景，不要人物",
+        style_constraints=[],
+        image_count=2,
+    )
+
+    context = StyleContext.from_request(request, matched_skills=[])
+    negative_text = " ".join(context.negative_constraints)
+
+    assert "标题" in negative_text
+    assert "副标题" in negative_text
+    assert "文字海报" in negative_text
+    assert "任何可读文字" in negative_text
+    assert "飞书正文" in negative_text
+
+
 def test_prompt_library_readme_records_agent_driven_template_selection() -> None:
     readme = (PROJECT_ROOT / ".agents" / "prompt" / "README.md").read_text(encoding="utf-8")
 

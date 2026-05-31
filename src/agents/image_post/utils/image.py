@@ -93,7 +93,7 @@ def calculate_grouping_params(
 def groups_to_image_specs(groups: list[GroupSpec]) -> list[ImageTypeSpec]:
     """将分组列表转换为图片生成规格列表"""
     image_types: list[ImageTypeSpec] = [
-        {"type": "cover", "desc": "封面图 - 大标题风格，突出主题"}
+        {"type": "cover", "desc": "封面图 - 纯视觉主图，突出主题；除非用户明确要求文字海报，否则不要生成标题文字"}
     ]
     for i, g in enumerate(groups, start=1):
         image_types.append({

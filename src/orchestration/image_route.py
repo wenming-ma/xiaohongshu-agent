@@ -311,7 +311,7 @@ class ImagePostOrchestrator:
                 "desc": str(
                     group.get("desc")
                     or (
-                        "封面图 - 大标题风格，突出主题"
+                        "封面图 - 纯视觉主图，突出主题；除非用户明确要求文字海报，否则不要生成标题文字"
                         if image_type == "cover"
                         else f"详情图 - 语义分组：{group.get('title', '')}"
                     )

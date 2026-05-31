@@ -117,20 +117,14 @@ def _extract_topic(text: str, *, audience: str | None) -> str:
 
 
 def _extract_style_constraints(text: str, explicit: str | None) -> list[str]:
-    if explicit:
-        items = []
-        for item in re.split(r"[,，]", explicit):
-            cleaned = re.sub(r"[。.!！]+.*$", "", item.strip()).strip()
-            if cleaned:
-                items.append(cleaned)
-        return items
-    matched: list[str] = []
-    for keyword in ("纯色背景", "单套展示", "每张图只放一套", "不要人物", "无人物", "平铺", "低饱和", "极简", "高级感"):
-        if keyword in text:
-            matched.append(keyword)
-    if "纯色" in text and "纯色背景" not in matched:
-        matched.append("纯色背景")
-    return matched
+    if not explicit:
+        return []
+    items = []
+    for item in re.split(r"[,，、]", explicit):
+        cleaned = re.sub(r"[。.!！]+.*$", "", item.strip()).strip()
+        if cleaned:
+            items.append(cleaned)
+    return items
 
 
 def _extract_image_count(text: str) -> int | None:
