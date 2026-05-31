@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from src.config.settings import APIConfig, ResearchConfig, RetryConfig
+from src.config.settings import APIConfig, ImageConfig, ResearchConfig, RetryConfig
 
 
 class ResearchRunOptions(BaseModel):
@@ -31,3 +31,5 @@ class ImagePostRunOptions(BaseModel):
 
     research: ResearchRunOptions = Field(default_factory=ResearchRunOptions)
     image: ImageRunOptions = Field(default_factory=ImageRunOptions)
+    max_auto_images: int | None = Field(default_factory=lambda: ImageConfig.MAX_AUTO_IMAGES, ge=1)
+    image_generation_concurrency: int = Field(default_factory=lambda: ImageConfig.GENERATION_CONCURRENCY, ge=1)

@@ -37,6 +37,8 @@ class ImageWorkflowState:
     execution_text: str = ""
     image_count: int | None = None
     single_item_per_image: bool = False
+    max_auto_images: int | None = 5
+    image_generation_concurrency: int = 3
     research: ResultEnvelope[ResearchResult] | None = None
     groups: ResultEnvelope[GroupingResult] | None = None
     content: ResultEnvelope[XHSContent] | None = None
@@ -132,9 +134,16 @@ class ImagesNode(BaseNode[ImageWorkflowState, ImageWorkflowDeps]):
         if ctx.state.image_count is not None:
             target_count = max(1, min(ctx.state.image_count, 20))
             group_specs = group_specs[:target_count]
-        images = await asyncio.gather(
-            *[
-                ctx.deps.run_image_group(
+        elif ctx.state.max_auto_images is not None:
+            target_count = max(1, min(ctx.state.max_auto_images, 20))
+            group_specs = group_specs[:target_count]
+
+        concurrency = max(1, ctx.state.image_generation_concurrency)
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def run_limited_image_group(index: int, group: dict[str, object]) -> ResultEnvelope[ImageResult]:
+            async with semaphore:
+                return await ctx.deps.run_image_group(
                     topic=ctx.state.topic,
                     execution_text=ctx.state.execution_text or ctx.state.topic,
                     group=group,
@@ -144,8 +153,9 @@ class ImagesNode(BaseNode[ImageWorkflowState, ImageWorkflowDeps]):
                     run_id=ctx.state.run_id,
                     workspace_dir=ctx.state.workspace_dir,
                 )
-                for index, group in enumerate(group_specs)
-            ]
+
+        images = await asyncio.gather(
+            *[run_limited_image_group(index, group) for index, group in enumerate(group_specs)]
         )
         ctx.state.images = list(images)
         return DeliveryNode(
@@ -207,6 +217,8 @@ class ImageWorkflowRunner:
         execution_text: str = "",
         image_count: int | None = None,
         single_item_per_image: bool = False,
+        max_auto_images: int | None = 5,
+        image_generation_concurrency: int = 3,
     ) -> ResultEnvelope[DeliveryPackage]:
         state = ImageWorkflowState(
             topic=topic,
@@ -216,6 +228,8 @@ class ImageWorkflowRunner:
             execution_text=execution_text,
             image_count=image_count,
             single_item_per_image=single_item_per_image,
+            max_auto_images=max_auto_images,
+            image_generation_concurrency=image_generation_concurrency,
         )
         result = await self.graph.run(
             ResearchNode(),

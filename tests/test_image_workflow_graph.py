@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -410,3 +411,301 @@ async def test_image_workflow_does_not_fabricate_images_when_requested_count_exc
     )
 
     assert [group["image_type"] for group in seen_groups] == ["cover", "detail_1"]
+
+
+@pytest.mark.anyio
+async def test_image_workflow_caps_unspecified_image_count_with_runtime_default(tmp_path: Path) -> None:
+    seen_groups: list[dict[str, object]] = []
+
+    async def run_research(**kwargs) -> ResultEnvelope[ResearchResult]:
+        return ResultEnvelope[ResearchResult].success(
+            agent_name="research_agent",
+            payload=ResearchResult(summary="调研完成", items=[], keywords=[], sources=[]),
+            summary="research ok",
+            run_id=kwargs["run_id"],
+            step_id="research",
+        )
+
+    async def run_grouping(**kwargs) -> ResultEnvelope[GroupingResult]:
+        return ResultEnvelope[GroupingResult].success(
+            agent_name="grouping_agent",
+            payload=GroupingResult(
+                groups=[GroupingItem(title=f"分组 {index}", indices=[index]) for index in range(1, 8)]
+            ),
+            summary="grouping ok",
+            run_id=kwargs["run_id"],
+            step_id="grouping",
+        )
+
+    async def run_content(**kwargs) -> ResultEnvelope[XHSContent]:
+        return ResultEnvelope[XHSContent].success(
+            agent_name="content_agent",
+            payload=XHSContent(
+                title="自动图数上限测试内容标题",
+                body=(
+                    "自动图数上限测试正文，确保模糊请求不会扩展成过重的图片生成任务。"
+                    "当用户没有明确指定图片数量时，编排器应该使用运行参数里的默认上限，"
+                    "只生成足够表达主题的少量图片，再把完整分组信息保留在 envelope 中。"
+                    "这样既不破坏专项 Agent 的分组能力，也能避免供应商侧瞬时并发过高。"
+                ),
+                hashtags=[],
+                call_to_action="查看即可。",
+            ),
+            summary="content ok",
+            run_id=kwargs["run_id"],
+            step_id="content",
+        )
+
+    async def run_image_group(**kwargs) -> ResultEnvelope[ImageResult]:
+        seen_groups.append(dict(kwargs["group"]))
+        image_path = tmp_path / f"{kwargs['group']['image_type']}.png"
+        image_path.write_bytes(b"fake-image")
+        return ResultEnvelope[ImageResult].success(
+            agent_name="image_generation_agent",
+            payload=ImageResult(
+                images=[
+                    GeneratedImage(
+                        image_path=str(image_path),
+                        prompt_used="prompt",
+                        image_type=str(kwargs["group"]["image_type"]),
+                    )
+                ],
+                total_count=1,
+                generated_at="2026-05-30T00:00:00+00:00",
+            ),
+            summary="image ok",
+            run_id=kwargs["run_id"],
+            step_id=f"image-{kwargs['group_index']}",
+        )
+
+    async def run_delivery(**kwargs) -> ResultEnvelope[DeliveryPackage]:
+        return ResultEnvelope[DeliveryPackage].success(
+            agent_name="delivery_agent",
+            payload=DeliveryPackage(route="image_post", title="自动图数上限测试", summary="交付完成"),
+            summary="delivery ok",
+            run_id=kwargs["run_id"],
+            step_id="delivery",
+        )
+
+    runner = ImageWorkflowRunner(
+        deps=ImageWorkflowDeps(
+            run_research=run_research,
+            run_grouping=run_grouping,
+            run_content=run_content,
+            run_image_group=run_image_group,
+            run_delivery=run_delivery,
+        )
+    )
+
+    await runner.run(
+        topic="模糊探索任务",
+        audience="测试受众",
+        run_id="run-auto-cap",
+        workspace_dir=tmp_path,
+        max_auto_images=3,
+    )
+
+    assert [group["image_type"] for group in seen_groups] == ["cover", "detail_1", "detail_2"]
+
+
+@pytest.mark.anyio
+async def test_image_workflow_honors_explicit_image_count_over_auto_cap(tmp_path: Path) -> None:
+    seen_groups: list[dict[str, object]] = []
+
+    async def run_research(**kwargs) -> ResultEnvelope[ResearchResult]:
+        return ResultEnvelope[ResearchResult].success(
+            agent_name="research_agent",
+            payload=ResearchResult(summary="调研完成", items=[], keywords=[], sources=[]),
+            summary="research ok",
+            run_id=kwargs["run_id"],
+            step_id="research",
+        )
+
+    async def run_grouping(**kwargs) -> ResultEnvelope[GroupingResult]:
+        return ResultEnvelope[GroupingResult].success(
+            agent_name="grouping_agent",
+            payload=GroupingResult(
+                groups=[GroupingItem(title=f"分组 {index}", indices=[index]) for index in range(1, 8)]
+            ),
+            summary="grouping ok",
+            run_id=kwargs["run_id"],
+            step_id="grouping",
+        )
+
+    async def run_content(**kwargs) -> ResultEnvelope[XHSContent]:
+        return ResultEnvelope[XHSContent].success(
+            agent_name="content_agent",
+            payload=XHSContent(
+                title="显式图数优先测试内容标题",
+                body=(
+                    "显式图数测试正文，确保用户明确指定数量时不会被自动上限截断。"
+                    "当用户已经说清楚需要五张图片，编排器必须尊重这个需求，"
+                    "只在实际分组数量不足时停止，不能因为默认自动上限更小就提前截断。"
+                    "这可以保证用户指定、Agent 自主和运行参数之间的职责边界清晰。"
+                ),
+                hashtags=[],
+                call_to_action="查看即可。",
+            ),
+            summary="content ok",
+            run_id=kwargs["run_id"],
+            step_id="content",
+        )
+
+    async def run_image_group(**kwargs) -> ResultEnvelope[ImageResult]:
+        seen_groups.append(dict(kwargs["group"]))
+        image_path = tmp_path / f"{kwargs['group']['image_type']}.png"
+        image_path.write_bytes(b"fake-image")
+        return ResultEnvelope[ImageResult].success(
+            agent_name="image_generation_agent",
+            payload=ImageResult(
+                images=[
+                    GeneratedImage(
+                        image_path=str(image_path),
+                        prompt_used="prompt",
+                        image_type=str(kwargs["group"]["image_type"]),
+                    )
+                ],
+                total_count=1,
+                generated_at="2026-05-30T00:00:00+00:00",
+            ),
+            summary="image ok",
+            run_id=kwargs["run_id"],
+            step_id=f"image-{kwargs['group_index']}",
+        )
+
+    async def run_delivery(**kwargs) -> ResultEnvelope[DeliveryPackage]:
+        return ResultEnvelope[DeliveryPackage].success(
+            agent_name="delivery_agent",
+            payload=DeliveryPackage(route="image_post", title="显式图数测试", summary="交付完成"),
+            summary="delivery ok",
+            run_id=kwargs["run_id"],
+            step_id="delivery",
+        )
+
+    runner = ImageWorkflowRunner(
+        deps=ImageWorkflowDeps(
+            run_research=run_research,
+            run_grouping=run_grouping,
+            run_content=run_content,
+            run_image_group=run_image_group,
+            run_delivery=run_delivery,
+        )
+    )
+
+    await runner.run(
+        topic="明确五张图任务",
+        audience="测试受众",
+        run_id="run-explicit-count",
+        workspace_dir=tmp_path,
+        image_count=5,
+        max_auto_images=3,
+    )
+
+    assert [group["image_type"] for group in seen_groups] == [
+        "cover",
+        "detail_1",
+        "detail_2",
+        "detail_3",
+        "detail_4",
+    ]
+
+
+@pytest.mark.anyio
+async def test_image_workflow_limits_parallel_image_generation(tmp_path: Path) -> None:
+    active = 0
+    max_active = 0
+
+    async def run_research(**kwargs) -> ResultEnvelope[ResearchResult]:
+        return ResultEnvelope[ResearchResult].success(
+            agent_name="research_agent",
+            payload=ResearchResult(summary="调研完成", items=[], keywords=[], sources=[]),
+            summary="research ok",
+            run_id=kwargs["run_id"],
+            step_id="research",
+        )
+
+    async def run_grouping(**kwargs) -> ResultEnvelope[GroupingResult]:
+        return ResultEnvelope[GroupingResult].success(
+            agent_name="grouping_agent",
+            payload=GroupingResult(
+                groups=[GroupingItem(title=f"分组 {index}", indices=[index]) for index in range(1, 6)]
+            ),
+            summary="grouping ok",
+            run_id=kwargs["run_id"],
+            step_id="grouping",
+        )
+
+    async def run_content(**kwargs) -> ResultEnvelope[XHSContent]:
+        return ResultEnvelope[XHSContent].success(
+            agent_name="content_agent",
+            payload=XHSContent(
+                title="图片生成并发阀门测试标题",
+                body=(
+                    "并发阀门测试正文，确保图片生成任务不会一次性把供应商打爆。"
+                    "编排器仍然可以把每个图片任务看成独立原子任务，但执行层必须提供"
+                    "可配置的并发控制，避免 Vertex 或其他图像供应商因为瞬时请求过多"
+                    "返回限流错误，同时保持结果 join 的顺序稳定。"
+                ),
+                hashtags=[],
+                call_to_action="查看即可。",
+            ),
+            summary="content ok",
+            run_id=kwargs["run_id"],
+            step_id="content",
+        )
+
+    async def run_image_group(**kwargs) -> ResultEnvelope[ImageResult]:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        image_path = tmp_path / f"{kwargs['group']['image_type']}.png"
+        image_path.write_bytes(b"fake-image")
+        return ResultEnvelope[ImageResult].success(
+            agent_name="image_generation_agent",
+            payload=ImageResult(
+                images=[
+                    GeneratedImage(
+                        image_path=str(image_path),
+                        prompt_used="prompt",
+                        image_type=str(kwargs["group"]["image_type"]),
+                    )
+                ],
+                total_count=1,
+                generated_at="2026-05-30T00:00:00+00:00",
+            ),
+            summary="image ok",
+            run_id=kwargs["run_id"],
+            step_id=f"image-{kwargs['group_index']}",
+        )
+
+    async def run_delivery(**kwargs) -> ResultEnvelope[DeliveryPackage]:
+        return ResultEnvelope[DeliveryPackage].success(
+            agent_name="delivery_agent",
+            payload=DeliveryPackage(route="image_post", title="并发阀门测试", summary="交付完成"),
+            summary="delivery ok",
+            run_id=kwargs["run_id"],
+            step_id="delivery",
+        )
+
+    runner = ImageWorkflowRunner(
+        deps=ImageWorkflowDeps(
+            run_research=run_research,
+            run_grouping=run_grouping,
+            run_content=run_content,
+            run_image_group=run_image_group,
+            run_delivery=run_delivery,
+        )
+    )
+
+    await runner.run(
+        topic="并发阀门任务",
+        audience="测试受众",
+        run_id="run-concurrency",
+        workspace_dir=tmp_path,
+        image_count=6,
+        image_generation_concurrency=2,
+    )
+
+    assert max_active == 2

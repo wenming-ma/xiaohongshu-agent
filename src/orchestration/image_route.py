@@ -422,6 +422,8 @@ class ImagePostOrchestrator:
                 execution_text=brief.execution_text,
                 image_count=brief.image_count,
                 single_item_per_image=brief.single_item_per_image,
+                max_auto_images=resolved_run_options.max_auto_images,
+                image_generation_concurrency=resolved_run_options.image_generation_concurrency,
             )
         except Exception as exc:
             result = ResultEnvelope[DeliveryPackage].error(
