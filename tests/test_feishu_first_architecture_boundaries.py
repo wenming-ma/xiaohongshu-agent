@@ -114,6 +114,10 @@ def test_prompt_library_is_categorized_and_substantial() -> None:
         "article",
         "video",
         "delivery",
+        "research",
+        "planning",
+        "review",
+        "meta",
     }
     categories = {
         path.name
@@ -127,10 +131,51 @@ def test_prompt_library_is_categorized_and_substantial() -> None:
         for path in prompt_root.rglob("*.md")
         if path.name != "README.md"
     ]
-    assert len(templates) >= 16
+    assert len(templates) >= 40
 
     for template in templates:
         text = template.read_text(encoding="utf-8")
         assert "## Use When" in text
         assert "## Constraints" in text
         assert "## Prompt Template" in text
+
+    readme = (prompt_root / "README.md").read_text(encoding="utf-8")
+    assert "External Research Inputs" in readme
+    assert "original project templates" in readme
+    assert "do not copy" in readme.lower()
+
+
+def test_image_prompt_library_is_primary_template_asset() -> None:
+    image_root = REPO_ROOT / ".agents" / "prompt" / "image"
+    expected_subcategories = {
+        "cover",
+        "fashion",
+        "food",
+        "knowledge",
+        "product",
+        "travel",
+        "lifestyle",
+        "style",
+        "composition",
+        "lighting",
+        "reference",
+    }
+    subcategories = {
+        path.name
+        for path in image_root.iterdir()
+        if path.is_dir() and not path.name.startswith(".")
+    }
+    assert expected_subcategories.issubset(subcategories)
+
+    image_templates = [
+        path
+        for path in image_root.rglob("*.md")
+        if path.name != "README.md"
+    ]
+    all_templates = [
+        path
+        for path in (REPO_ROOT / ".agents" / "prompt").rglob("*.md")
+        if path.name != "README.md"
+    ]
+    assert len(image_templates) >= 30
+    assert len(image_templates) >= len(all_templates) // 2
