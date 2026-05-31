@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from .agent_events import AgentEventBridge, EnqueuePriority
+
 
 @dataclass(frozen=True)
 class ChoiceOption:
@@ -85,3 +87,37 @@ class FeishuInteractionTranslator:
             submit_label=submit_label,
             summary=summary,
         )
+
+
+class FeishuInputTranslator:
+    """Translates Feishu-side events into ordinary Agent session insertions."""
+
+    def __init__(self, *, bridge: AgentEventBridge) -> None:
+        self.bridge = bridge
+
+    def ingest(self, event: Any, *, priority: EnqueuePriority = "asap") -> None:
+        if getattr(event, "kind", "") == "control":
+            action = getattr(event, "action", None) or self._control_action_from_text(getattr(event, "text", ""))
+            if action == "new_session":
+                self.bridge.ingest_control_action("new_session", priority=priority)
+                return
+            if action in {"interrupt", "follow_up"}:
+                self.bridge.ingest_control_action(action, priority=priority)
+                return
+
+        image_path = getattr(event, "image_path", None)
+        if image_path is not None:
+            self.bridge.ingest_user_image(
+                image_path,
+                caption=getattr(event, "text", "") or "",
+                priority=priority,
+            )
+            return
+
+        text = getattr(event, "text", "") or ""
+        self.bridge.ingest_user_text(text, priority=priority)
+
+    def _control_action_from_text(self, text: str) -> str:
+        if text.startswith("__control__:"):
+            return text.split(":", 1)[1].strip()
+        return ""

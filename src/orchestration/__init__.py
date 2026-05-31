@@ -17,6 +17,7 @@ _EXPORTS = {
     "AgentEventBridge": ".agent_events",
     "QueuedAgentEvent": ".agent_events",
     "FeishuInteractionTranslator": ".feishu_translation",
+    "FeishuInputTranslator": ".feishu_translation",
     "FeishuInteractionTools": ".feishu_interactions",
     "FeishuSessionResetRequested": ".feishu_interactions",
     "FeishuWorkflowService": ".feishu_workflow",
