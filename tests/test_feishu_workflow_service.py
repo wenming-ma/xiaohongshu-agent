@@ -309,6 +309,35 @@ async def test_workflow_service_new_session_shortcut_cancels_current_request() -
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    "text",
+    [
+        "__control__:new_session",
+        "control:new_session",
+        "@__control__:new_session",
+    ],
+)
+async def test_workflow_service_accepts_feishu_rewritten_new_session_shortcuts(text: str) -> None:
+    notifier = FakeNotifier()
+    orchestrator = FakeOrchestrator()
+
+    async def unexpected_acquire(*, workflow: str, summary: str):
+        raise AssertionError("control shortcuts should not acquire a workflow session")
+
+    service = FeishuWorkflowService(
+        notifier=notifier,
+        orchestrator=orchestrator,
+        acquire_session=unexpected_acquire,
+        interaction_tools=interaction_tools_for(notifier),
+    )
+
+    await service.handle_text(text)
+
+    assert orchestrator.calls == []
+    assert any("新会话" in message for message in notifier.sent_messages)
+
+
+@pytest.mark.anyio
 async def test_workflow_service_collects_style_choices_with_multiselect_form() -> None:
     session = FakeSession()
     notifier = FakeNotifier(

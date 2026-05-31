@@ -170,6 +170,44 @@ def test_session_manager_reclaims_abandoned_owner_pid(tmp_path, monkeypatch):
     assert state.challenger_session_id is None
 
 
+def test_session_manager_reclaims_reused_owner_pid(tmp_path, monkeypatch):
+    manager = FeishuSessionManager(state_dir=tmp_path, stale_after_seconds=900)
+    process_starts = {1001: "old-process", 1002: "new-process"}
+
+    monkeypatch.setattr(manager, "_owner_process_alive", lambda pid: True)
+    monkeypatch.setattr(
+        manager,
+        "_owner_process_started_at",
+        lambda pid: process_starts.get(pid),
+        raising=False,
+    )
+
+    first = manager.acquire(
+        chat_id="chat-1",
+        workflow="image_post",
+        owner_pid=1001,
+        current_phase="research",
+        summary="orphaned run",
+    )
+    process_starts[1001] = "reused-by-other-process"
+    second = manager.acquire(
+        chat_id="chat-1",
+        workflow="feishu_orchestrator",
+        owner_pid=1002,
+        current_phase="startup",
+        summary="new run",
+    )
+
+    assert first.outcome == "acquired"
+    assert second.outcome == "acquired"
+    assert second.reason == "expired_session"
+
+    state = manager.assert_active(second.session)
+    assert state.workflow == "feishu_orchestrator"
+    assert state.session_id == second.session.session_id
+    assert state.challenger_session_id is None
+
+
 def test_session_manager_reclaims_stale_takeover_pending_session(tmp_path):
     manager = FeishuSessionManager(state_dir=tmp_path, stale_after_seconds=900, owner_liveness_check=False)
 

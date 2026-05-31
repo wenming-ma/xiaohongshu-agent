@@ -12,6 +12,7 @@ from src.utils.logger import get_logger
 from .controller import FeishuContentOrchestrator
 from .conversation import ContentRoute, ConversationRequest
 from .feishu_interactions import FeishuInteractionTools, FeishuSessionResetRequested
+from .feishu_translation import parse_control_action_text
 from .request_parser import parse_conversation_request
 
 logger = get_logger(__name__)
@@ -141,7 +142,7 @@ class FeishuWorkflowService:
         return f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{route}"
 
     def _is_new_session_control(self, text: str) -> bool:
-        return text.strip() == "__control__:new_session"
+        return parse_control_action_text(text) == "new_session"
 
     async def _resolve_route_for_interactions(self, request: ConversationRequest) -> ContentRoute:
         planner = getattr(self.orchestrator, "planner", None)

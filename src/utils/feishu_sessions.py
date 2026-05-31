@@ -53,6 +53,7 @@ class FeishuChatSessionState(BaseModel):
     workflow: str
     status: Literal["active", "takeover_pending", "revoked", "cancelled", "completed", "expired"]
     owner_pid: int
+    owner_started_at: str | None = None
     started_at: str
     heartbeat_at: str
     current_phase: str
@@ -60,6 +61,7 @@ class FeishuChatSessionState(BaseModel):
     challenger_session_id: str | None = None
     challenger_workflow: str | None = None
     challenger_owner_pid: int | None = None
+    challenger_owner_started_at: str | None = None
     challenger_started_at: str | None = None
     challenger_current_phase: str | None = None
     challenger_summary: str | None = None
@@ -125,6 +127,7 @@ class FeishuSessionManager:
         state.challenger_session_id = None
         state.challenger_workflow = None
         state.challenger_owner_pid = None
+        state.challenger_owner_started_at = None
         state.challenger_started_at = None
         state.challenger_current_phase = None
         state.challenger_summary = None
@@ -138,6 +141,7 @@ class FeishuSessionManager:
         state.session_id = state.challenger_session_id
         state.workflow = state.challenger_workflow
         state.owner_pid = state.challenger_owner_pid or state.owner_pid
+        state.owner_started_at = state.challenger_owner_started_at
         state.started_at = state.challenger_started_at or now
         state.heartbeat_at = now
         state.current_phase = state.challenger_current_phase or "startup"
@@ -148,7 +152,10 @@ class FeishuSessionManager:
     def _challenger_process_alive(self, state: FeishuChatSessionState) -> bool:
         if state.challenger_owner_pid is None:
             return False
-        return self._owner_process_alive(state.challenger_owner_pid)
+        return self._owner_process_matches(
+            state.challenger_owner_pid,
+            state.challenger_owner_started_at,
+        )
 
     def _refresh_takeover_pending_state_unlocked(
         self,
@@ -234,8 +241,55 @@ class FeishuSessionManager:
             return True
         return True
 
+    def _owner_process_started_at(self, pid: int) -> str | None:
+        if pid <= 0:
+            return None
+        if os.name != "nt":
+            return None
+
+        import ctypes
+        from ctypes import wintypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+        class FILETIME(ctypes.Structure):
+            _fields_ = [
+                ("dwLowDateTime", wintypes.DWORD),
+                ("dwHighDateTime", wintypes.DWORD),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return None
+        try:
+            creation = FILETIME()
+            exit_time = FILETIME()
+            kernel_time = FILETIME()
+            user_time = FILETIME()
+            if not kernel32.GetProcessTimes(
+                handle,
+                ctypes.byref(creation),
+                ctypes.byref(exit_time),
+                ctypes.byref(kernel_time),
+                ctypes.byref(user_time),
+            ):
+                return None
+            ticks = (int(creation.dwHighDateTime) << 32) | int(creation.dwLowDateTime)
+            return str(ticks)
+        finally:
+            kernel32.CloseHandle(handle)
+
+    def _owner_process_matches(self, pid: int, started_at: str | None) -> bool:
+        if not self._owner_process_alive(pid):
+            return False
+        if not started_at:
+            return True
+        current_started_at = self._owner_process_started_at(pid)
+        return current_started_at is None or current_started_at == started_at
+
     def _is_abandoned(self, state: FeishuChatSessionState) -> bool:
-        return not self._owner_process_alive(state.owner_pid)
+        return not self._owner_process_matches(state.owner_pid, state.owner_started_at)
 
     def _build_active_state(
         self,
@@ -252,6 +306,7 @@ class FeishuSessionManager:
             workflow=handle.workflow,
             status="active",
             owner_pid=owner_pid,
+            owner_started_at=self._owner_process_started_at(owner_pid),
             started_at=now,
             heartbeat_at=now,
             current_phase=current_phase,
@@ -338,6 +393,7 @@ class FeishuSessionManager:
             state.challenger_session_id = handle.session_id
             state.challenger_workflow = handle.workflow
             state.challenger_owner_pid = owner_pid
+            state.challenger_owner_started_at = self._owner_process_started_at(owner_pid)
             state.challenger_started_at = _utcnow().isoformat()
             state.challenger_current_phase = current_phase
             state.challenger_summary = summary

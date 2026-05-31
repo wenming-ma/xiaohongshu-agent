@@ -5,6 +5,8 @@ from typing import Any
 
 from .agent_events import AgentEventBridge, EnqueuePriority
 
+CONTROL_ACTIONS = {"new_session", "interrupt", "follow_up"}
+
 
 @dataclass(frozen=True)
 class ChoiceOption:
@@ -34,6 +36,18 @@ def parse_delimited_options(options: str) -> list[ChoiceOption]:
             continue
         parsed.append(ChoiceOption(label=label, value=value))
     return parsed
+
+
+def parse_control_action_text(text: str) -> str:
+    """Normalize Feishu text rewrites of hidden control shortcuts."""
+
+    normalized = (text or "").strip().lstrip("@").strip()
+    for prefix in ("__control__:", "control:"):
+        if not normalized.startswith(prefix):
+            continue
+        action = normalized.split(":", 1)[1].strip()
+        return action if action in CONTROL_ACTIONS else ""
+    return ""
 
 
 class FeishuInteractionTranslator:
@@ -118,6 +132,4 @@ class FeishuInputTranslator:
         self.bridge.ingest_user_text(text, priority=priority)
 
     def _control_action_from_text(self, text: str) -> str:
-        if text.startswith("__control__:"):
-            return text.split(":", 1)[1].strip()
-        return ""
+        return parse_control_action_text(text)

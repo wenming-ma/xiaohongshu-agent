@@ -79,3 +79,15 @@ def test_feishu_new_session_control_resets_agent_session() -> None:
     translator.ingest(FeishuInputEvent(kind="control", action="new_session"))
 
     assert run.reset_calls == 1
+
+
+def test_feishu_rewritten_control_text_resets_agent_session() -> None:
+    for text in ["__control__:new_session", "control:new_session", "@__control__:new_session"]:
+        run = FakeAgentRun()
+        bridge = AgentEventBridge()
+        bridge.attach_run(run)
+        translator = FeishuInputTranslator(bridge=bridge)
+
+        translator.ingest(FeishuInputEvent(kind="control", text=text))
+
+        assert run.reset_calls == 1
