@@ -158,6 +158,60 @@ def test_vertex_ai_vision_client_returns_structured_output(monkeypatch, tmp_path
     assert parts[1].inline_data.data == b"fake-jpeg"
 
 
+def test_vertex_ai_vision_client_accepts_labeled_multi_image_structured_input(monkeypatch, tmp_path: Path) -> None:
+    module = _load_module("src.utils.providers.vertex_ai_vision")
+    captured: dict[str, object] = {}
+
+    class VisionResult(BaseModel):
+        aligned: bool
+
+    class _FakeModels:
+        def generate_content(self, **kwargs):
+            captured["generate_kwargs"] = kwargs
+            return types.SimpleNamespace(text='{"aligned":true}')
+
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            captured["client_kwargs"] = kwargs
+            self.models = _FakeModels()
+
+    monkeypatch.setattr(module.APIConfig, "VERTEX_AI_PROJECT_ID", "vertex-project")
+    monkeypatch.setattr(module.APIConfig, "VERTEX_AI_VISION_MODEL", "gemini-3.1-pro")
+    monkeypatch.setattr(
+        module,
+        "build_vertex_client",
+        lambda **kwargs: (_FakeClient(project="vertex-project"), "vertex-project", "global"),
+    )
+
+    generated = tmp_path / "generated.jpg"
+    generated.write_bytes(b"generated-bytes")
+    reference = tmp_path / "reference.png"
+    reference.write_bytes(b"reference-bytes")
+
+    client = module.VertexAIVisionClient()
+    result = asyncio.run(
+        client.analyze_images_structured(
+            images=[("generated", generated), ("reference_1", reference)],
+            prompt="判断生成图是否保留参考物品",
+            response_model=VisionResult,
+            system_prompt="你是视觉一致性审核员",
+        )
+    )
+
+    assert result == VisionResult(aligned=True)
+    assert captured["generate_kwargs"]["model"] == "gemini-3.1-pro"
+    config = captured["generate_kwargs"]["config"]
+    assert config.response_mime_type == "application/json"
+    assert config.response_schema is VisionResult
+    assert config.system_instruction == "你是视觉一致性审核员"
+    parts = captured["generate_kwargs"]["contents"][0].parts
+    assert parts[0].text == "判断生成图是否保留参考物品"
+    assert parts[1].text == "[Image: generated]"
+    assert parts[2].inline_data.data == b"generated-bytes"
+    assert parts[3].text == "[Image: reference_1]"
+    assert parts[4].inline_data.data == b"reference-bytes"
+
+
 def test_vertex_ai_vision_client_returns_plain_text(monkeypatch, tmp_path: Path) -> None:
     module = _load_module("src.utils.providers.vertex_ai_vision")
     captured: dict[str, object] = {}

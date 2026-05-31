@@ -70,6 +70,21 @@ class VertexAIVisionClient:
         ]
 
     @staticmethod
+    def _build_multi_image_contents(
+        *,
+        prompt: str,
+        images: list[tuple[str, Path]],
+    ) -> list[types.Content]:
+        parts: list[types.Part] = [types.Part.from_text(text=prompt)]
+        for label, image_path in images:
+            if not image_path.exists():
+                continue
+            media_type = mimetypes.guess_type(str(image_path))[0] or "image/jpeg"
+            parts.append(types.Part.from_text(text=f"[Image: {label}]"))
+            parts.append(types.Part.from_bytes(data=image_path.read_bytes(), mime_type=media_type))
+        return [types.Content(role="user", parts=parts)]
+
+    @staticmethod
     def _extract_text(response: object) -> str:
         text = getattr(response, "text", None)
         if text:
@@ -85,16 +100,13 @@ class VertexAIVisionClient:
             return "\n".join(texts).strip()
         raise ValueError("Vertex AI 未返回文本内容")
 
-    async def _generate(
+    async def _generate_contents(
         self,
         *,
-        prompt: str,
-        image_bytes: bytes,
-        media_type: str,
+        contents: list[types.Content],
         system_prompt: str | None,
         response_model: type[StructuredResponseT] | None,
     ) -> str | StructuredResponseT:
-        contents = self._build_contents(prompt=prompt, image_bytes=image_bytes, media_type=media_type)
         config_kwargs: dict[str, object] = {}
         if system_prompt:
             config_kwargs["system_instruction"] = system_prompt
@@ -133,6 +145,21 @@ class VertexAIVisionClient:
                 await asyncio.sleep(delay)
 
         raise last_error or RuntimeError("Vertex AI 读图失败")
+
+    async def _generate(
+        self,
+        *,
+        prompt: str,
+        image_bytes: bytes,
+        media_type: str,
+        system_prompt: str | None,
+        response_model: type[StructuredResponseT] | None,
+    ) -> str | StructuredResponseT:
+        return await self._generate_contents(
+            contents=self._build_contents(prompt=prompt, image_bytes=image_bytes, media_type=media_type),
+            system_prompt=system_prompt,
+            response_model=response_model,
+        )
 
     async def analyze_image(
         self,
@@ -195,6 +222,23 @@ class VertexAIVisionClient:
             prompt=prompt,
             image_bytes=image_bytes,
             media_type=media_type,
+            system_prompt=system_prompt,
+            response_model=response_model,
+        )
+        if isinstance(result, str):  # pragma: no cover - defensive only
+            raise TypeError("Expected structured response, got plain text")
+        return result
+
+    async def analyze_images_structured(
+        self,
+        *,
+        images: list[tuple[str, Path]],
+        prompt: str,
+        response_model: type[StructuredResponseT],
+        system_prompt: str | None = None,
+    ) -> StructuredResponseT:
+        result = await self._generate_contents(
+            contents=self._build_multi_image_contents(prompt=prompt, images=images),
             system_prompt=system_prompt,
             response_model=response_model,
         )

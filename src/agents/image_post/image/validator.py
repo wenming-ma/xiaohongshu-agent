@@ -51,13 +51,13 @@ class ImageQualityValidator(ExternalValidator):
                 summary="无法验证：图片文件不存在"
             )
 
-        image_data = await compress_image_for_review(image_path, max_size_mb=5.0)
         topic = context.get("topic", "")
         image_type = context.get("image_type", "")
         content = context.get("content")
         content_title = getattr(content, "title", "") if content is not None else ""
         expected_content = self._build_expected_content(context)
         image_prompt = context.get("image_prompt", "（未提供）")
+        reference_images = self._reference_image_paths(context)
 
         user_prompt = image_quality_review_user_prompt(
             topic=topic,
@@ -67,6 +67,15 @@ class ImageQualityValidator(ExternalValidator):
             image_prompt=image_prompt,
         )
 
+        if reference_images:
+            return await self.vision_client.analyze_images_structured(
+                images=[("generated_image", image_path), *reference_images],
+                prompt=user_prompt,
+                system_prompt=image_quality_review_system_prompt(),
+                response_model=ImageQualityReview,
+            )
+
+        image_data = await compress_image_for_review(image_path, max_size_mb=5.0)
         return await self.vision_client.analyze_image_bytes_structured(
             image_bytes=image_data,
             media_type="image/jpeg",
@@ -74,6 +83,29 @@ class ImageQualityValidator(ExternalValidator):
             system_prompt=image_quality_review_system_prompt(),
             response_model=ImageQualityReview,
         )
+
+    @staticmethod
+    def _reference_image_paths(context: dict) -> list[tuple[str, Path]]:
+        references = context.get("reference_images") or []
+        paths: list[tuple[str, Path]] = []
+        for index, ref in enumerate(references):
+            label = f"reference_{index + 1}"
+            path_value: object | None = None
+            if hasattr(ref, "label"):
+                label = str(getattr(ref, "label") or label)
+            if hasattr(ref, "path"):
+                path_value = getattr(ref, "path")
+            elif isinstance(ref, dict):
+                label = str(ref.get("label") or label)
+                path_value = ref.get("path")
+            elif isinstance(ref, (str, Path)):
+                path_value = ref
+            if path_value is None:
+                continue
+            path = Path(str(path_value))
+            if path.exists():
+                paths.append((label, path))
+        return paths
 
     @staticmethod
     def _build_expected_content(context: dict) -> str:
