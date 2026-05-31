@@ -9,6 +9,7 @@ _EXPORTS = {
     "ArtifactRef": ".schemas",
     "ArticlePostOrchestrator": ".article_route",
     "ContentRoute": ".conversation",
+    "ConversationInputTranslator": ".session_input",
     "ConversationRequest": ".conversation",
     "DeliveryPackage": ".schemas",
     "DeliveryPackageSender": ".delivery",

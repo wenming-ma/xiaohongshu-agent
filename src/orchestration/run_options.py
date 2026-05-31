@@ -14,7 +14,18 @@ class ResearchRunOptions(BaseModel):
     validation_max_retries: int = Field(default_factory=lambda: ResearchConfig.VALIDATION_MAX_RETRIES, ge=1)
     min_key_infos: int = Field(default_factory=lambda: ResearchConfig.MIN_KEY_INFOS, ge=1)
     min_cases: int = Field(default_factory=lambda: ResearchConfig.MIN_CASES, ge=0)
-
+    max_new_posts_per_iteration: int = Field(
+        default_factory=lambda: ResearchConfig.MAX_NEW_POSTS_PER_ITERATION,
+        ge=1,
+    )
+    per_iteration_request_limit: int = Field(
+        default_factory=lambda: ResearchConfig.PER_ITERATION_REQUEST_LIMIT,
+        ge=1,
+    )
+    per_iteration_tool_calls_limit: int = Field(
+        default_factory=lambda: ResearchConfig.PER_ITERATION_TOOL_CALLS_LIMIT,
+        ge=1,
+    )
 
 class ImageRunOptions(BaseModel):
     """Runtime knobs for one image-generation invocation."""

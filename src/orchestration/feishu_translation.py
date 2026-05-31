@@ -116,7 +116,7 @@ class FeishuInputTranslator:
                 self.bridge.ingest_control_action("new_session", priority=priority)
                 return
             if action in {"interrupt", "follow_up"}:
-                self.bridge.ingest_control_action(action, priority=priority)
+                self.bridge.ingest_control_action(action, priority=self._control_priority(action, priority))
                 return
 
         image_path = getattr(event, "image_path", None)
@@ -133,3 +133,8 @@ class FeishuInputTranslator:
 
     def _control_action_from_text(self, text: str) -> str:
         return parse_control_action_text(text)
+
+    def _control_priority(self, action: str, explicit_priority: EnqueuePriority) -> EnqueuePriority:
+        if action == "follow_up" and explicit_priority == "asap":
+            return "when_idle"
+        return explicit_priority

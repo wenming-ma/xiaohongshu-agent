@@ -18,10 +18,11 @@ from pathlib import Path
 from typing import Any
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.usage import UsageLimits
 
 from ....core.base_agent import BaseAgent, ValidationResult
-from ..schemas import ResearchResult
+from ..schemas import ContentSource, ResearchItem, ResearchResult
 from ....utils.providers import get_text_model
 from ...shared.utils.navigate_tracker import NavigateTracker
 from ....utils.logger import get_logger
@@ -177,6 +178,12 @@ class ResearchAgent(BaseAgent):
                     with logfire.span('research:iteration', iteration=iteration + 1):
                         # Step: 执行研究
                         await self.step(state, iteration)
+                        if state.budget_exhausted:
+                            if state.iteration_results:
+                                logger.warning("研究单轮预算耗尽，返回已保存的历史研究结果")
+                                return _merge_results(state.iteration_results, state.tracked_stats)
+                            logger.warning("研究单轮预算耗尽，跳过验证并返回降级研究结果")
+                            return self.finalize(state, iteration + 1)
 
                         # Validate: 验证结果
                         validation = await self.validate(state.current_result)
@@ -215,6 +222,7 @@ class ResearchAgent(BaseAgent):
         logger.info("=" * 50)
         logger.info(f"第 {iteration + 1}/{self.max_iterations} 轮研究")
         logger.info("=" * 50)
+        state.budget_exhausted = False
 
         # 构建提示词：首轮用完整研究提示，后续轮次用续研提示
         if iteration == 0:
@@ -222,14 +230,26 @@ class ResearchAgent(BaseAgent):
                 topic=state.topic,
                 target_audience=state.target_audience,
                 min_posts=self._run_options().min_posts_researched,
+                max_posts=self._run_options().min_posts_researched,
                 min_key_infos=self._run_options().min_key_infos,
                 min_cases=self._run_options().min_cases,
             )
         else:
             prompt = state.continuation_prompt
 
-        # 每轮都用全新 prompt 启动，丢弃历史对话以节省上下文
-        result = await self.generator.run(prompt, usage_limits=UsageLimits(request_limit=None))
+        # 每轮都用全新 prompt 启动，丢弃历史对话以节省上下文；运行预算由调用参数控制。
+        options = self._run_options()
+        try:
+            result = await self.generator.run(
+                prompt,
+                usage_limits=UsageLimits(
+                    request_limit=options.per_iteration_request_limit,
+                    tool_calls_limit=options.per_iteration_tool_calls_limit,
+                ),
+            )
+        except UsageLimitExceeded as exc:
+            self._use_budget_fallback(state, f"usage limit exceeded: {exc}")
+            return
 
         # 更新状态
         state.current_result = result.output
@@ -239,6 +259,53 @@ class ResearchAgent(BaseAgent):
         self._current_state = state
 
         self.log_step_result(state)
+
+    def _use_budget_fallback(self, state: ResearchState, reason: str) -> None:
+        """Keep the route moving when a research model/tool loop exhausts its budget."""
+        logger.warning("研究单轮预算出口触发，使用降级研究结果继续流程: %s", reason)
+        state.budget_exhausted = True
+        state.tracked_stats = state.tracked_stats or {}
+
+        if state.iteration_results and state.current_result is not None:
+            return
+
+        tracked_urls = list(state.tracked_stats.get("post_detail_urls") or [])
+        sources = [
+            ContentSource(
+                url=url,
+                title="已访问的小红书参考帖",
+                domain="rednote.com",
+            )
+            for url in tracked_urls[:3]
+        ]
+        if not sources:
+            sources = [
+                ContentSource(
+                    url="https://www.rednote.com",
+                    title="小红书研究入口",
+                    domain="rednote.com",
+                )
+            ]
+
+        state.current_result = ResearchResult(
+            summary=f"研究阶段触发预算出口，保留用户主题与已访问来源继续生成：{state.topic}",
+            items=[
+                ResearchItem(
+                    title="用户主题与硬性约束",
+                    content=state.topic,
+                    item_type="user_request",
+                    source_ref="user_request",
+                ),
+                ResearchItem(
+                    title="目标受众",
+                    content=state.target_audience,
+                    item_type="audience",
+                    source_ref="user_request",
+                ),
+            ],
+            keywords=[state.topic, state.target_audience],
+            sources=sources,
+        )
 
     # ========================================================================
     # 验证方法
@@ -348,15 +415,26 @@ class ResearchAgent(BaseAgent):
         snapshot = build_progress_snapshot(state, saved_file)
 
         # 构建下一轮续研提示词（全新 prompt，不注入到历史消息）
+        min_posts = self._run_options().min_posts_researched
+        tracked_post_count = int(state.tracked_stats.get("post_detail_count") or 0)
+        remaining_posts = max(0, min_posts - tracked_post_count)
+        max_new_posts = (
+            min(self._run_options().max_new_posts_per_iteration, remaining_posts)
+            if remaining_posts
+            else self._run_options().max_new_posts_per_iteration
+        )
         state.continuation_prompt = research_continuation_prompt(
             round_number=iteration + 2,
             progress_snapshot=snapshot,
             validation_feedback=feedback,
             topic=state.topic,
             target_audience=state.target_audience,
-            min_posts=self._run_options().min_posts_researched,
+            min_posts=min_posts,
             min_key_infos=self._run_options().min_key_infos,
             min_cases=self._run_options().min_cases,
+            tracked_post_count=tracked_post_count,
+            remaining_posts=remaining_posts,
+            max_new_posts=max_new_posts,
         )
 
     # ========================================================================

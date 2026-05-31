@@ -7,14 +7,14 @@ from datetime import datetime
 from pathlib import Path
 
 from src.utils.feishu_interactive_workflow import acquire_interactive_session, finalize_interactive_session
-from src.utils.feishu_notifier import FeishuNotifier, get_feishu_notifier
+from src.utils.feishu_notifier import FeishuInputEvent, FeishuNotifier, get_feishu_notifier
 from src.utils.logger import get_logger
 
 from .controller import FeishuContentOrchestrator
 from .conversation import ContentRoute, ConversationRequest
 from .feishu_interactions import FeishuInteractionTools, FeishuSessionResetRequested
-from .feishu_translation import parse_control_action_text
 from .request_parser import parse_conversation_request
+from .session_input import ConversationInputTranslator
 
 logger = get_logger(__name__)
 
@@ -38,6 +38,7 @@ class FeishuWorkflowService:
             notifier=self.notifier,
             route_resolver=self._resolve_route_for_interactions,
         )
+        self.input_translator = ConversationInputTranslator()
 
     async def serve_forever(self) -> None:
         await self.notifier.start_polling()
@@ -136,7 +137,7 @@ class FeishuWorkflowService:
                 )
             )
             event_task = asyncio.create_task(
-                self.notifier.wait_for_session_image_or_text(
+                self._wait_for_session_event(
                     session,
                     phase=phase,
                     summary=request.topic,
@@ -152,16 +153,21 @@ class FeishuWorkflowService:
                     await event_task
                 return run_task.result()
 
-            image_path, text = event_task.result()
-            if self._is_new_session_control(text):
+            event = event_task.result()
+            if self.input_translator.control_action_from_event(event) == "new_session":
                 run_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await run_task
                 raise FeishuSessionResetRequested("new_session")
 
             run_task.cancel()
-            request = self._merge_live_session_input(request, image_path=image_path, text=text)
-            await self._announce_live_request_update(session, request, image_path=image_path, text=text)
+            request = self._merge_live_session_input(request, event=event)
+            await self._announce_live_request_update(
+                session,
+                request,
+                image_path=event.image_path,
+                text=event.text,
+            )
             with suppress(asyncio.CancelledError):
                 await run_task
 
@@ -182,41 +188,36 @@ class FeishuWorkflowService:
         return f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{route}"
 
     def _is_new_session_control(self, text: str) -> bool:
-        return parse_control_action_text(text) == "new_session"
+        return self.input_translator.control_action(text) == "new_session"
+
+    async def _wait_for_session_event(
+        self,
+        session: object,
+        *,
+        phase: str,
+        summary: str | None = None,
+    ) -> FeishuInputEvent:
+        wait_event = getattr(self.notifier, "wait_for_session_event", None)
+        if callable(wait_event):
+            return await wait_event(session, phase=phase, summary=summary)
+        image_path, text = await self.notifier.wait_for_session_image_or_text(
+            session,
+            phase=phase,
+            summary=summary,
+        )
+        return FeishuInputEvent(
+            kind="image" if image_path is not None else "text",
+            text=text,
+            image_path=image_path,
+        )
 
     def _merge_live_session_input(
         self,
         request: ConversationRequest,
         *,
-        image_path: Path | None,
-        text: str,
+        event: FeishuInputEvent,
     ) -> ConversationRequest:
-        messages = [request.message]
-        reference_images = list(request.reference_images)
-        if image_path is not None:
-            reference_images.append(str(image_path))
-            messages.append(f"[用户补充参考图]\npath: {image_path}")
-        if text.strip():
-            messages.append(text.strip())
-
-        followup = parse_conversation_request(text) if text.strip() else None
-        style_constraints = list(request.style_constraints)
-        if followup is not None:
-            style_constraints = list(dict.fromkeys([*style_constraints, *followup.style_constraints]))
-
-        updates: dict[str, object] = {
-            "message": "\n".join(part for part in messages if part.strip()),
-            "reference_images": reference_images,
-            "style_constraints": style_constraints,
-        }
-        if followup is not None:
-            if followup.route_hint is not None:
-                updates["route_hint"] = followup.route_hint
-            if followup.image_count is not None:
-                updates["image_count"] = followup.image_count
-            if followup.audience != "泛人群":
-                updates["audience"] = followup.audience
-        return request.model_copy(update=updates)
+        return self.input_translator.apply_event(request, event)
 
     async def _announce_live_request_update(
         self,

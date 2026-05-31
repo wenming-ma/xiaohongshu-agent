@@ -49,6 +49,16 @@ def _ensure_fake_pydantic_ai() -> None:
     fake_module.BinaryContent = _FakeBinaryContent
     fake_module.RunContext = _FakeRunContext
 
+    usage_module = types.ModuleType("pydantic_ai.usage")
+
+    class _FakeUsageLimits:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+    usage_module.UsageLimits = _FakeUsageLimits
+    sys.modules["pydantic_ai.usage"] = usage_module
+
 
 def _ensure_fake_logfire() -> None:
     if "logfire" in sys.modules:

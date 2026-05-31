@@ -91,3 +91,14 @@ def test_feishu_rewritten_control_text_resets_agent_session() -> None:
         translator.ingest(FeishuInputEvent(kind="control", text=text))
 
         assert run.reset_calls == 1
+
+
+def test_feishu_follow_up_control_defaults_to_when_idle_queue() -> None:
+    run = FakeAgentRun()
+    bridge = AgentEventBridge()
+    bridge.attach_run(run)
+    translator = FeishuInputTranslator(bridge=bridge)
+
+    translator.ingest(FeishuInputEvent(kind="control", action="follow_up"))
+
+    assert run.enqueued == [("[用户控制事件]\naction: follow_up", "when_idle")]

@@ -68,7 +68,9 @@ RESEARCH_USER_PROMPT_TEMPLATE = """## 研究任务
 4. 记录"相关搜索"推荐词，后续可扩展研究
 
 ### 第二阶段：多帖子深度研究（核心）
-**必须进入至少 {min_posts} 个高热帖子**，每个帖子执行：
+**必须进入至少 {min_posts} 个高热帖子，但本轮最多进入 {max_posts} 个高热帖子**。达到 {max_posts} 个后必须停止浏览，直接整合并输出 ResearchResult，不要继续打开更多帖子。
+
+每个帖子执行：
 
 ```
 1. 阅读主帖内容
@@ -117,6 +119,7 @@ RESEARCH_USER_PROMPT_TEMPLATE = """## 研究任务
 - 合并多个帖子的数据，去重
 - 多次出现的信息标记为高可信度
 - 确保达到数量目标
+- 达到研究帖子数和内容项最低目标后，立即输出，不要为了追求“优秀标准”继续浏览
 
 ## 数据收集目标
 
@@ -216,8 +219,10 @@ RESEARCH_CONTINUATION_PROMPT_TEMPLATE = """## 研究任务（第 {round_number} 
 **目标受众**：{target_audience}
 
 ### 核心要求
-- **必须进入至少 {min_posts} 个高热帖子详情页**（URL 包含 /explore/）
-- 每个帖子：阅读主帖 + **读取图片内容**（使用 read_post_images 工具一次性提取所有图片）+ **读取视频语音**（使用 read_video 工具）+ **深挖评论区**
+- 历史已进入帖子详情页：{tracked_post_count} 个；距离最低要求还差：{remaining_posts} 个
+- 本轮最多新增进入 {max_new_posts} 个帖子详情页（URL 包含 /explore/）；达到预算或补齐验证反馈后，必须停止浏览并输出 ResearchResult
+- 如果最低帖子数已经满足，优先围绕验证反馈补齐图片、评论、具体信息，不要为了“更多数据”继续泛化探索
+- 每个新增帖子：阅读主帖 + **读取图片内容**（使用 read_post_images 工具一次性提取图片）+ **读取视频语音**（使用 read_video 工具）+ **深挖评论区**
 - 内容项目标 >= {min_key_infos} 个，评论区数据 >= 30%
 - 所有信息必须具体（不能是"某XX"）
 
@@ -229,6 +234,7 @@ RESEARCH_CONTINUATION_PROMPT_TEMPLATE = """## 研究任务（第 {round_number} 
 - 进度快照中的历史数据已自动保存到文件，系统会自动合并所有轮次
 - **本轮你只需输出【新收集】的数据**，不要重复输出历史数据
 - 请使用**不同的关键词组合和细分角度**，探索新帖子
+- 本轮不是重新做完整研究；是针对验证反馈做定向补齐
 - 搜索时**必须通过首页搜索框输入关键词**，禁止直接拼接搜索 URL
 
 ### 自检清单
@@ -361,12 +367,16 @@ def research_system_prompt(**variables: object) -> str:
 def research_user_prompt(**variables: object) -> str:
     variables.setdefault("min_key_infos", 15)
     variables.setdefault("min_cases", 10)
+    variables.setdefault("max_posts", variables.get("min_posts", 5))
     return render_template(RESEARCH_USER_PROMPT_TEMPLATE, **variables)
 
 
 def research_continuation_prompt(**variables: object) -> str:
     variables.setdefault("min_key_infos", 15)
     variables.setdefault("min_cases", 10)
+    variables.setdefault("tracked_post_count", 0)
+    variables.setdefault("remaining_posts", 0)
+    variables.setdefault("max_new_posts", 2)
     return render_template(RESEARCH_CONTINUATION_PROMPT_TEMPLATE, **variables)
 
 
@@ -393,7 +403,7 @@ def image_reader_user_prompt(**variables: object) -> str:
 # ============================================================================
 
 POST_IMAGE_READER_SYSTEM_PROMPT = """# 角色
-你是小红书帖子图片提取与分析 Agent。你的任务是从当前打开的帖子详情页中提取所有图片并逐张分析其内容。
+你是小红书帖子图片提取与分析 Agent。你的任务是从当前打开的帖子详情页中提取帖子图片并分析其内容。
 
 ## 可用工具
 - **playwright_browser_evaluate**: 在页面中执行 JavaScript 代码，获取返回值
@@ -435,7 +445,7 @@ const realCount = swiper.slides.length - (swiper.loopedSlides || 0) * 2;
 
 ### 图文帖（data-type="normal"）
 1. 用 `playwright_browser_evaluate` 检测页面类型和提取所有图片 src URL
-2. 对每个 URL 调用 `download_and_analyze` 下载并分析
+2. 按页面顺序最多选取 {max_images} 张最有代表性的图片调用 `download_and_analyze` 下载并分析；不要超过这个上限
 3. 如果某张图片下载失败：
    - 用 `playwright_browser_evaluate` 调用 `swiper.slideTo(index, 0)` 导航到该图片
    - 用 `playwright_browser_take_screenshot` 截屏（filename 只传纯文件名如 `img-1.png`）
@@ -456,23 +466,28 @@ const realCount = swiper.slides.length - (swiper.loopedSlides || 0) * 2;
 - `issues`: 整体问题说明（如有）
 """
 
-POST_IMAGE_READER_USER_PROMPT_TEMPLATE = """提取并分析当前帖子页面中的所有图片。
+POST_IMAGE_READER_USER_PROMPT_TEMPLATE = """提取并分析当前帖子页面中的图片。
+
+硬性预算：最多分析 {max_images} 张图片。即使页面里有更多图片，也只选最有代表性的前 {max_images} 张；达到上限后立即输出 PostImagesReadResult。
 
 {question_section}
 
-将每张图片的分析结果放入 images 列表，设置正确的 post_type 和 image_count。
+将已分析图片的结果放入 images 列表，设置正确的 post_type 和 image_count。
 """
 
 
 def post_image_reader_system_prompt(**variables: object) -> str:
+    variables.setdefault("max_images", 3)
     return render_template(POST_IMAGE_READER_SYSTEM_PROMPT, **variables)
 
 
 def post_image_reader_user_prompt(**variables: object) -> str:
     question = str(variables.get("question", "") or "").strip()
+    max_images = int(variables.get("max_images", 3) or 3)
     question_section = f"针对每张图片的分析问题：{question}" if question else ""
     return render_template(
         POST_IMAGE_READER_USER_PROMPT_TEMPLATE,
+        max_images=max_images,
         question_section=question_section,
     )
 

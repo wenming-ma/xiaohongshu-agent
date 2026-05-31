@@ -753,15 +753,15 @@ class FeishuNotifier:
         }
         return await self.send_card_message_raw(card, chat_id=session.chat_id)
 
-    async def wait_for_session_image_or_text(
+    async def wait_for_session_event(
         self,
         session: FeishuWorkflowSession,
         *,
         phase: str,
         summary: str | None = None,
-    ) -> tuple[Path | None, str]:
+    ) -> FeishuInputEvent:
         if self.client is None:
-            return None, ""
+            return FeishuInputEvent(kind="text", text="")
 
         if self._polling_thread is None:
             await self.start_polling()
@@ -777,7 +777,18 @@ class FeishuNotifier:
             if event.kind == "button" and event.phase and event.phase != phase:
                 logger.info("忽略旧阶段按钮事件: expected=%s actual=%s", phase, event.phase)
                 continue
-            return event.image_path, event.text
+            return event
+
+    async def wait_for_session_image_or_text(
+        self,
+        session: FeishuWorkflowSession,
+        *,
+        phase: str,
+        summary: str | None = None,
+    ) -> tuple[Path | None, str]:
+        """等待会话输入，兼容旧调用方返回 (图片路径, 文本)。"""
+        event = await self.wait_for_session_event(session, phase=phase, summary=summary)
+        return event.image_path, event.text
 
     async def collect_session_images(
         self,

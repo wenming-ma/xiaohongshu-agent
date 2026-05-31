@@ -18,6 +18,7 @@ class ResearchState:
     tracked_stats: dict = field(default_factory=dict)
     current_result: ResearchResult | None = None
     continuation_prompt: str | None = None
+    budget_exhausted: bool = False
 
 
 def build_progress_snapshot(state: ResearchState, saved_file: str, max_items: int = 10) -> str:
@@ -73,7 +74,7 @@ def build_progress_snapshot(state: ResearchState, saved_file: str, max_items: in
         f"⚠️ 重要提醒：\n"
         f"- 以上历史数据已自动保存到文件，系统会自动合并所有轮次\n"
         f"- 本轮你只需输出【新收集】的数据，不要重复输出历史数据\n"
-        f"- 请继续探索新帖子，收集新的内容项"
+        f"- 请围绕验证反馈定向补齐，不要无限探索新帖子"
     )
 
 
@@ -94,5 +95,5 @@ def combine_feedback(depth_result, review_result) -> str:
         f"- 上一轮收集的数据已自动保存，系统会自动合并所有轮次结果\n"
         f"- 本轮你只需输出【本轮新收集】的内容项\n"
         f"- 不要在输出中重复之前轮次已收集的内容\n\n"
-        f"**请基于已搜索的内容发散思维，尝试不同关键词组合和细分角度，进入更多帖子详情页收集【新的】数据。**"
+        f"**请基于验证反馈定向补齐，达到本轮预算或补齐缺口后立即输出，不要无限进入新帖子。**"
     )

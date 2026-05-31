@@ -20,11 +20,12 @@ import httpx
 import logfire
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, Tool
+from pydantic_ai.usage import UsageLimits
 
 from ..schemas import ImageReadResult, PostImageItem, PostImagesReadResult
 from ...shared.utils.image_compression import compress_image_for_review
 from ....utils.logger import get_logger
-from ....config.settings import RetryConfig, PathConfig
+from ....config.settings import RetryConfig, PathConfig, ResearchConfig
 from ....utils.providers import VertexAIVisionClient, get_text_model
 from .prompts import (
     image_reader_system_prompt,
@@ -182,6 +183,9 @@ class PostImageReaderAgent:
     def __init__(self, mcp_server):
         self._mcp_server = mcp_server
         self._vision_client = VertexAIVisionClient()
+        self._max_images = max(1, ResearchConfig.POST_IMAGE_READER_MAX_IMAGES)
+        self._request_limit = max(1, ResearchConfig.POST_IMAGE_READER_REQUEST_LIMIT)
+        self._tool_calls_limit = max(1, ResearchConfig.POST_IMAGE_READER_TOOL_CALLS_LIMIT)
 
         # 自定义工具
         custom_tools = [
@@ -207,7 +211,7 @@ class PostImageReaderAgent:
             tools=custom_tools,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
-            system_prompt=(post_image_reader_system_prompt(),),
+            system_prompt=(post_image_reader_system_prompt(max_images=self._max_images),),
         )
 
     # ── 自定义工具 ──
@@ -226,6 +230,13 @@ class PostImageReaderAgent:
             PostImageItem 的 JSON 字符串，包含 extracted_text、description 等字段
         """
         try:
+            if index > self._max_images:
+                return PostImageItem(
+                    index=index,
+                    url=url,
+                    issues=[f"超过本次读图预算上限 {self._max_images}，已跳过"],
+                ).model_dump_json(indent=2)
+
             from PIL import Image
             import io
 
@@ -279,6 +290,12 @@ class PostImageReaderAgent:
             PostImageItem 的 JSON 字符串，包含 extracted_text、description 等字段
         """
         try:
+            if index > self._max_images:
+                return PostImageItem(
+                    index=index,
+                    issues=[f"超过本次读图预算上限 {self._max_images}，已跳过"],
+                ).model_dump_json(indent=2)
+
             path = Path(image_path)
             if not path.exists():
                 fallback = PathConfig.DOWNLOADS_DIR / path.name
@@ -325,10 +342,19 @@ class PostImageReaderAgent:
         Returns:
             PostImagesReadResult 的 JSON 字符串，包含每张图片的分析结果。
         """
-        prompt = post_image_reader_user_prompt(question=question)
+        prompt = post_image_reader_user_prompt(question=question, max_images=self._max_images)
 
         try:
-            result = await self._agent.run(prompt)
+            result = await self._agent.run(
+                prompt,
+                usage_limits=UsageLimits(
+                    request_limit=self._request_limit,
+                    tool_calls_limit=self._tool_calls_limit,
+                ),
+            )
+            if len(result.output.images) > self._max_images:
+                result.output.issues.append(f"读图结果超过预算，仅保留前 {self._max_images} 张")
+                result.output.images = result.output.images[: self._max_images]
             logger.info(
                 "PostImageReaderAgent: completed, %d images analyzed",
                 len(result.output.images),

@@ -25,6 +25,14 @@ These citizens are composed at runtime. The Planner Agent or a specialist Agent 
 - Skill Protocol documents live in `.agents/skills/` and contain experience, style rules, prompts, and checklists only. Runtime schemas stay in Pydantic models.
 - Versioned reusable prompt snippets live in `.agents/prompt/`. Do not add rotating local prompt roots.
 
+## Feishu Session Runtime
+
+- Feishu is an interaction wall, not business logic. Buttons, forms, images, and shortcut actions must be translated into structured session events before they reach orchestration.
+- Main Agent user interaction happens through tools. A tool asks for single-choice, multi-select, free-text, or reference-image input; the Feishu translator renders the matching card and returns ordinary user-session content.
+- Incoming Feishu events should stay structured for as long as possible. Do not collapse them into bare prompt strings until the session-input translator converts them into Agent-visible user content.
+- Long-running Agent sessions should follow the Pi/Pydantic AI queue model: `asap` input steers the next safe model turn; `when_idle` input waits until the current task would otherwise finish.
+- `message_history` is only for a single specialist Agent's internal revision loop. Cross-Agent and user-session data belongs in orchestration state, `ConversationRequest`, or `ResultEnvelope` artifacts.
+
 ## Layout
 
 - `image_post/research`, `image_post/content`, `image_post/image`: image route specialist phases.

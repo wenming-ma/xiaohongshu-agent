@@ -4,8 +4,8 @@ from pathlib import Path
 
 from src.agents.image_post.research.agent import ResearchAgent
 from src.agents.image_post.research.state import ResearchState, build_progress_snapshot
-from src.agents.image_post.research.tools import ImageReaderAgent
-from src.agents.image_post.schemas import ResearchItem, ResearchResult
+from src.agents.image_post.research.tools import ImageReaderAgent, PostImageReaderAgent
+from src.agents.image_post.schemas import PostImageItem, PostImagesReadResult, ResearchItem, ResearchResult
 from src.agents.image_post.utils.image import build_compact_items
 from src.agents.image_post.utils.research import sanitize_research_for_content
 
@@ -144,6 +144,43 @@ def test_research_agent_wires_post_image_reader_through_navigate_tracker(monkeyp
 
     assert captured["login_mcp_server"] is agent.mcp_server
     assert captured["post_reader_mcp_server"] is agent.navigate_tracker
+
+
+def test_post_image_reader_applies_image_and_tool_budgets() -> None:
+    captured: dict[str, object] = {}
+
+    class FakeAgent:
+        async def run(self, prompt, *, usage_limits):
+            captured["prompt"] = prompt
+            captured["usage_limits"] = usage_limits
+
+            class Result:
+                output = PostImagesReadResult(
+                    post_type="normal",
+                    image_count=4,
+                    images=[
+                        PostImageItem(index=1, description="one"),
+                        PostImageItem(index=2, description="two"),
+                        PostImageItem(index=3, description="three"),
+                    ],
+                )
+
+            return Result()
+
+    reader = PostImageReaderAgent.__new__(PostImageReaderAgent)
+    reader._agent = FakeAgent()
+    reader._max_images = 2
+    reader._request_limit = 5
+    reader._tool_calls_limit = 7
+
+    result = asyncio.run(reader.read_post_images("只看食材"))
+    payload = json.loads(result)
+
+    assert "最多分析 2 张图片" in captured["prompt"]
+    assert captured["usage_limits"].request_limit == 5
+    assert captured["usage_limits"].tool_calls_limit == 7
+    assert len(payload["images"]) == 2
+    assert "仅保留前 2 张" in payload["issues"][0]
 
 
 def test_sanitize_research_removes_operational_login_diagnostics() -> None:

@@ -134,3 +134,36 @@ def test_session_wait_starts_polling_before_waiting_for_events():
     assert started is True
     assert image_path is None
     assert text == "高腰阔腿裤"
+
+
+def test_session_wait_event_preserves_structured_control_event():
+    notifier = _build_notifier()
+
+    session = SimpleNamespace(
+        handle=SimpleNamespace(session_id="sess-active"),
+        chat_id="chat-1",
+        ensure_active=lambda: asyncio.sleep(0),
+        update_phase=lambda phase, summary=None: asyncio.sleep(0),
+    )
+    notifier._polling_thread = object()
+    notifier._get_session_queue("sess-active").put_nowait(
+        FeishuInputEvent(
+            kind="control",
+            text="__control__:new_session",
+            action="new_session",
+        )
+    )
+
+    async def _run():
+        return await asyncio.wait_for(
+            notifier.wait_for_session_event(
+                session,
+                phase="running_image_post",
+            ),
+            timeout=0.2,
+        )
+
+    event = asyncio.run(_run())
+    assert event.kind == "control"
+    assert event.action == "new_session"
+    assert event.text == "__control__:new_session"
