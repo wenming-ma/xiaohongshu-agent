@@ -1,17 +1,13 @@
-# XHS 长文工具
+# Article Post Agents
 
-小红书长文创作和发布工具。
+Article post is a formal content route for long-form synthesis and Feishu delivery.
 
-## 工作流
+## Phases
 
-```text
-pipeline.py (XHSArticlePostPipeline.execute)
-    │
-    ├── research/  → ResearchAgent.forward()   # 跨站深度研究（文章 + 视频）
-    ├── content/   → ContentAgent.forward()    # 长文创作 / 搬运改写
-    ├── image/     → ImageAgent.forward()      # 头图和章节配图
-    └── publish/   → PublisherAgent.forward()  # 发布到小红书长文编辑器
-```
+- `research/`: cross-site deep research over articles and videos.
+- `content/`: long-form article creation and internal review.
+- `image/`: cover and section image generation.
+- `utils/`: article-specific research persistence and data helpers.
 
 ## 各 Agent 文件结构
 
@@ -27,13 +23,12 @@ pipeline.py (XHSArticlePostPipeline.execute)
 
 `src/agents/article_post/utils/`：
 - `research.py`：research phase 的持久化和数据整理 helper
-- `publish.py`：长文编辑器注入脚本和确定性 publish helper
 
 ### 关键规则
 
 1. **提示词只在 `prompts.py`**：所有 system prompt 常量、user prompt 模板、`render_template` 包装函数都放在 `prompts.py`。不在 `agent.py` 或 `validator.py` 中硬编码提示词。
 2. **验证器在 `validator.py`**：审核用的 Agent 实例由 validator 类自己创建和管理（懒加载 `@property`），不在 `agent.py` 的 `init_agent()` 中创建。`agent.py` 通过 `init_validators()` 实例化验证器，`validate()` 委托给验证器。
-3. **业务 helper 不进 `src/utils`**：`article_post` 专用 helper 放 `src/agents/article_post/utils/`；跨 pipeline 复用的业务 helper 放 `src/agents/shared/utils/`。
+3. **业务 helper 不进 `src/utils`**：`article_post` 专用 helper 放 `src/agents/article_post/utils/`；跨 route 复用的业务 helper 放 `src/agents/shared/utils/`。
 4. **模型获取用 `get_text_model()`**：统一从 `src/utils/providers` 获取模型，不硬编码模型名。
 
 当前状态：
@@ -45,3 +40,4 @@ pipeline.py (XHSArticlePostPipeline.execute)
 - 视频信息优先复用本地音频转录链路。
 - 浏览器登录态统一复用 `browser-sessions/shared`。
 - 不直接跨工具依赖 `image_post` / `video_post` 的业务 schema。
+- 正式交付由 `src/orchestration/article_route.py` 生成 `DeliveryPackage` 并发到飞书。

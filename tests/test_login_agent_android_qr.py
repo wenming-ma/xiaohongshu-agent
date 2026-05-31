@@ -45,7 +45,7 @@ def test_login_task_prompt_mentions_android_qr_for_scan_login():
 def test_xiaohongshu_login_url_is_normalized_to_explore():
     assert _normalize_login_url("https://www.xiaohongshu.com") == "https://www.rednote.com/explore"
     assert (
-        _normalize_login_url("https://creator.xiaohongshu.com/publish/publish")
+        _normalize_login_url("https://creator.xiaohongshu.com/dashboard")
         == "https://www.rednote.com/explore"
     )
     assert _normalize_login_url("https://www.rednote.com/search_result?keyword=test") == "https://www.rednote.com/explore"

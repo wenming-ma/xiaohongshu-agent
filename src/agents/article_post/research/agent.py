@@ -300,7 +300,11 @@ class CollectorCurator:
 
         async def _run(query: str) -> tuple[str, list[SearchResult]]:
             async with sem:
-                return query, await self.search_client.search(query, max_results=4)
+                try:
+                    return query, await self.search_client.search(query, max_results=4)
+                except Exception as exc:
+                    logger.warning("搜索 query 失败，已跳过: %s (%s)", query, exc)
+                    return query, []
 
         pairs = await asyncio.gather(*[_run(query) for query in query_to_tasks])
         result_by_url: dict[str, QueryCandidate] = {}

@@ -71,6 +71,7 @@ class ImageConfig:
     MAX_GROUP_SIZE_CAP = 16
     COMPACT_TEXT_MAX_LEN = 240
     MIN_GROUP_SIZE_THRESHOLD = 8
+    ENABLE_LOCAL_PROMPT_TEMPLATES = _bool_env("ENABLE_LOCAL_PROMPT_TEMPLATES", True)
     COMPRESS_QUALITY_START = 95
     COMPRESS_QUALITY_MIN = 20
     COMPRESS_QUALITY_STEP = 5
@@ -87,12 +88,11 @@ class TimeoutConfig:
 class PathConfig:
     _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
     AGENT_SKILLS_DIR = _PROJECT_ROOT / '.agents' / 'skills'
-    PROMPT_TEMPLATE_ROOT = Path(os.getenv("PROMPT_TEMPLATE_ROOT", _PROJECT_ROOT / ".prompt-template-repos"))
+    PROMPT_TEMPLATE_ROOT = Path(os.getenv("PROMPT_TEMPLATE_ROOT", _PROJECT_ROOT / ".agents" / "prompt"))
     DOWNLOADS_DIR = _PROJECT_ROOT / 'output' / 'playwright-downloads'
     FEISHU_SESSION_DIR = _PROJECT_ROOT / 'output' / 'feishu-sessions'
     ORCHESTRATION_RUN_DIR = _PROJECT_ROOT / 'output' / 'orchestrator-runs'
     IMAGE_PROJECT_DIR = _PROJECT_ROOT / 'posts' / 'image-posts'
-    OUTFIT_PROJECT_DIR = _PROJECT_ROOT / 'posts' / 'outfit-posts'
     ARTICLE_PROJECT_DIR = _PROJECT_ROOT / 'posts' / 'article-posts'
     VIDEO_PROJECT_DIR = _PROJECT_ROOT / 'posts' / 'video-posts'
     BROWSER_SESSION_SHARED = str(_PROJECT_ROOT / 'browser-sessions' / 'shared')
@@ -129,14 +129,6 @@ class APIConfig:
     RETRYABLE_STATUS_CODES = (429, 500, 502, 503, 504)
     # "api" = API only, "web" = web only, "auto" = API first then web fallback
     GEMINI_IMAGE_PROVIDER = os.getenv("GEMINI_IMAGE_PROVIDER", "auto")
-
-
-class PublishConfig:
-    MAX_RETRIES = 5
-    INITIAL_DELAY = 10.0
-    UPLOAD_TIMEOUT = 120
-    PUBLISH_TIMEOUT = 60
-    XHS_PUBLISH_URL = "https://creator.xiaohongshu.com/publish/publish"
 
 
 class ResearchConfig:

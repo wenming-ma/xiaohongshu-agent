@@ -20,7 +20,7 @@ def _write_skill(root: Path, name: str, description: str, body: str) -> None:
     )
 
 
-def test_skill_registry_discovers_project_skills_and_matches_by_description(tmp_path: Path) -> None:
+def test_skill_registry_discovers_project_skills_without_runtime_matching(tmp_path: Path) -> None:
     skills_root = tmp_path / ".agents" / "skills"
     _write_skill(
         skills_root,
@@ -43,11 +43,4 @@ def test_skill_registry_discovers_project_skills_and_matches_by_description(tmp_
         "solid-background-single-look",
     ]
 
-    matches = registry.match(
-        "帮我做纯色背景，每张图只放一套穿搭，最后发到飞书",
-        limit=2,
-    )
-
-    assert matches
-    assert matches[0].name == "solid-background-single-look"
-
+    assert not hasattr(registry, "match")

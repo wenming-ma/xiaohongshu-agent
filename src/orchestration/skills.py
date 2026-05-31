@@ -2,29 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import re
 
 import yaml
-
-
-_TOKEN_RE = re.compile(r"[A-Za-z0-9\u4e00-\u9fff]+")
-
-
-def _tokenize(text: str) -> set[str]:
-    return {
-        token.lower()
-        for token in _TOKEN_RE.findall(text)
-        if len(token.strip()) > 1
-    }
-
-
-def _bigrams(text: str) -> set[str]:
-    normalized = "".join(_TOKEN_RE.findall(text.lower()))
-    return {
-        normalized[idx : idx + 2]
-        for idx in range(len(normalized) - 1)
-        if normalized[idx : idx + 2].strip()
-    }
 
 
 @dataclass(frozen=True)
@@ -67,24 +46,6 @@ class ProjectSkillRegistry:
 
         self._skills = sorted(skills, key=lambda item: item.name)
         return self._skills
-
-    def match(self, query: str, *, limit: int = 3) -> list[SkillSpec]:
-        query_tokens = _tokenize(query)
-        query_bigrams = _bigrams(query)
-        ranked: list[tuple[int, SkillSpec]] = []
-        for skill in self.discover():
-            haystack = f"{skill.name} {skill.description} {skill.body[:400]}"
-            haystack_tokens = _tokenize(haystack)
-            haystack_bigrams = _bigrams(haystack)
-            overlap = len(query_tokens & haystack_tokens)
-            overlap += len(query_bigrams & haystack_bigrams)
-            bonus = 2 if skill.name.replace("-", " ") in query.lower() else 0
-            score = overlap + bonus
-            if score > 0:
-                ranked.append((score, skill))
-
-        ranked.sort(key=lambda item: (-item[0], item[1].name))
-        return [skill for _, skill in ranked[:limit]]
 
     @staticmethod
     def _split_frontmatter(raw: str) -> tuple[dict, str]:

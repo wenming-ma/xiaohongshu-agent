@@ -14,7 +14,6 @@ from src.config.settings import (
     PathConfig,       # 路径配置
     ResearchConfig,   # 研究配置
     ImageConfig,      # 图片生成配置
-    PublishConfig,    # 发布配置
     ReviewConfig,     # 审核配置
 )
 ```
@@ -29,4 +28,7 @@ from src.config.settings import (
 - `MINIMAX_API_KEY` - MiniMax API
 - `GEMINI_API_KEY` - Gemini API
 - `MODEL_PROVIDER` - 默认文本模型提供方
+- `FEISHU_APP_ID` / `FEISHU_APP_SECRET` / `FEISHU_CHAT_ID` - 飞书交付配置
+- `VERTEX_AI_PROJECT_ID` / `VERTEX_AI_LOCATION` - Vertex AI 图片生成与读图配置
+- `PROMPT_TEMPLATE_ROOT` - 可选覆盖提示词片段库；默认固定为 `.agents/prompt`
 - `TELEGRAM_BOT_TOKEN` - Telegram 通知

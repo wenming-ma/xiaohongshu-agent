@@ -359,9 +359,9 @@ def test_cover_agent_uses_processed_path_returned_by_api_client(tmp_path) -> Non
     agent.image_client = _FakeImageClient(tmp_path / "cover.jpg")
     agent._generate_cover_prompt = AsyncMock(return_value="cover prompt")
 
-    with patch(
-        "src.agents.video_post.cover.agent.extract_frames",
-        AsyncMock(return_value=[tmp_path / "frame_001.png"]),
+    with patch.dict(
+        CoverAgent.forward.__globals__,
+        {"extract_frames": AsyncMock(return_value=[tmp_path / "frame_001.png"])},
     ):
         result = asyncio.run(
             agent.forward(

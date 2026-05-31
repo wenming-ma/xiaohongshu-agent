@@ -342,7 +342,7 @@ class GeminiWebImageClient:
         image_size: Optional[str] = None,
         aspect_ratio: Optional[str] = None,
         max_retries: int = 3,
-        reference_images: list[tuple[str, Path]] | None = None,
+        reference_images: list[tuple[str, Path] | Path] | None = None,
     ) -> Path:
         """
         通过 Gemini Web UI 生成图片
@@ -353,7 +353,7 @@ class GeminiWebImageClient:
             image_size: 未使用（保持与 API 客户端接口一致）
             aspect_ratio: 未使用（保持与 API 客户端接口一致）
             max_retries: 最大重试次数
-            reference_images: 带物品标签的参考图片列表 [(item_name, path), ...]
+            reference_images: 参考图片列表，支持 [(item_name, path), ...] 或 [path, ...]
 
         Returns:
             保存的图片路径
@@ -363,7 +363,11 @@ class GeminiWebImageClient:
 
         logger.info("[GeminiWeb] 开始生成图片: %s", output_path.name)
         if reference_images:
-            valid_refs = [p for _, p in reference_images if p.exists()]
+            valid_refs = [
+                item[1] if isinstance(item, tuple) else item
+                for item in reference_images
+            ]
+            valid_refs = [p for p in valid_refs if p.exists()]
             logger.info("[GeminiWeb] 附加 %d 张参考图片", len(valid_refs))
         else:
             valid_refs = []

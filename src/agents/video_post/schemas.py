@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Optional, Dict, Any
+from typing import List
 
 from pydantic import BaseModel, Field, computed_field
 
@@ -12,26 +12,6 @@ class Platform(str, Enum):
     INSTAGRAM = "instagram"
     FACEBOOK = "facebook"
     TIKTOK = "tiktok"
-
-
-class XHSVideoPostInput(BaseModel):
-    topic: str
-    audience: str
-    platforms: List[Platform] = [Platform.YOUTUBE, Platform.X, Platform.INSTAGRAM, Platform.FACEBOOK, Platform.TIKTOK]
-    max_videos: int = Field(default=10, ge=1, le=50)
-    publish: bool = True
-
-
-class XHSVideoPostOutput(BaseModel):
-    success: bool
-    title: str = ""
-    body_preview: str = ""
-    hashtags: list[str] = []
-    video_path: str | None = None
-    published: bool = False
-    post_url: str | None = None
-    output_dir: str = ""
-    error_message: str | None = None
 
 
 class EngagementMetrics(BaseModel):
@@ -120,14 +100,3 @@ class CoverImageResult(BaseModel):
     success: bool
     cover_path: str = ""
     error_message: str = ""
-
-
-class VideoPublishResult(BaseModel):
-    published: bool
-    platform: str = "xiaohongshu"
-    publish_time: str = ""
-    post_url: str = ""
-    error_message: str = ""
-    retry_count: int = 0
-    video_path: Optional[str] = None
-    content_snapshot: Optional[Dict[str, Any]] = None

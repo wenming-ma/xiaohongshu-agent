@@ -196,7 +196,11 @@ class DomainSearchClient:
             except Exception as exc:
                 logger.warning("Tavily search failed: %s", exc)
 
-        return await self._search_duckduckgo(query, max_results)
+        try:
+            return await self._search_duckduckgo(query, max_results)
+        except Exception as exc:
+            logger.warning("DuckDuckGo search failed: %s", exc)
+            return []
 
     async def _search_serper(self, query: str, max_results: int, api_key: str) -> list[SearchResult]:
         async with httpx.AsyncClient(timeout=self._timeout) as client:

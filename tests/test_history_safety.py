@@ -36,7 +36,6 @@ from src.agents.shared.utils.tail_soft_limit import (
     build_soft_limit_message,
     build_tail_soft_limit_history_processor,
 )
-from src.agents.styled_image_post.research.agent import ResearchAgent as StyledImageResearchAgent
 from src.agents.video_post.content.agent import ContentAgent as VideoContentAgent
 from src.agents.video_post.content.state import ContentState as VideoContentState
 from src.agents.video_post.research.agent import ResearchAgent as VideoResearchAgent
@@ -333,18 +332,6 @@ def test_image_research_agent_uses_tail_soft_limit_hooks(monkeypatch) -> None:
     )
 
     agent = _build_research_agent_for_soft_limit(ImageResearchAgent)
-
-    assert len(agent.generator.history_processors) == 1
-    assert not any(callable(item) for item in agent.generator._instructions)
-
-
-def test_styled_image_research_agent_uses_tail_soft_limit_hooks(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "src.agents.styled_image_post.research.agent.get_text_model",
-        lambda: TestModel(),
-    )
-
-    agent = _build_research_agent_for_soft_limit(StyledImageResearchAgent)
 
     assert len(agent.generator.history_processors) == 1
     assert not any(callable(item) for item in agent.generator._instructions)

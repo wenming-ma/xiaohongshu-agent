@@ -158,7 +158,7 @@ A candid photograph of a young Asian woman captured mid-laugh at a sunlit café 
 直接输出 Gemini 提示词，不要任何解释。
 **写实风格的提示词必须用叙事性段落描述**（建议约 200-350 词英文），像在给摄影师讲述一个场景。
 信息图/插画风格可以用结构化描述。
-提示词末尾必须加上：IMPORTANT: All text must be in Chinese characters (简体中文). Image aspect ratio MUST be 3:4 vertical portrait (e.g. 1080×1440). Do NOT generate landscape or square images. Output must be 4K ultra-high resolution quality. Do NOT use the words "perfect", "flawless", or "symmetrical".
+提示词末尾必须加上：IMPORTANT: All text must be in Chinese characters (简体中文). Image aspect ratio MUST follow the requested image_config aspect ratio. Do NOT generate landscape or square images unless the requested aspect ratio says so. Output must match the requested image_config resolution quality. Do NOT use the words "perfect", "flawless", or "symmetrical".
 """
 
 IMAGE_USER_PROMPT_TEMPLATE = """## 配图生成任务

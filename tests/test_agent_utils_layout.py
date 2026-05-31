@@ -6,11 +6,10 @@ SRC_ROOT = PROJECT_ROOT / "src"
 AGENTS_ROOT = SRC_ROOT / "agents"
 SHARED_UTILS = SRC_ROOT / "utils"
 
-EXPECTED_PIPELINE_UTILS = [
+EXPECTED_AGENT_UTILS = [
     AGENTS_ROOT / "article_post" / "utils",
     AGENTS_ROOT / "image_post" / "utils",
     AGENTS_ROOT / "shared" / "utils",
-    AGENTS_ROOT / "styled_image_post" / "utils",
     AGENTS_ROOT / "video_post" / "utils",
 ]
 
@@ -29,8 +28,8 @@ REMOVED_SHARED_BUSINESS_FILES = [
 ]
 
 
-def test_every_pipeline_has_a_dedicated_utils_package() -> None:
-    for path in EXPECTED_PIPELINE_UTILS:
+def test_every_agent_family_has_a_dedicated_utils_package() -> None:
+    for path in EXPECTED_AGENT_UTILS:
         assert path.is_dir(), f"missing utils package: {path}"
         assert (path / "__init__.py").exists(), f"missing __init__.py: {path}"
 

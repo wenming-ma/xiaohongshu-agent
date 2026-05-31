@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any
-
 from pydantic import BaseModel, Field, computed_field
 
 
@@ -29,27 +27,6 @@ class ArticleBlockType(str, Enum):
     NUMBERED_LIST = "numbered_list"
     QUOTE = "quote"
     IMAGE_SLOT = "image_slot"
-
-
-class XHSArticlePostInput(BaseModel):
-    topic: str
-    audience: str
-    publish: bool = True
-    generate_images: bool = True
-    strategy: ArticleStrategy = ArticleStrategy.AUTO
-
-
-class XHSArticlePostOutput(BaseModel):
-    success: bool
-    title: str = ""
-    body_preview: str = ""
-    hashtags: list[str] = []
-    image_count: int = 0
-    image_paths: list[str] = []
-    published: bool = False
-    post_url: str | None = None
-    output_dir: str = ""
-    error_message: str | None = None
 
 
 class ArticleSource(BaseModel):
@@ -278,15 +255,3 @@ class ArticleImageResult(BaseModel):
     images: list[GeneratedArticleImage] = []
     total_count: int = 0
     generated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
-
-
-
-class ArticlePublishResult(BaseModel):
-    published: bool
-    platform: str = "xiaohongshu"
-    publish_time: str = ""
-    post_url: str = ""
-    error_message: str = ""
-    retry_count: int = 0
-    content_snapshot: dict[str, Any] | None = None
-    image_paths: list[str] | None = None

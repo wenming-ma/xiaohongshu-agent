@@ -60,7 +60,7 @@ dependencies = [
 ]
 
 [project.scripts]
-xhs-agent = "src.main:main"
+xhs-agent = "src.apps.feishu_orchestrator.run:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -68,6 +68,15 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = [
+    ".git",
+    ".venv",
+    "output",
+    "submodule",
+]
 
 [tool.uv.sources]
 torch = [

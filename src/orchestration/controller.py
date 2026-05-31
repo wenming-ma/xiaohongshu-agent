@@ -3,50 +3,51 @@ from __future__ import annotations
 from src.config.settings import PathConfig
 
 from .autonomous import resolve_autonomous_request
+from .article_route import ArticlePostOrchestrator
 from .conversation import ContentRoute, ConversationRequest, WorkflowPlan
 from .image_route import ImagePostOrchestrator
-from .legacy_routes import ArticlePostOrchestrator, VideoPostOrchestrator
+from .planning_agent import PlanningAgent
 from .route_runner import RouteRunner
 from .skills import ProjectSkillRegistry
+from .style_context import StyleContext
+from .video_route import VideoPostOrchestrator
 
 
 class FeishuContentPlanner:
-    def __init__(self, *, skill_registry: ProjectSkillRegistry | None = None):
+    def __init__(
+        self,
+        *,
+        skill_registry: ProjectSkillRegistry | None = None,
+        planning_agent: object | None = None,
+    ):
         self.skill_registry = skill_registry or ProjectSkillRegistry(
             skills_root=PathConfig.AGENT_SKILLS_DIR
         )
+        self.planning_agent = planning_agent or PlanningAgent()
 
-    def plan(self, request: ConversationRequest) -> WorkflowPlan:
-        route = request.route_hint or self._infer_route(request)
-        query = " ".join(
-            [
-                request.topic,
-                request.message,
-                request.audience,
-                *request.style_constraints,
-                route.value,
-            ]
+    async def plan(self, request: ConversationRequest) -> WorkflowPlan:
+        available_skills = self.skill_registry.discover()
+        decision = await self.planning_agent.decide(
+            request,
+            available_skills=available_skills,
         )
-        matched_skills = [skill.name for skill in self.skill_registry.match(query)]
-        rationale = (
-            f"对话线索指向 {route.value}"
-            if request.route_hint is not None
-            else f"根据对话上下文动态选择 {route.value}"
-        )
+        route = decision.route
+        selected_names = list(dict.fromkeys(getattr(decision, "selected_skill_names", []) or []))
+        available_by_name = {skill.name: skill for skill in available_skills}
+        skill_matches = [
+            available_by_name[name]
+            for name in selected_names
+            if name in available_by_name
+        ]
+        matched_skills = [skill.name for skill in skill_matches]
+        style_context = StyleContext.from_request(request, matched_skills=skill_matches)
         return WorkflowPlan(
             route=route,
             matched_skills=matched_skills,
-            rationale=rationale,
+            rationale=getattr(decision, "rationale", "") or f"Planner Agent selected {route.value}",
             style_constraints=list(request.style_constraints),
+            style_context=style_context,
         )
-
-    def _infer_route(self, request: ConversationRequest) -> ContentRoute:
-        text = " ".join([request.topic, request.message, *request.style_constraints]).lower()
-        if any(keyword in text for keyword in ("视频", "video", "短片", "混剪", "reel", "clip")):
-            return ContentRoute.VIDEO_POST
-        if any(keyword in text for keyword in ("长文", "文章", "article", "深度", "解读")):
-            return ContentRoute.ARTICLE_POST
-        return ContentRoute.IMAGE_POST
 
 
 class FeishuContentOrchestrator:
@@ -70,15 +71,18 @@ class FeishuContentOrchestrator:
         chat_id: str | None = None,
         run_id: str | None = None,
         send_to_feishu: bool = False,
+        run_options: object | None = None,
     ):
         request = self.prepare_request(request)
-        plan = self.planner.plan(request)
+        plan = await self.planner.plan(request)
         runner = self._get_runner(plan.route)
         return await runner.run(
             request,
             run_id=run_id,
             chat_id=chat_id,
             send_to_feishu=send_to_feishu,
+            style_context=plan.style_context,
+            run_options=run_options,
         )
 
     def prepare_request(self, request: ConversationRequest) -> ConversationRequest:

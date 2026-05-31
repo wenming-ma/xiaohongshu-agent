@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from inspect import isawaitable
+from pathlib import Path
 from typing import Any
 
 from src.utils.feishu_notifier import FeishuNotifier, get_feishu_notifier
@@ -11,7 +13,7 @@ from .request_parser import is_autonomous_request_text, parse_conversation_reque
 from .schemas import DeliveryPackage, ResultEnvelope
 
 
-RouteResolver = Callable[[ConversationRequest], ContentRoute]
+RouteResolver = Callable[[ConversationRequest], ContentRoute | Awaitable[ContentRoute]]
 
 
 class FeishuInteractionTools:
@@ -39,7 +41,7 @@ class FeishuInteractionTools:
         if self._needs_route_choice(request):
             request = await self.ask_route_choice(session, request)
 
-        route = request.route_hint or self._resolve_route(request)
+        route = request.route_hint or await self._resolve_route(request)
         if route is ContentRoute.IMAGE_POST and self._needs_style_choices(request):
             request = await self.ask_style_choices(session, request)
         return request
@@ -136,6 +138,53 @@ class FeishuInteractionTools:
         )
         return self._apply_style_reply(request, reply)
 
+    async def collect_reference_image_request(
+        self,
+        session: object,
+        first_image: Path,
+    ) -> ConversationRequest | None:
+        reference_images = [first_image]
+        await self.notifier.send_session_card_message(
+            session,
+            (
+                "已收到 1 张参考图。\n\n"
+                "你可以继续发送参考图，或直接发送这组图片/帖子的需求。"
+                "我会把参考图作为约束交给后续 Agent，生成图必须包含参考图里的核心物品。"
+            ),
+            [
+                ("取消", "__reference__:cancel"),
+            ],
+            phase="collect_reference",
+            summary="等待参考图需求",
+        )
+
+        while True:
+            image_path, reply = await self.notifier.wait_for_session_image_or_text(
+                session,
+                phase="collect_reference",
+                summary=f"已收集 {len(reference_images)} 张参考图",
+            )
+            if image_path is not None:
+                reference_images.append(image_path)
+                await self.notifier.send_session_message(
+                    session,
+                    f"已收到 {len(reference_images)} 张参考图。继续发图，或直接发送需求文本。",
+                    phase="collect_reference",
+                    summary=f"已收集 {len(reference_images)} 张参考图",
+                )
+                continue
+
+            text = reply.strip()
+            if not text:
+                continue
+            if text == "__reference__:cancel":
+                return None
+
+            request = parse_conversation_request(text)
+            return request.model_copy(
+                update={"reference_images": [str(path) for path in reference_images]}
+            )
+
     def _needs_route_choice(self, request: ConversationRequest) -> bool:
         if request.route_hint is not None:
             return False
@@ -159,17 +208,15 @@ class FeishuInteractionTools:
             return False
         return len(request.message.strip()) <= 40 or any(token in text for token in ("图片", "图文", "穿搭"))
 
-    def _resolve_route(self, request: ConversationRequest) -> ContentRoute:
+    async def _resolve_route(self, request: ConversationRequest) -> ContentRoute:
         if self.route_resolver is not None:
-            return self.route_resolver(request)
+            result = self.route_resolver(request)
+            if isawaitable(result):
+                return await result
+            return result
         return self._infer_route_for_clarification(request)
 
     def _infer_route_for_clarification(self, request: ConversationRequest) -> ContentRoute:
-        text = " ".join([request.topic, request.message]).lower()
-        if any(token in text for token in ("视频", "video", "短片", "混剪", "reel", "clip")):
-            return ContentRoute.VIDEO_POST
-        if any(token in text for token in ("长文", "文章", "article", "深度", "解读")):
-            return ContentRoute.ARTICLE_POST
         return ContentRoute.IMAGE_POST
 
     def _apply_route_reply(self, request: ConversationRequest, reply: str) -> ConversationRequest:

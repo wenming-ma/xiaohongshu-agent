@@ -25,7 +25,8 @@ from ..schemas import ResearchResult
 from ....utils.providers import get_text_model
 from ...shared.utils.navigate_tracker import NavigateTracker
 from ....utils.logger import get_logger
-from ....config.settings import RetryConfig, ResearchConfig, PathConfig
+from ....config.settings import RetryConfig, PathConfig
+from ....orchestration.run_options import ResearchRunOptions
 from ...shared import create_shared_playwright_mcp_server
 from ...shared.video_extract import create_video_extract_tool
 from ...shared.login import AuthResult, RednoteLoginAgent
@@ -54,11 +55,19 @@ class ResearchAgent(BaseAgent):
     # 初始化
     # ========================================================================
 
-    def __init__(self):
+    def __init__(self, run_options: ResearchRunOptions | None = None):
         """初始化研究 Agent"""
+        self.run_options = run_options or ResearchRunOptions()
         self.init_mcp_server()
         super().__init__()
         self.init_validators()
+
+    def _run_options(self) -> ResearchRunOptions:
+        options = getattr(self, "run_options", None)
+        if options is None:
+            options = ResearchRunOptions()
+            self.run_options = options
+        return options
 
     def init_mcp_server(self) -> None:
         """初始化 Playwright MCP Server"""
@@ -103,13 +112,15 @@ class ResearchAgent(BaseAgent):
 
     def init_validators(self) -> None:
         """初始化验证器"""
+        options = self._run_options()
         self.depth_validator = ResearchDepthValidator(
-            min_posts=ResearchConfig.MIN_POSTS_RESEARCHED
+            min_posts=options.min_posts_researched
         )
         self.review_validator = ResearchReviewValidator(
-            min_posts=ResearchConfig.MIN_POSTS_RESEARCHED
+            min_posts=options.min_posts_researched,
+            min_key_infos=options.min_key_infos,
         )
-        self.max_iterations = ResearchConfig.VALIDATION_MAX_RETRIES
+        self.max_iterations = options.validation_max_retries
 
     async def prepare_research_access(self) -> AuthResult:
         """在研究开始前预检 Rednote 登录态，并在需要时触发自动扫码登录。"""
@@ -152,6 +163,7 @@ class ResearchAgent(BaseAgent):
         logger.info(f"开始研究：{topic}")
         logger.info(f"目标受众：{target_audience}")
         logger.info(f"最大迭代次数：{self.max_iterations}")
+        logger.info("研究运行参数：%s", self._run_options().model_dump())
 
         with logfire.span(
             'research:workflow',
@@ -209,7 +221,9 @@ class ResearchAgent(BaseAgent):
             prompt = research_user_prompt(
                 topic=state.topic,
                 target_audience=state.target_audience,
-                min_posts=ResearchConfig.MIN_POSTS_RESEARCHED,
+                min_posts=self._run_options().min_posts_researched,
+                min_key_infos=self._run_options().min_key_infos,
+                min_cases=self._run_options().min_cases,
             )
         else:
             prompt = state.continuation_prompt
@@ -262,11 +276,12 @@ class ResearchAgent(BaseAgent):
         else:
             merged_output = output
 
-        if merged_output.sources_count < ResearchConfig.MIN_POSTS_RESEARCHED:
+        min_posts = self._run_options().min_posts_researched
+        if merged_output.sources_count < min_posts:
             logger.warning(
                 "来源数量不足: %d < %d",
                 merged_output.sources_count,
-                ResearchConfig.MIN_POSTS_RESEARCHED
+                min_posts
             )
 
         validation_context = {
@@ -339,7 +354,9 @@ class ResearchAgent(BaseAgent):
             validation_feedback=feedback,
             topic=state.topic,
             target_audience=state.target_audience,
-            min_posts=ResearchConfig.MIN_POSTS_RESEARCHED,
+            min_posts=self._run_options().min_posts_researched,
+            min_key_infos=self._run_options().min_key_infos,
+            min_cases=self._run_options().min_cases,
         )
 
     # ========================================================================

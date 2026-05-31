@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 def _load_serve_module():
-    path = Path(__file__).resolve().parents[1] / "workshop" / "feishu_orchestrator" / "serve.py"
+    path = Path(__file__).resolve().parents[1] / "src" / "apps" / "feishu_orchestrator" / "serve.py"
     spec = importlib.util.spec_from_file_location("feishu_orchestrator_serve_for_test", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

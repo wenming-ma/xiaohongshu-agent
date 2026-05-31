@@ -2,8 +2,14 @@ import asyncio
 from pathlib import Path
 
 from src.agents.image_post.image.agent import ImageAgent
-from src.agents.image_post.image.template_agent import ImagePromptTemplateAgent, TemplateSelectionResult
-from src.agents.image_post.schemas import ImageGenContext, ResearchItem, ResearchResult, XHSContent
+from src.agents.image_post.image.template_agent import (
+    ImagePromptTemplateAgent,
+    TemplateSelectionResult,
+    build_template_selection_prompt,
+)
+from src.agents.image_post.image.prompts import image_system_prompt
+from src.agents.image_post.schemas import ImageGenContext, ImageQualityReview, ResearchItem, ResearchResult, XHSContent
+from src.orchestration.run_options import ImageRunOptions
 
 
 class _EchoPromptGenerator:
@@ -18,13 +24,14 @@ class _RecordingTemplateSelector:
     def __init__(self) -> None:
         self.calls = []
 
-    async def select_template(self, *, topic, content, research, image_spec):
+    async def select_template(self, *, topic, content, research, image_spec, style_context):
         self.calls.append(
             {
                 "topic": topic,
                 "content": content,
                 "research": research,
                 "image_spec": image_spec,
+                "style_context": style_context,
             }
         )
         return TemplateSelectionResult(
@@ -40,6 +47,30 @@ class _RecordingTemplateSelector:
 class _FailingTemplateSelector:
     async def select_template(self, **_kwargs):
         raise RuntimeError("template directory missing")
+
+
+class _RecordingImageClient:
+    def __init__(self, image_path: Path) -> None:
+        self.image_path = image_path
+        self.calls = []
+
+    async def generate_image(self, **kwargs):
+        self.calls.append(kwargs)
+        self.image_path.write_bytes(b"fake-image")
+        return self.image_path
+
+
+class _PassingImageValidator:
+    async def validate(self, image_path: Path, context: dict):
+        return ImageQualityReview(
+            passed=True,
+            text_clarity_score=95,
+            style_score=95,
+            aspect_ratio_correct=True,
+            text_is_chinese=True,
+            issues=[],
+            summary="ok",
+        )
 
 
 def _content() -> XHSContent:
@@ -84,11 +115,82 @@ def test_generate_prompt_lets_template_agent_explore_for_current_group() -> None
     )
 
     assert selector.calls[0]["image_spec"]["indices"] == [0]
+    assert selector.calls[0]["style_context"] is None
     assert "本图主题板块：早餐路线" in prompt
     assert "肉夹馍" in prompt
     assert "冰峰" not in prompt
     assert "Use the local template as a warm editorial tabletop visual direction." in prompt
     assert "repo/prompt.md" in prompt
+
+
+def test_generate_prompt_passes_style_context_to_template_agent() -> None:
+    from src.orchestration.style_context import StyleContext
+
+    agent = ImageAgent.__new__(ImageAgent)
+    agent.prompt_generator = _EchoPromptGenerator()
+    selector = _RecordingTemplateSelector()
+    agent.template_selector = selector
+    style_context = StyleContext(
+        user_constraints=["温暖胶片感", "桌面美食摄影"],
+        matched_skills=[],
+        prompt_refs=[],
+        hard_constraints=["温暖胶片感"],
+        negative_constraints=[],
+        trace={"source": "test"},
+    )
+
+    prompt = asyncio.run(
+        agent.generate_prompt(
+            content=_content(),
+            research=_research(),
+            topic="西安周末美食路线",
+            image_spec={
+                "type": "detail_1",
+                "desc": "详情图1 - 语义分组：早餐路线",
+                "group_title": "早餐路线",
+                "indices": [0],
+            },
+            gen_ctx=ImageGenContext(topic="西安周末美食路线", image_type="detail_1"),
+            style_context=style_context,
+        )
+    )
+
+    assert selector.calls[0]["style_context"] is style_context
+    assert "温暖胶片感" in prompt
+    assert "## 图片提示词增强关键词" in prompt
+    assert "subject:" in prompt
+    assert "action:" in prompt
+    assert "location:" in prompt
+    assert "camera_control:" in prompt
+    assert "lighting:" in prompt
+    assert "style:" in prompt
+    assert "所有关键词都必须被纳入最终 Gemini 图片提示词" in prompt
+
+
+def test_generate_prompt_keyword_expansion_uses_call_time_image_size() -> None:
+    agent = ImageAgent.__new__(ImageAgent)
+    agent.run_options = ImageRunOptions(image_size="2K", aspect_ratio="3:4")
+    agent.prompt_generator = _EchoPromptGenerator()
+    agent.template_selector = _FailingTemplateSelector()
+
+    prompt = asyncio.run(
+        agent.generate_prompt(
+            content=_content(),
+            research=_research(),
+            topic="西安周末美食路线",
+            image_spec={
+                "type": "detail_1",
+                "desc": "详情图1 - 语义分组：早餐路线",
+                "group_title": "早餐路线",
+                "indices": [0],
+            },
+            gen_ctx=ImageGenContext(topic="西安周末美食路线", image_type="detail_1"),
+        )
+    )
+
+    assert "target_resolution: 2K" in prompt
+    assert "target_aspect_ratio: 3:4" in prompt
+    assert "4K ultra-high resolution" not in image_system_prompt()
 
 
 def test_generate_prompt_falls_back_when_template_agent_fails() -> None:
@@ -135,3 +237,85 @@ def test_template_agent_skips_model_when_template_root_missing(tmp_path: Path) -
 
     assert result.fallback_used is True
     assert result.prompt_guidance == ""
+
+
+def test_template_selection_prompt_includes_style_context_for_agent_choice() -> None:
+    from src.orchestration.style_context import StyleContext
+
+    prompt = build_template_selection_prompt(
+        topic="周末甜品探店",
+        content=_content(),
+        research=_research(),
+        image_spec={
+            "type": "detail_1",
+            "desc": "详情图1 - 语义分组：早餐路线",
+            "group_title": "早餐路线",
+            "indices": [0],
+        },
+        style_context=StyleContext(
+            user_constraints=["温暖胶片感", "桌面美食摄影"],
+            matched_skills=["feishu-review-delivery"],
+            prompt_refs=[],
+            hard_constraints=["自然光"],
+            negative_constraints=["不要菜单板"],
+            trace={"source": "test"},
+        ),
+    )
+
+    assert "style_context" in prompt
+    assert "温暖胶片感" in prompt
+    assert "桌面美食摄影" in prompt
+    assert "不要菜单板" in prompt
+
+
+def test_generate_via_api_passes_reference_images_to_image_client(tmp_path: Path) -> None:
+    from src.orchestration.style_context import StyleContext
+
+    agent = ImageAgent.__new__(ImageAgent)
+    agent.prompt_generator = _EchoPromptGenerator()
+    agent.template_selector = _FailingTemplateSelector()
+    output_image = tmp_path / "detail_1.png"
+    image_client = _RecordingImageClient(output_image)
+    agent.image_client = image_client
+    agent.image_quality_validator = _PassingImageValidator()
+    reference = tmp_path / "reference-outfit.jpg"
+    reference.write_bytes(b"reference-bytes")
+    style_context = StyleContext.from_request(
+        type(
+            "_Request",
+            (),
+            {
+                "style_constraints": ["参考图里的衣服必须出现"],
+                "image_count": 1,
+                "reference_images": [str(reference)],
+            },
+        )(),
+        matched_skills=[],
+    )
+
+    image_path, final_prompt = asyncio.run(
+        agent.generate_via_api(
+            output_dir=tmp_path,
+            image_type="detail_1",
+            topic="参考图通勤穿搭",
+            gen_ctx=ImageGenContext(topic="参考图通勤穿搭", image_type="detail_1"),
+            content=_content(),
+            research=_research(),
+            image_spec={
+                "type": "detail_1",
+                "desc": "详情图1 - 参考图穿搭",
+                "group_title": "参考图穿搭",
+                "indices": [0],
+            },
+            style_context=style_context,
+            max_retries=1,
+        )
+    )
+
+    assert image_path == output_image
+    assert image_client.calls[0]["reference_images"] == [("reference_1", reference)]
+    assert image_client.calls[0]["reference_mode"] == "gemini_content"
+    assert image_client.calls[0]["image_size"]
+    assert image_client.calls[0]["aspect_ratio"] == "3:4"
+    assert "用户参考图片" in final_prompt
+    assert "必须出现在生成图" in final_prompt

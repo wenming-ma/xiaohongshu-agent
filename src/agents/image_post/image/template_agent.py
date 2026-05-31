@@ -67,6 +67,7 @@ class ImagePromptTemplateAgent:
         content: XHSContent,
         research: ResearchResult,
         image_spec: ImageTypeSpec,
+        style_context: Any | None = None,
     ) -> TemplateSelectionResult:
         if not self.toolset.root.exists() or not self.toolset.root.is_dir():
             return TemplateSelectionResult(
@@ -78,6 +79,7 @@ class ImagePromptTemplateAgent:
             content=content,
             research=research,
             image_spec=image_spec,
+            style_context=style_context,
         )
         result = await self.agent.run(prompt, usage_limits=UsageLimits(request_limit=None))
         return result.output
@@ -89,6 +91,7 @@ def build_template_selection_prompt(
     content: XHSContent,
     research: ResearchResult,
     image_spec: ImageTypeSpec,
+    style_context: Any | None = None,
 ) -> str:
     image_type = image_spec.get("type", "")
     image_desc = image_spec.get("desc", "")
@@ -133,6 +136,17 @@ def build_template_selection_prompt(
             "group_title": image_spec.get("group_title", ""),
             "indices": indices,
             "items": group_items,
+        }
+
+    if style_context is not None:
+        payload["style_context"] = {
+            "user_constraints": list(getattr(style_context, "user_constraints", []) or []),
+            "matched_skills": list(getattr(style_context, "matched_skills", []) or []),
+            "hard_constraints": list(getattr(style_context, "hard_constraints", []) or []),
+            "negative_constraints": list(getattr(style_context, "negative_constraints", []) or []),
+            "guidance": style_context.to_prompt_section()
+            if hasattr(style_context, "to_prompt_section")
+            else "",
         }
 
     return (

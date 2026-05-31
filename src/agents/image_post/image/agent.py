@@ -29,7 +29,9 @@ from ..schemas import (
 )
 from ....utils.providers import VertexAIImageClient, get_openai_model, get_text_model
 from ....utils.logger import get_logger
-from ....config.settings import RetryConfig
+from ....config.settings import ImageConfig, RetryConfig
+from ....orchestration.run_options import ImageRunOptions
+from ....orchestration.style_context import StyleContext
 from .validator import ImageQualityValidator
 from .prompts import (
     image_system_prompt,
@@ -57,18 +59,34 @@ class ImageAgent(BaseAgent):
     # 初始化
     # ========================================================================
 
-    def __init__(self):
+    def __init__(self, run_options: ImageRunOptions | None = None):
         """初始化图片生成 Agent"""
+        self.run_options = run_options or ImageRunOptions()
         super().__init__()
+
+    def _run_options(self) -> ImageRunOptions:
+        options = getattr(self, "run_options", None)
+        if options is None:
+            options = ImageRunOptions()
+            self.run_options = options
+        return options
 
     def init_tools(self) -> None:
         """初始化图片客户端和质量验证器"""
-        self.image_client = VertexAIImageClient()
+        options = self._run_options()
+        self.image_client = VertexAIImageClient(
+            image_size=options.image_size,
+            aspect_ratio=options.aspect_ratio,
+        )
         self.image_quality_validator = ImageQualityValidator(
-            max_retries=RetryConfig.MAX_RETRIES,
+            max_retries=options.max_retries,
             initial_delay=2.0
         )
-        self.template_selector = ImagePromptTemplateAgent()
+        self.template_selector = (
+            ImagePromptTemplateAgent()
+            if ImageConfig.ENABLE_LOCAL_PROMPT_TEMPLATES
+            else None
+        )
 
     def init_agent(self) -> None:
         """初始化所有 Agent"""
@@ -177,6 +195,7 @@ class ImageAgent(BaseAgent):
         topic: str,
         output_dir: Path,
         groups: list[GroupSpec] | None = None,
+        style_context: StyleContext | None = None,
     ) -> ImageResult:
         """
         生成配图（主入口）
@@ -216,6 +235,7 @@ class ImageAgent(BaseAgent):
                 topic=topic,
                 output_dir=output_dir,
                 image_spec=spec,
+                style_context=style_context,
             )
             generated_images.append(generated_image)
             logger.info("%s 生成完成", spec["type"])
@@ -244,6 +264,7 @@ class ImageAgent(BaseAgent):
         topic: str,
         output_dir: Path,
         image_spec: ImageTypeSpec,
+        style_context: StyleContext | None = None,
     ) -> GeneratedImage:
         """
         工作流子步骤：生成单张图片
@@ -274,6 +295,7 @@ class ImageAgent(BaseAgent):
             content=content,
             research=research,
             image_spec=image_spec,
+            style_context=style_context,
         )
 
         return GeneratedImage(
@@ -321,6 +343,7 @@ class ImageAgent(BaseAgent):
         topic: str,
         image_spec: ImageTypeSpec,
         gen_ctx: ImageGenContext,
+        style_context: StyleContext | None = None,
     ) -> str:
         """生成图片提示词"""
         image_type = image_spec["type"]
@@ -367,15 +390,83 @@ class ImageAgent(BaseAgent):
             research=research,
             topic=topic,
             image_spec=image_spec,
+            style_context=style_context,
         )
         if template_guidance:
             user_prompt += "\n\n" + template_guidance
+
+        if style_context is not None:
+            user_prompt += "\n\n" + style_context.to_prompt_section()
+
+        if self._run_options().keyword_prompt_expansion:
+            user_prompt += "\n\n" + self._build_prompt_keyword_section(
+                content=content,
+                research=research,
+                topic=topic,
+                image_spec=image_spec,
+                style_context=style_context,
+                template_guidance=template_guidance,
+            )
 
         if gen_ctx.validation_feedback:
             logger.info("根据验证反馈重新生成提示词: %s", gen_ctx.validation_feedback[:100])
 
         result = await self.prompt_generator.run(user_prompt, deps=gen_ctx)
         return result.output
+
+    def _build_prompt_keyword_section(
+        self,
+        *,
+        content: XHSContent,
+        research: ResearchResult,
+        topic: str,
+        image_spec: ImageTypeSpec,
+        style_context: StyleContext | None,
+        template_guidance: str,
+    ) -> str:
+        image_type = image_spec.get("type", "")
+        group_title = image_spec.get("group_title", "")
+        indices = image_spec.get("indices", [])
+        group_items: list[str] = []
+        for idx in indices:
+            if isinstance(idx, int) and 0 <= idx < len(research.items):
+                item = research.items[idx]
+                group_items.append(f"{item.title}: {item.content}")
+
+        subject_seed = group_title or content.title or topic
+        if group_items:
+            subject_seed = f"{subject_seed}; " + " | ".join(group_items[:3])
+
+        style_constraints = []
+        reference_constraints = []
+        if style_context is not None:
+            style_constraints.extend(style_context.user_constraints)
+            style_constraints.extend(style_context.hard_constraints)
+            if style_context.reference_images:
+                reference_constraints.append(
+                    "preserve the visible products, clothing, colors, silhouettes, and material details from the user reference images"
+                )
+
+        style_seed = "; ".join(dict.fromkeys(style_constraints)) or "realistic Xiaohongshu editorial image style"
+        reference_seed = "; ".join(reference_constraints) or "no external reference image"
+        template_seed = template_guidance[:500] if template_guidance else "no selected local template guidance"
+
+        return "\n".join(
+            [
+                "## 图片提示词增强关键词",
+                "请先基于下面的强制关键词扩展最终 Gemini 图片提示词，所有关键词都必须被纳入最终 Gemini 图片提示词。",
+                f"subject: {subject_seed}",
+                f"action: create one {image_type or 'image'} that clearly expresses the current group, not a generic illustration",
+                "location: 3:4 vertical Xiaohongshu feed frame, background and setting must follow user style constraints",
+                "camera_control: camera angle, lens, framing, depth of field, and composition chosen for this exact subject",
+                "lighting: natural or controlled lighting with direction, shadows, texture, and non-flat visual depth",
+                f"style: {style_seed}",
+                f"reference_constraints: {reference_seed}",
+                f"target_resolution: {self._run_options().image_size}",
+                f"target_aspect_ratio: {self._run_options().aspect_ratio}",
+                f"template_context: {template_seed}",
+            ]
+        )
 
     async def _select_template_guidance(
         self,
@@ -384,6 +475,7 @@ class ImageAgent(BaseAgent):
         research: ResearchResult,
         topic: str,
         image_spec: ImageTypeSpec,
+        style_context: StyleContext | None = None,
     ) -> str:
         selector = getattr(self, "template_selector", None)
         if selector is None:
@@ -394,6 +486,7 @@ class ImageAgent(BaseAgent):
                 content=content,
                 research=research,
                 image_spec=image_spec,
+                style_context=style_context,
             )
         except Exception as exc:
             logger.warning("动态提示词模板选择失败，回退固定提示词: %s", exc)
@@ -409,7 +502,8 @@ class ImageAgent(BaseAgent):
         content: XHSContent,
         research: ResearchResult,
         image_spec: ImageTypeSpec,
-        max_retries: int = RetryConfig.MAX_RETRIES,
+        style_context: StyleContext | None = None,
+        max_retries: int | None = None,
     ) -> tuple[Path, str]:
         """
         通过 Sub2API 生成图片（带质量验证和重试）
@@ -430,10 +524,20 @@ class ImageAgent(BaseAgent):
         last_error: Optional[Exception] = None
         final_prompt = ""
 
-        for attempt in range(max_retries):
+        options = self._run_options()
+        effective_max_retries = max_retries or options.max_retries
+
+        for attempt in range(effective_max_retries):
             try:
                 # 1. 生成提示词
-                prompt = await self.generate_prompt(content, research, topic, image_spec, gen_ctx)
+                prompt = await self.generate_prompt(
+                    content,
+                    research,
+                    topic,
+                    image_spec,
+                    gen_ctx,
+                    style_context=style_context,
+                )
                 final_prompt = prompt
 
                 # 2. 通过 API 生成图片
@@ -441,7 +545,10 @@ class ImageAgent(BaseAgent):
                 image_path = await self.image_client.generate_image(
                     prompt=prompt,
                     output_path=output_path,
-                    aspect_ratio="3:4",
+                    image_size=options.image_size,
+                    aspect_ratio=options.aspect_ratio,
+                    reference_images=style_context.reference_image_inputs() if style_context is not None else None,
+                    reference_mode=options.reference_mode,
                 )
                 image_path = await finalize_generated_image(image_path)
 
@@ -454,6 +561,7 @@ class ImageAgent(BaseAgent):
                         "research": research,
                         "image_type_info": image_spec,
                         "image_prompt": final_prompt,
+                        "reference_images": style_context.reference_images if style_context is not None else [],
                     }
                     validation_result = await self.image_quality_validator.validate(
                         image_path=image_path,
@@ -469,7 +577,7 @@ class ImageAgent(BaseAgent):
                         gen_ctx.validation_feedback = feedback
                         logger.warning(
                             "图片质量验证未通过 (尝试 %d/%d): %s",
-                            attempt + 1, max_retries, feedback
+                            attempt + 1, effective_max_retries, feedback
                         )
                         continue
 
@@ -482,14 +590,14 @@ class ImageAgent(BaseAgent):
                 last_error = e
                 logger.warning(
                     "图片生成失败 (尝试 %d/%d): %s",
-                    attempt + 1, max_retries, str(e)
+                    attempt + 1, effective_max_retries, str(e)
                 )
 
                 # 检查是否是限流错误
                 if "limited" in str(e).lower() or "429" in str(e):
                     raise  # 限流错误直接抛出
 
-                if attempt < max_retries - 1:
+                if attempt < effective_max_retries - 1:
                     import asyncio
                     delay = min(2 ** attempt * 2, 60)
                     logger.info("等待 %d 秒后重试...", delay)

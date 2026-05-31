@@ -71,8 +71,9 @@ class ResearchDepthValidator(InternalValidator):
 class ResearchReviewValidator(InternalValidator):
     """研究审核验证器 - 验证数据质量"""
 
-    def __init__(self, min_posts: int = 3):
+    def __init__(self, min_posts: int = 3, min_key_infos: int = 15):
         self.min_posts = min_posts
+        self.min_key_infos = min_key_infos
         self._reviewer: Optional[Agent] = None
 
     @property
@@ -87,7 +88,7 @@ class ResearchReviewValidator(InternalValidator):
                 output_type=ReviewResult,
                 instrument=True,
                 retries=RetryConfig.AGENT_RETRIES,
-                system_prompt=(research_review_system_prompt(),),
+                system_prompt=(research_review_system_prompt(min_key_infos=self.min_key_infos),),
             )
         return self._reviewer
 
@@ -100,6 +101,7 @@ class ResearchReviewValidator(InternalValidator):
             target_audience=target_audience,
             research=result.model_dump_json(indent=2),
             min_posts=self.min_posts,
+            min_key_infos=self.min_key_infos,
         )
         review_result = await self.reviewer.run(review_prompt)
         review = review_result.output

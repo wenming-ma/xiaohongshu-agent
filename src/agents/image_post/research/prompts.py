@@ -27,7 +27,7 @@ RESEARCH_SYSTEM_PROMPT = """# 角色定义
 3. **评论区是金矿**：评论区包含最真实的用户反馈，必须深度挖掘
 4. **多帖子交叉验证**：至少研究 3-5 个高热帖子
 5. **具体优于泛泛**：提取具体名称、数字、地点等具体信息
-6. **数量为王**：目标收集 15+ 个内容项
+6. **数量为王**：目标收集 {min_key_infos}+ 个内容项
 7. **标注来源**：记录信息出处便于追溯
 8. **登录处理**：如果在浏览或搜索过程中遇到登录页面或登录弹窗，**先尝试回到主页重新搜索**（导航到 https://www.rednote.com，在搜索框重新输入关键词搜索），很多时候这样就能绕过登录弹窗。如果回到主页重新搜索后仍然遇到登录要求，再调用 `login` 工具完成登录
 
@@ -120,10 +120,13 @@ RESEARCH_USER_PROMPT_TEMPLATE = """## 研究任务
 
 ## 数据收集目标
 
+目标收集 {min_key_infos}+ 个内容项，并覆盖至少 {min_cases} 个真实案例/具体场景。
+
 | 类型 | 最低要求 | 优秀标准 |
 |------|---------|---------|
 | 研究帖子数 | {min_posts} 个 | 5+ 个 |
-| 内容项 | 15 个 | 30+ 个 |
+| 内容项 | {min_key_infos} 个 | 30+ 个 |
+| 真实案例/具体场景 | {min_cases} 个 | 10+ 个 |
 | 图片读取率 | 有关键信息的图片必须读取 | 每个帖子至少读取 1 张图 |
 | 评论区数据占比 | 30% | 50% |
 
@@ -179,7 +182,7 @@ RESEARCH_USER_PROMPT_TEMPLATE = """## 研究任务
 - [ ] **图片中的文字内容（如清单、价格、菜单）是否已提取？**
 - [ ] **是否尝试读取了视频帖子的语音内容？**
 - [ ] 是否深度挖掘了评论区（滚动 + 展开回复）？
-- [ ] 内容项数量是否 >= 15 个？
+- [ ] 内容项数量是否 >= {min_key_infos} 个？
 - [ ] 互动数据是否占总数据的 30% 以上？
 - [ ] 所有信息是否都是具体的（而非"某XX"）？
 - [ ] 信息来源是否可追溯（source_ref 字段）？
@@ -215,7 +218,7 @@ RESEARCH_CONTINUATION_PROMPT_TEMPLATE = """## 研究任务（第 {round_number} 
 ### 核心要求
 - **必须进入至少 {min_posts} 个高热帖子详情页**（URL 包含 /explore/）
 - 每个帖子：阅读主帖 + **读取图片内容**（使用 read_post_images 工具一次性提取所有图片）+ **读取视频语音**（使用 read_video 工具）+ **深挖评论区**
-- 内容项目标 >= 15 个，评论区数据 >= 30%
+- 内容项目标 >= {min_key_infos} 个，评论区数据 >= 30%
 - 所有信息必须具体（不能是"某XX"）
 
 ### 登录处理
@@ -255,7 +258,7 @@ RESEARCH_REVIEW_SYSTEM_PROMPT = """# 角色定义
 ## 审核标准
 
 ### 必须满足（critical）
-- 内容项数量：至少 15 个具体信息
+- 内容项数量：至少 {min_key_infos} 个具体信息
 - 具体性：所有信息必须有具体内容，不能是"某XX"
 - 互动数据：至少 30% 的内容项来自评论区
 
@@ -297,7 +300,7 @@ RESEARCH_REVIEW_USER_PROMPT_TEMPLATE = """## 审核研究数据
 
 ### 0. 内容项数量检查
 - 统计 items 数组中的内容项数量
-- 检查是否 >= 15 个
+- 检查是否 >= {min_key_infos} 个
 - 如不满足，记录为 `item_insufficient` (severity: critical)
 
 ### 1. 具体性检查
@@ -356,18 +359,24 @@ def research_system_prompt(**variables: object) -> str:
 
 
 def research_user_prompt(**variables: object) -> str:
+    variables.setdefault("min_key_infos", 15)
+    variables.setdefault("min_cases", 10)
     return render_template(RESEARCH_USER_PROMPT_TEMPLATE, **variables)
 
 
 def research_continuation_prompt(**variables: object) -> str:
+    variables.setdefault("min_key_infos", 15)
+    variables.setdefault("min_cases", 10)
     return render_template(RESEARCH_CONTINUATION_PROMPT_TEMPLATE, **variables)
 
 
 def research_review_system_prompt(**variables: object) -> str:
+    variables.setdefault("min_key_infos", 15)
     return render_template(RESEARCH_REVIEW_SYSTEM_PROMPT, **variables)
 
 
 def research_review_user_prompt(**variables: object) -> str:
+    variables.setdefault("min_key_infos", 15)
     return render_template(RESEARCH_REVIEW_USER_PROMPT_TEMPLATE, **variables)
 
 
