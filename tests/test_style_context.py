@@ -88,6 +88,25 @@ def test_style_context_is_stable_without_local_prompt_template_repository(tmp_pa
     assert context.trace["source"] == "conversation_request_and_project_skills"
 
 
+def test_style_context_carries_reference_images_as_hard_visual_constraints(tmp_path: Path) -> None:
+    ref_path = tmp_path / "outfit-reference.jpg"
+    ref_path.write_bytes(b"fake-reference")
+    request = ConversationRequest(
+        topic="用参考图做一组通勤穿搭图文",
+        audience="通勤女生",
+        message="参考图里的衣服必须出现在生成图里，背景干净，发飞书",
+        reference_images=[str(ref_path)],
+    )
+
+    context = StyleContext.from_request(request, matched_skills=[])
+
+    assert context.reference_images[0].path == str(ref_path)
+    assert context.reference_images[0].label == "reference_1"
+    assert any("参考图" in item and "必须出现在生成图" in item for item in context.hard_constraints)
+    assert "reference_images" in context.metadata()
+    assert context.reference_image_inputs() == [("reference_1", ref_path)]
+
+
 def test_style_context_formats_prompt_without_runtime_schema_leaking_into_skill() -> None:
     context = StyleContext(
         user_constraints=["纯色背景"],

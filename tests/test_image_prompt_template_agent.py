@@ -7,7 +7,7 @@ from src.agents.image_post.image.template_agent import (
     TemplateSelectionResult,
     build_template_selection_prompt,
 )
-from src.agents.image_post.schemas import ImageGenContext, ResearchItem, ResearchResult, XHSContent
+from src.agents.image_post.schemas import ImageGenContext, ImageQualityReview, ResearchItem, ResearchResult, XHSContent
 
 
 class _EchoPromptGenerator:
@@ -45,6 +45,30 @@ class _RecordingTemplateSelector:
 class _FailingTemplateSelector:
     async def select_template(self, **_kwargs):
         raise RuntimeError("template directory missing")
+
+
+class _RecordingImageClient:
+    def __init__(self, image_path: Path) -> None:
+        self.image_path = image_path
+        self.calls = []
+
+    async def generate_image(self, **kwargs):
+        self.calls.append(kwargs)
+        self.image_path.write_bytes(b"fake-image")
+        return self.image_path
+
+
+class _PassingImageValidator:
+    async def validate(self, image_path: Path, context: dict):
+        return ImageQualityReview(
+            passed=True,
+            text_clarity_score=95,
+            style_score=95,
+            aspect_ratio_correct=True,
+            text_is_chinese=True,
+            issues=[],
+            summary="ok",
+        )
 
 
 def _content() -> XHSContent:
@@ -206,3 +230,53 @@ def test_template_selection_prompt_includes_style_context_for_agent_choice() -> 
     assert "温暖胶片感" in prompt
     assert "桌面美食摄影" in prompt
     assert "不要菜单板" in prompt
+
+
+def test_generate_via_api_passes_reference_images_to_image_client(tmp_path: Path) -> None:
+    from src.orchestration.style_context import StyleContext
+
+    agent = ImageAgent.__new__(ImageAgent)
+    agent.prompt_generator = _EchoPromptGenerator()
+    agent.template_selector = _FailingTemplateSelector()
+    output_image = tmp_path / "detail_1.png"
+    image_client = _RecordingImageClient(output_image)
+    agent.image_client = image_client
+    agent.image_quality_validator = _PassingImageValidator()
+    reference = tmp_path / "reference-outfit.jpg"
+    reference.write_bytes(b"reference-bytes")
+    style_context = StyleContext.from_request(
+        type(
+            "_Request",
+            (),
+            {
+                "style_constraints": ["参考图里的衣服必须出现"],
+                "image_count": 1,
+                "reference_images": [str(reference)],
+            },
+        )(),
+        matched_skills=[],
+    )
+
+    image_path, final_prompt = asyncio.run(
+        agent.generate_via_api(
+            output_dir=tmp_path,
+            image_type="detail_1",
+            topic="参考图通勤穿搭",
+            gen_ctx=ImageGenContext(topic="参考图通勤穿搭", image_type="detail_1"),
+            content=_content(),
+            research=_research(),
+            image_spec={
+                "type": "detail_1",
+                "desc": "详情图1 - 参考图穿搭",
+                "group_title": "参考图穿搭",
+                "indices": [0],
+            },
+            style_context=style_context,
+            max_retries=1,
+        )
+    )
+
+    assert image_path == output_image
+    assert image_client.calls[0]["reference_images"] == [("reference_1", reference)]
+    assert "用户参考图片" in final_prompt
+    assert "必须出现在生成图" in final_prompt

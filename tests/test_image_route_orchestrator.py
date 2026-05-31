@@ -82,6 +82,8 @@ class FakeImageAgent:
         image_type = str(image_spec["type"])
         if style_context is not None and style_context.hard_constraints:
             assert "纯色背景" in style_context.hard_constraints
+        if style_context is not None and style_context.reference_images:
+            assert style_context.reference_images[0].label == "reference_1"
         image_path = output_dir / f"{image_type}.png"
         image_path.write_bytes(b"fake-image")
         return GeneratedImage(
@@ -284,6 +286,38 @@ async def test_image_post_orchestrator_records_style_context_in_image_artifacts(
     artifact = result.payload.artifacts[0]
     assert artifact.metadata["style_context"]["matched_skills"] == ["pure-color-single-look"]
     assert artifact.metadata["style_context"]["hard_constraints"] == ["纯色背景", "不要人物"]
+
+
+@pytest.mark.anyio
+async def test_image_post_orchestrator_carries_reference_images_into_style_context_and_artifacts(tmp_path: Path) -> None:
+    reference = tmp_path / "reference-outfit.jpg"
+    reference.write_bytes(b"reference")
+    orchestrator = ImagePostOrchestrator(
+        workspace_root=tmp_path,
+        research_agent_factory=FakeResearchAgent,
+        content_agent_factory=FakeContentAgent,
+        image_agent_factory=FakeImageAgent,
+    )
+
+    result = await orchestrator.run(
+        ConversationRequest(
+            topic="参考图通勤穿搭",
+            audience="通勤女生",
+            message="参考图里的衣服必须出现在生成图里，背景干净",
+            style_constraints=["纯色背景"],
+            image_count=1,
+            reference_images=[str(reference)],
+        ),
+        run_id="run-image-route-reference",
+        send_to_feishu=False,
+    )
+
+    assert result.payload is not None
+    artifact = result.payload.artifacts[0]
+    style_metadata = artifact.metadata["style_context"]
+    assert style_metadata["reference_images"][0]["path"] == str(reference)
+    assert any("参考图" in item for item in style_metadata["hard_constraints"])
+    assert result.payload.metadata["style_context"]["reference_images"][0]["label"] == "reference_1"
 
 
 @pytest.mark.anyio

@@ -87,6 +87,12 @@ class ImageQualityValidator(ExternalValidator):
         parts: list[str] = []
         if image_desc:
             parts.append(f"图片目标：{image_desc}")
+        reference_images = context.get("reference_images") or []
+        if reference_images:
+            parts.append(
+                "用户提供了参考图片；生成图必须包含参考图片中的核心衣物、服装、首饰或物品，"
+                "不能只做风格迁移。"
+            )
 
         if not isinstance(image_type_info, dict) or image_type_info.get("type") == "cover":
             if content is not None:

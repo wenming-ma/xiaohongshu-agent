@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Awaitable, Callable
 from inspect import isawaitable
+from pathlib import Path
 from typing import Any
 
 from src.utils.feishu_notifier import FeishuNotifier, get_feishu_notifier
@@ -136,6 +137,53 @@ class FeishuInteractionTools:
             summary=request.topic,
         )
         return self._apply_style_reply(request, reply)
+
+    async def collect_reference_image_request(
+        self,
+        session: object,
+        first_image: Path,
+    ) -> ConversationRequest | None:
+        reference_images = [first_image]
+        await self.notifier.send_session_card_message(
+            session,
+            (
+                "已收到 1 张参考图。\n\n"
+                "你可以继续发送参考图，或直接发送这组图片/帖子的需求。"
+                "我会把参考图作为约束交给后续 Agent，生成图必须包含参考图里的核心物品。"
+            ),
+            [
+                ("取消", "__reference__:cancel"),
+            ],
+            phase="collect_reference",
+            summary="等待参考图需求",
+        )
+
+        while True:
+            image_path, reply = await self.notifier.wait_for_session_image_or_text(
+                session,
+                phase="collect_reference",
+                summary=f"已收集 {len(reference_images)} 张参考图",
+            )
+            if image_path is not None:
+                reference_images.append(image_path)
+                await self.notifier.send_session_message(
+                    session,
+                    f"已收到 {len(reference_images)} 张参考图。继续发图，或直接发送需求文本。",
+                    phase="collect_reference",
+                    summary=f"已收集 {len(reference_images)} 张参考图",
+                )
+                continue
+
+            text = reply.strip()
+            if not text:
+                continue
+            if text == "__reference__:cancel":
+                return None
+
+            request = parse_conversation_request(text)
+            return request.model_copy(
+                update={"reference_images": [str(path) for path in reference_images]}
+            )
 
     def _needs_route_choice(self, request: ConversationRequest) -> bool:
         if request.route_hint is not None:

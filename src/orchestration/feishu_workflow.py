@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import datetime
+from pathlib import Path
 
 from src.utils.feishu_interactive_workflow import acquire_interactive_session, finalize_interactive_session
 from src.utils.feishu_notifier import FeishuNotifier, get_feishu_notifier
@@ -38,12 +39,15 @@ class FeishuWorkflowService:
 
     async def serve_forever(self) -> None:
         await self.notifier.start_polling()
-        logger.info("FeishuWorkflowService 已启动，等待文本请求…")
+        logger.info("FeishuWorkflowService 已启动，等待文本或参考图请求…")
         while True:
-            text = await self.notifier.wait_for_reply()
-            if not text.strip():
-                continue
             try:
+                image_path, text = await self.notifier.wait_for_image_or_text()
+                if image_path is not None:
+                    await self.handle_reference_image(image_path)
+                    continue
+                if not text.strip():
+                    continue
                 await self.handle_text(text)
             except Exception:
                 logger.exception("处理飞书请求失败")
@@ -51,10 +55,37 @@ class FeishuWorkflowService:
 
     async def handle_text(self, text: str) -> None:
         request = parse_conversation_request(text)
+        await self._handle_request(request)
+
+    async def handle_reference_image(self, image_path: Path) -> None:
+        session, blocked_reason = await self.acquire_session(
+            workflow="feishu_orchestrator",
+            summary="参考图请求",
+        )
+        if blocked_reason:
+            await self.interaction_tools.send_busy(blocked_reason)
+            return
+        if session is None:
+            await self.interaction_tools.send_session_unavailable()
+            return
+
+        session_status = "cancelled"
+        try:
+            request = await self.interaction_tools.collect_reference_image_request(session, image_path)
+            if request is None:
+                return
+            await self._handle_request(request, session=session)
+            session = None
+            session_status = "completed"
+        finally:
+            if session is not None:
+                await finalize_interactive_session(session, status=session_status)
+
+    async def _handle_request(self, request: ConversationRequest, *, session: object | None = None) -> None:
         session, blocked_reason = await self.acquire_session(
             workflow="feishu_orchestrator",
             summary=request.topic,
-        )
+        ) if session is None else (session, None)
         if blocked_reason:
             await self.interaction_tools.send_busy(blocked_reason)
             return
@@ -81,7 +112,8 @@ class FeishuWorkflowService:
             session_status = "completed" if result.status == "success" else "cancelled"
             await self.interaction_tools.announce_delivery_result(session, result)
         finally:
-            await finalize_interactive_session(session, status=session_status)
+            if session is not None:
+                await finalize_interactive_session(session, status=session_status)
 
     async def _default_acquire_session(self, *, workflow: str, summary: str):
         return await acquire_interactive_session(

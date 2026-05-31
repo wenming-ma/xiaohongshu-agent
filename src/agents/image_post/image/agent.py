@@ -466,6 +466,7 @@ class ImageAgent(BaseAgent):
                     prompt=prompt,
                     output_path=output_path,
                     aspect_ratio="3:4",
+                    reference_images=style_context.reference_image_inputs() if style_context is not None else None,
                 )
                 image_path = await finalize_generated_image(image_path)
 
@@ -478,6 +479,7 @@ class ImageAgent(BaseAgent):
                         "research": research,
                         "image_type_info": image_spec,
                         "image_prompt": final_prompt,
+                        "reference_images": style_context.reference_images if style_context is not None else [],
                     }
                     validation_result = await self.image_quality_validator.validate(
                         image_path=image_path,

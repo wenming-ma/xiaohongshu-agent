@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from pathlib import Path
 
 from src.orchestration.conversation import ConversationRequest
 from src.orchestration.conversation import ContentRoute
@@ -26,11 +27,12 @@ class FakeSession:
 
 
 class FakeNotifier:
-    def __init__(self, replies: list[str] | None = None) -> None:
+    def __init__(self, replies: list[str] | None = None, media_replies: list[tuple[Path | None, str]] | None = None) -> None:
         self.sent_messages: list[str] = []
         self.sent_cards: list[dict[str, object]] = []
         self.sent_forms: list[dict[str, object]] = []
         self.replies = list(replies or [])
+        self.media_replies = list(media_replies or [])
 
     async def start_polling(self) -> None:
         return None
@@ -91,6 +93,8 @@ class FakeNotifier:
         phase: str,
         summary: str | None = None,
     ):
+        if self.media_replies:
+            return self.media_replies.pop(0)
         if not self.replies:
             raise AssertionError(f"missing fake reply for phase {phase}")
         return None, self.replies.pop(0)
@@ -121,6 +125,9 @@ class FakeOrchestrator:
         if request.topic == "飞书内容探索":
             return request.model_copy(update={"topic": "近期小红书高互动生活方式内容趋势"})
         return request
+
+    async def plan(self, request: ConversationRequest):
+        return type("_Plan", (), {"route": request.route_hint or ContentRoute.IMAGE_POST})()
 
 
 class RecordingInteractionTools:
@@ -304,3 +311,37 @@ async def test_workflow_service_autonomous_request_does_not_force_choices() -> N
     assert request.topic == "近期小红书高互动生活方式内容趋势"
     assert notifier.sent_cards == []
     assert notifier.sent_forms == []
+
+
+@pytest.mark.anyio
+async def test_workflow_service_turns_initial_reference_image_into_request_attachment(tmp_path: Path) -> None:
+    session = FakeSession()
+    reference = tmp_path / "reference-outfit.jpg"
+    reference.write_bytes(b"reference")
+    notifier = FakeNotifier(
+        media_replies=[
+            (
+                None,
+                "用这张参考图做 3 张通勤穿搭图文，参考图里的衣服和首饰必须出现在生成图里，背景干净，最后发飞书。",
+            )
+        ]
+    )
+    orchestrator = FakeOrchestrator()
+
+    async def fake_acquire(*, workflow: str, summary: str):
+        return session, None
+
+    service = FeishuWorkflowService(
+        notifier=notifier,
+        orchestrator=orchestrator,
+        acquire_session=fake_acquire,
+    )
+
+    await service.handle_reference_image(reference)
+
+    request, chat_id = orchestrator.calls[0]
+    assert chat_id == "chat-demo"
+    assert request.reference_images == [str(reference)]
+    assert request.image_count == 3
+    assert "参考图" in request.message
+    assert any("已收到 1 张参考图" in card["text"] for card in notifier.sent_cards)

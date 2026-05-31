@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import mimetypes
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -15,10 +16,17 @@ class StylePromptRef(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class ReferenceImageRef(BaseModel):
+    label: str
+    path: str
+    mime_type: str = ""
+
+
 class StyleContext(BaseModel):
     user_constraints: list[str] = Field(default_factory=list)
     matched_skills: list[str] = Field(default_factory=list)
     prompt_refs: list[StylePromptRef] = Field(default_factory=list)
+    reference_images: list[ReferenceImageRef] = Field(default_factory=list)
     hard_constraints: list[str] = Field(default_factory=list)
     negative_constraints: list[str] = Field(default_factory=list)
     trace: dict[str, Any] = Field(default_factory=dict)
@@ -31,7 +39,12 @@ class StyleContext(BaseModel):
         matched_skills: Sequence[SkillSpec] = (),
     ) -> "StyleContext":
         user_constraints = _dedupe(getattr(request, "style_constraints", []) or [])
-        hard_constraints = _derive_hard_constraints(request, user_constraints)
+        reference_images = _build_reference_images(getattr(request, "reference_images", []) or [])
+        hard_constraints = _derive_hard_constraints(
+            request,
+            user_constraints,
+            reference_images=reference_images,
+        )
         negative_constraints = _derive_negative_constraints(user_constraints)
         prompt_refs: list[StylePromptRef] = []
         for skill in matched_skills:
@@ -41,12 +54,14 @@ class StyleContext(BaseModel):
             user_constraints=user_constraints,
             matched_skills=[skill.name for skill in matched_skills],
             prompt_refs=prompt_refs,
+            reference_images=reference_images,
             hard_constraints=hard_constraints,
             negative_constraints=negative_constraints,
             trace={
                 "source": "conversation_request_and_project_skills",
                 "skill_count": len(matched_skills),
                 "prompt_ref_count": len(prompt_refs),
+                "reference_image_count": len(reference_images),
             },
         )
 
@@ -61,6 +76,14 @@ class StyleContext(BaseModel):
         if self.hard_constraints:
             lines.append("硬性视觉约束：")
             lines.extend(f"- {item}" for item in self.hard_constraints)
+        if self.reference_images:
+            lines.append("用户参考图片：")
+            for ref in self.reference_images:
+                lines.append(f"- {ref.label}: {ref.path}")
+            lines.append(
+                "必须识别参考图片中的核心衣物、服装、首饰或物品，并让这些参考物品实际出现在生成图里；"
+                "不要只借用风格或把参考图当作截图插入。"
+            )
         if self.negative_constraints:
             lines.append("禁用项：")
             lines.extend(f"- {item}" for item in self.negative_constraints)
@@ -79,9 +102,13 @@ class StyleContext(BaseModel):
             "user_constraints": list(self.user_constraints),
             "matched_skills": list(self.matched_skills),
             "prompt_ref_sources": [ref.source for ref in self.prompt_refs],
+            "reference_images": [ref.model_dump(mode="json") for ref in self.reference_images],
             "hard_constraints": list(self.hard_constraints),
             "negative_constraints": list(self.negative_constraints),
         }
+
+    def reference_image_inputs(self) -> list[tuple[str, Path]]:
+        return [(ref.label, Path(ref.path)) for ref in self.reference_images]
 
 
 def _dedupe(values: Sequence[Any]) -> list[str]:
@@ -96,11 +123,37 @@ def _dedupe(values: Sequence[Any]) -> list[str]:
     return result
 
 
-def _derive_hard_constraints(request: Any, user_constraints: Sequence[str]) -> list[str]:
+def _build_reference_images(values: Sequence[Any]) -> list[ReferenceImageRef]:
+    refs: list[ReferenceImageRef] = []
+    for index, value in enumerate(values):
+        path = str(value).strip()
+        if not path:
+            continue
+        refs.append(
+            ReferenceImageRef(
+                label=f"reference_{index + 1}",
+                path=path,
+                mime_type=mimetypes.guess_type(path)[0] or "image/jpeg",
+            )
+        )
+    return refs
+
+
+def _derive_hard_constraints(
+    request: Any,
+    user_constraints: Sequence[str],
+    *,
+    reference_images: Sequence[ReferenceImageRef] = (),
+) -> list[str]:
     constraints = list(user_constraints)
     image_count = getattr(request, "image_count", None)
     if image_count:
         constraints.append(f"图片数量：{image_count} 张")
+    if reference_images:
+        constraints.append(
+            f"用户提供了 {len(reference_images)} 张参考图；生成图片必须识别并保留参考图中的核心衣物、服装、首饰或物品，"
+            "这些参考物品必须出现在生成图里，不要只借用风格。"
+        )
     return _dedupe(constraints)
 
 

@@ -20,6 +20,7 @@ class ConversationRequest(BaseModel):
     route_hint: ContentRoute | None = None
     style_constraints: list[str] = Field(default_factory=list)
     image_count: int | None = None
+    reference_images: list[str] = Field(default_factory=list)
 
 
 class WorkflowPlan(BaseModel):
