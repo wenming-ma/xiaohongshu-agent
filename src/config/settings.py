@@ -88,7 +88,7 @@ class TimeoutConfig:
 class PathConfig:
     _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
     AGENT_SKILLS_DIR = _PROJECT_ROOT / '.agents' / 'skills'
-    PROMPT_TEMPLATE_ROOT = Path(os.getenv("PROMPT_TEMPLATE_ROOT", _PROJECT_ROOT / ".prompt-template-repos"))
+    PROMPT_TEMPLATE_ROOT = Path(os.getenv("PROMPT_TEMPLATE_ROOT", _PROJECT_ROOT / ".agents" / "prompt"))
     DOWNLOADS_DIR = _PROJECT_ROOT / 'output' / 'playwright-downloads'
     FEISHU_SESSION_DIR = _PROJECT_ROOT / 'output' / 'feishu-sessions'
     ORCHESTRATION_RUN_DIR = _PROJECT_ROOT / 'output' / 'orchestrator-runs'

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Sequence
 
 from pydantic import BaseModel, Field
+
+from src.config.settings import PathConfig
 
 from .skills import SkillSpec
 
@@ -33,20 +36,23 @@ class StyleContext(BaseModel):
         user_constraints = _dedupe(getattr(request, "style_constraints", []) or [])
         hard_constraints = _derive_hard_constraints(request, user_constraints)
         negative_constraints = _derive_negative_constraints(user_constraints)
-        skill_refs: list[StylePromptRef] = []
+        query = _build_prompt_library_query(request, user_constraints)
+        prompt_refs: list[StylePromptRef] = []
         for skill in matched_skills:
-            skill_refs.extend(_load_skill_prompt_refs(skill))
+            prompt_refs.extend(_load_skill_prompt_refs(skill))
+        prompt_refs.extend(_load_prompt_library_refs(query))
 
         return cls(
             user_constraints=user_constraints,
             matched_skills=[skill.name for skill in matched_skills],
-            prompt_refs=skill_refs,
+            prompt_refs=prompt_refs,
             hard_constraints=hard_constraints,
             negative_constraints=negative_constraints,
             trace={
                 "source": "conversation_request_and_project_skills",
                 "skill_count": len(matched_skills),
-                "prompt_ref_count": len(skill_refs),
+                "prompt_ref_count": len(prompt_refs),
+                "query": query,
             },
         )
 
@@ -115,6 +121,37 @@ def _derive_negative_constraints(user_constraints: Sequence[str]) -> list[str]:
     return _dedupe(negatives)
 
 
+def _build_prompt_library_query(request: Any, user_constraints: Sequence[str]) -> str:
+    parts = [
+        getattr(request, "topic", ""),
+        getattr(request, "audience", ""),
+        getattr(request, "message", ""),
+        *user_constraints,
+    ]
+    return " ".join(str(part).strip() for part in parts if str(part).strip())
+
+
+def _load_prompt_library_refs(query: str, *, limit: int = 3) -> list[StylePromptRef]:
+    root = Path(os.getenv("PROMPT_TEMPLATE_ROOT", PathConfig.PROMPT_TEMPLATE_ROOT))
+    if not root.exists() or not root.is_dir():
+        return []
+
+    scored: list[tuple[int, Path]] = []
+    for source_file in sorted(root.glob("*.md")):
+        if source_file.name.lower() == "readme.md" or not source_file.is_file():
+            continue
+        text = source_file.read_text(encoding="utf-8", errors="ignore")
+        score = _score_text_for_query(text=f"{source_file.stem} {text}", query=query)
+        if score > 0:
+            scored.append((score, source_file))
+
+    scored.sort(key=lambda item: (-item[0], item[1].name))
+    return [
+        _build_prompt_ref(source_file, tags=["prompt-library"])
+        for _, source_file in scored[:limit]
+    ]
+
+
 def _load_skill_prompt_refs(skill: SkillSpec) -> list[StylePromptRef]:
     refs_dir = skill.path / "references"
     source_files = sorted(refs_dir.glob("*.md")) if refs_dir.exists() else []
@@ -125,16 +162,49 @@ def _load_skill_prompt_refs(skill: SkillSpec) -> list[StylePromptRef]:
     for source_file in source_files:
         if not source_file.exists() or not source_file.is_file():
             continue
-        text = source_file.read_text(encoding="utf-8", errors="ignore")
-        refs.append(
-            StylePromptRef(
-                source=_normalize_source(source_file),
-                title=_extract_title(text) or skill.name,
-                excerpt=_compact_excerpt(text),
-                tags=[skill.name],
-            )
-        )
+        refs.append(_build_prompt_ref(source_file, title_fallback=skill.name, tags=[skill.name]))
     return refs
+
+
+def _build_prompt_ref(
+    source_file: Path,
+    *,
+    title_fallback: str = "",
+    tags: Sequence[str] = (),
+) -> StylePromptRef:
+    text = source_file.read_text(encoding="utf-8", errors="ignore")
+    return StylePromptRef(
+        source=_normalize_source(source_file),
+        title=_extract_title(text) or title_fallback,
+        excerpt=_compact_excerpt(text),
+        tags=list(tags),
+    )
+
+
+def _score_text_for_query(*, text: str, query: str) -> int:
+    query_terms = _terms(query)
+    if not query_terms:
+        return 0
+    lowered = text.lower()
+    score = 0
+    for term in query_terms:
+        if term in lowered:
+            score += 3 if len(term) > 2 else 1
+    return score
+
+
+def _terms(text: str) -> list[str]:
+    import re
+
+    raw_terms = re.findall(r"[A-Za-z0-9\u4e00-\u9fff]+", text.lower())
+    terms: list[str] = []
+    for raw in raw_terms:
+        if len(raw) <= 1:
+            continue
+        terms.append(raw)
+        if re.fullmatch(r"[\u4e00-\u9fff]+", raw) and len(raw) > 2:
+            terms.extend(raw[idx : idx + 2] for idx in range(len(raw) - 1))
+    return _dedupe(terms)
 
 
 def _normalize_source(path: Path) -> str:
