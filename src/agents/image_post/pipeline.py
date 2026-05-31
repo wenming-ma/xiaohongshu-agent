@@ -12,6 +12,7 @@ from ...config.settings import PathConfig
 from ...utils.logger import get_logger
 from ...utils.file_ops import save_json
 from .schemas import XHSImagePostInput, XHSImagePostOutput
+from .utils.research import sanitize_research_for_content
 
 logger = get_logger(__name__)
 
@@ -77,6 +78,7 @@ class XHSImagePostPipeline(BasePipeline[XHSImagePostInput, XHSImagePostOutput]):
                 target_audience=input_data.audience,
                 output_dir=output_dir,
             )
+            research = sanitize_research_for_content(research)
             save_json(output_dir / "research.json", research.model_dump())
 
             logger.info(f"研究完成: {len(research.items)} 个内容项")

@@ -6,6 +6,8 @@ from src.agents.image_post.research.agent import ResearchAgent
 from src.agents.image_post.research.state import ResearchState, build_progress_snapshot
 from src.agents.image_post.research.tools import ImageReaderAgent
 from src.agents.image_post.schemas import ResearchItem, ResearchResult
+from src.agents.image_post.utils.image import build_compact_items
+from src.agents.image_post.utils.research import sanitize_research_for_content
 
 
 class FailingVisionAgent:
@@ -142,3 +144,44 @@ def test_research_agent_wires_post_image_reader_through_navigate_tracker(monkeyp
 
     assert captured["login_mcp_server"] is agent.mcp_server
     assert captured["post_reader_mcp_server"] is agent.navigate_tracker
+
+
+def test_sanitize_research_removes_operational_login_diagnostics() -> None:
+    result = ResearchResult(
+        summary=(
+            "【第1轮研究】\n研究限制说明：研究过程中遇到多次登录弹窗限制。\n\n---\n\n"
+            "【第2轮研究】\n通勤穿搭核心趋势：低饱和配色、单套平铺展示。"
+        ),
+        items=[
+            ResearchItem(title="研究限制说明", content="登录工具返回'共享 session已登录'但页面仍显示登录要求"),
+            ResearchItem(title="低饱和通勤套装", content="灰蓝衬衫配卡其裤，适合面试场景"),
+        ],
+        keywords=[],
+        sources=[],
+    )
+
+    sanitized = sanitize_research_for_content(result)
+
+    assert len(sanitized.items) == 1
+    assert sanitized.items[0].title == "低饱和通勤套装"
+    assert "研究限制说明" not in sanitized.summary
+    assert "登录弹窗" not in sanitized.summary
+    assert "通勤穿搭核心趋势" in sanitized.summary
+
+
+def test_build_compact_items_filters_operational_entries_and_keeps_original_index() -> None:
+    items = [
+        ResearchItem(title="研究限制说明", content="登录弹窗限制导致搜索结果无法正常显示"),
+        ResearchItem(title="优雅通勤", content="浅蓝针织Polo衫 + 卡其高腰阔腿裤"),
+    ]
+
+    compact = build_compact_items(items)
+
+    assert compact == [
+        {
+            "index": 1,
+            "type": None,
+            "name": "优雅通勤",
+            "text": "优雅通勤: 浅蓝针织Polo衫 + 卡其高腰阔腿裤",
+        }
+    ]

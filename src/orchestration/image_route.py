@@ -10,6 +10,7 @@ from src.agents.image_post.content.agent import ContentAgent
 from src.agents.image_post.image.agent import ImageAgent
 from src.agents.image_post.research.agent import ResearchAgent
 from src.agents.image_post.schemas import GroupSpec, ImageResult, ResearchResult, XHSContent
+from src.agents.image_post.utils.research import sanitize_research_for_content
 from src.agents.shared.login import AuthResult
 from src.config.settings import PathConfig
 
@@ -169,6 +170,7 @@ class ImagePostOrchestrator:
                 target_audience=audience,
                 output_dir=workspace_dir,
             )
+            payload = sanitize_research_for_content(payload)
             envelope = ResultEnvelope[ResearchResult].success(
                 agent_name="research_agent",
                 payload=payload,

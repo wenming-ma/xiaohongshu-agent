@@ -21,6 +21,7 @@ from ..image.prompts import (
     image_grouping_user_prompt,
 )
 from ..image.state import MessageHistoryManager
+from .research import is_operational_research_item
 
 if TYPE_CHECKING:
     from pydantic_ai import Agent
@@ -33,6 +34,10 @@ def build_compact_items(items: list) -> list[CompactKeyInfo]:
     max_text_len = ImageConfig.COMPACT_TEXT_MAX_LEN
     compact_items: list[CompactKeyInfo] = []
     for i, item in enumerate(items):
+        if is_operational_research_item(item):
+            logger.warning("跳过不可成图的研究过程诊断信息: index=%d", i)
+            continue
+
         if hasattr(item, 'title'):
             title = item.title
             content = item.content
@@ -113,7 +118,11 @@ async def review_groups(
     message_history: list[ModelMessage] | None = None,
 ) -> tuple[ImageGroupingReviewResult, list[ModelMessage]]:
     """验证并审核分组结果"""
-    n_items = len(compact_items)
+    valid_indices = {
+        item.get("index")
+        for item in compact_items
+        if isinstance(item.get("index"), int)
+    }
     issues = []
 
     if len(groups) > max_groups:
@@ -128,18 +137,20 @@ async def review_groups(
         if len(idxs) > max_group_size:
             issues.append(f"分组 {i+1} 有 {len(idxs)} 项，超过限制 {max_group_size}")
         for idx in idxs:
-            if isinstance(idx, int) and 0 <= idx < n_items:
+            if isinstance(idx, int) and idx in valid_indices:
                 all_indices.append(idx)
+            else:
+                issues.append(f"分组 {i+1} 包含无效 index: {idx}")
 
     actual = set(all_indices)
-    missing = sorted(set(range(n_items)) - actual)
+    missing = sorted(valid_indices - actual)
     duplicates = sorted(idx for idx in actual if all_indices.count(idx) > 1)
     if missing and require_all_items:
         issues.append(f"缺少 indices: {missing}")
     if duplicates:
         issues.append(f"重复 indices: {duplicates}")
-    if require_all_items and len(all_indices) != n_items and not missing and not duplicates:
-        issues.append(f"索引总数 {len(all_indices)} != 期望 {n_items}")
+    if require_all_items and len(all_indices) != len(valid_indices) and not missing and not duplicates:
+        issues.append(f"索引总数 {len(all_indices)} != 期望 {len(valid_indices)}")
 
     if issues:
         review_result = ImageGroupingReviewResult(passed=False, score=0.0, summary="分组验证失败", issues=issues)
@@ -178,7 +189,8 @@ async def run_grouping_with_review(
     history_mgr = MessageHistoryManager(max_rounds=3)
     groups: list[GroupSpec] = []
 
-    if len(research.items or []) == 0:
+    if not compact_items:
+        logger.warning("没有可成图的研究内容，跳过语义分组")
         return []
 
     for attempt in range(max_review_retries):

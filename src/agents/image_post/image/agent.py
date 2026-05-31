@@ -135,7 +135,8 @@ class ImageAgent(BaseAgent):
         Returns:
             list[GroupSpec]: 分组结果
         """
-        item_count = len(research.items)
+        compact_items = build_compact_items(research.items or [])
+        item_count = len(compact_items)
         if item_count == 0:
             return []
 
@@ -152,7 +153,6 @@ class ImageAgent(BaseAgent):
         if target_groups <= 0:
             logger.info("详情图数量配置为 0，跳过语义分组")
             return []
-        compact_items = build_compact_items(research.items or [])
 
         return await run_grouping_with_review(
             grouping_agent=self.grouping_agent,

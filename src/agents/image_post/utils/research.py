@@ -1,4 +1,4 @@
-"""研究结果持久化工具"""
+"""研究结果持久化与清洗工具"""
 import json
 from datetime import datetime
 from pathlib import Path
@@ -7,6 +7,81 @@ from ..schemas import ResearchResult, ResearchItem
 from ....utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+OPERATIONAL_RESEARCH_MARKERS = (
+    "研究限制说明",
+    "研究限制",
+    "研究过程",
+    "任务完成情况说明",
+    "登录弹窗限制",
+    "登录弹窗",
+    "登录工具返回",
+    "共享 session",
+    "session已登录",
+    "页面仍显示登录要求",
+    "平台登录限制",
+    "无法绕过",
+    "无法正常显示",
+    "刷新页面后登录状态",
+    "建议：直接在飞书",
+    "浏览器 session",
+    "扫码登录",
+)
+
+
+def is_operational_research_item(item: ResearchItem | dict) -> bool:
+    """识别研究过程诊断信息，避免把它当成可发布/可成图素材。"""
+    if hasattr(item, "title"):
+        title = item.title or ""
+        content = item.content or ""
+        item_type = item.item_type or ""
+    else:
+        title = str(item.get("title") or item.get("name") or "")
+        content = str(item.get("content") or item.get("description") or item.get("detail") or "")
+        item_type = str(item.get("item_type") or item.get("type") or "")
+
+    text = f"{item_type}\n{title}\n{content}"
+    return any(marker in text for marker in OPERATIONAL_RESEARCH_MARKERS)
+
+
+def _sanitize_summary(summary: str) -> str:
+    if not summary:
+        return summary
+    blocks = summary.split("\n\n---\n\n")
+    kept = [
+        block
+        for block in blocks
+        if not any(marker in block for marker in OPERATIONAL_RESEARCH_MARKERS)
+    ]
+    return "\n\n---\n\n".join(kept).strip()
+
+
+def sanitize_research_for_content(result: ResearchResult) -> ResearchResult:
+    """移除不可发布的运行诊断信息，防止其进入内容与图片生成链路。"""
+    filtered_items = [
+        item
+        for item in result.items
+        if not is_operational_research_item(item)
+    ]
+    filtered_summary = _sanitize_summary(result.summary)
+
+    removed_count = len(result.items) - len(filtered_items)
+    if removed_count <= 0 and filtered_summary == result.summary:
+        return result
+
+    if removed_count:
+        logger.warning("已过滤 %d 条研究过程诊断信息，避免进入内容/图片生成", removed_count)
+
+    if not filtered_items:
+        filtered_summary = "研究结果只包含运行诊断信息，已过滤；需要重新研究或补充有效内容。"
+
+    return result.model_copy(
+        update={
+            "summary": filtered_summary,
+            "items": filtered_items,
+        }
+    )
 
 
 def save_iteration_result(
