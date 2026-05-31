@@ -29,7 +29,8 @@ from ..schemas import (
 )
 from ....utils.providers import VertexAIImageClient, get_openai_model, get_text_model
 from ....utils.logger import get_logger
-from ....config.settings import RetryConfig
+from ....config.settings import ImageConfig, RetryConfig
+from ....orchestration.style_context import StyleContext
 from .validator import ImageQualityValidator
 from .prompts import (
     image_system_prompt,
@@ -68,7 +69,11 @@ class ImageAgent(BaseAgent):
             max_retries=RetryConfig.MAX_RETRIES,
             initial_delay=2.0
         )
-        self.template_selector = ImagePromptTemplateAgent()
+        self.template_selector = (
+            ImagePromptTemplateAgent()
+            if ImageConfig.ENABLE_LOCAL_PROMPT_TEMPLATES
+            else None
+        )
 
     def init_agent(self) -> None:
         """初始化所有 Agent"""
@@ -177,6 +182,7 @@ class ImageAgent(BaseAgent):
         topic: str,
         output_dir: Path,
         groups: list[GroupSpec] | None = None,
+        style_context: StyleContext | None = None,
     ) -> ImageResult:
         """
         生成配图（主入口）
@@ -216,6 +222,7 @@ class ImageAgent(BaseAgent):
                 topic=topic,
                 output_dir=output_dir,
                 image_spec=spec,
+                style_context=style_context,
             )
             generated_images.append(generated_image)
             logger.info("%s 生成完成", spec["type"])
@@ -244,6 +251,7 @@ class ImageAgent(BaseAgent):
         topic: str,
         output_dir: Path,
         image_spec: ImageTypeSpec,
+        style_context: StyleContext | None = None,
     ) -> GeneratedImage:
         """
         工作流子步骤：生成单张图片
@@ -274,6 +282,7 @@ class ImageAgent(BaseAgent):
             content=content,
             research=research,
             image_spec=image_spec,
+            style_context=style_context,
         )
 
         return GeneratedImage(
@@ -321,6 +330,7 @@ class ImageAgent(BaseAgent):
         topic: str,
         image_spec: ImageTypeSpec,
         gen_ctx: ImageGenContext,
+        style_context: StyleContext | None = None,
     ) -> str:
         """生成图片提示词"""
         image_type = image_spec["type"]
@@ -371,6 +381,9 @@ class ImageAgent(BaseAgent):
         if template_guidance:
             user_prompt += "\n\n" + template_guidance
 
+        if style_context is not None:
+            user_prompt += "\n\n" + style_context.to_prompt_section()
+
         if gen_ctx.validation_feedback:
             logger.info("根据验证反馈重新生成提示词: %s", gen_ctx.validation_feedback[:100])
 
@@ -384,7 +397,11 @@ class ImageAgent(BaseAgent):
         research: ResearchResult,
         topic: str,
         image_spec: ImageTypeSpec,
+        style_context: StyleContext | None = None,
     ) -> str:
+        if style_context is not None and style_context.prompt_refs:
+            return style_context.to_prompt_section()
+
         selector = getattr(self, "template_selector", None)
         if selector is None:
             return ""
@@ -409,6 +426,7 @@ class ImageAgent(BaseAgent):
         content: XHSContent,
         research: ResearchResult,
         image_spec: ImageTypeSpec,
+        style_context: StyleContext | None = None,
         max_retries: int = RetryConfig.MAX_RETRIES,
     ) -> tuple[Path, str]:
         """
@@ -433,7 +451,14 @@ class ImageAgent(BaseAgent):
         for attempt in range(max_retries):
             try:
                 # 1. 生成提示词
-                prompt = await self.generate_prompt(content, research, topic, image_spec, gen_ctx)
+                prompt = await self.generate_prompt(
+                    content,
+                    research,
+                    topic,
+                    image_spec,
+                    gen_ctx,
+                    style_context=style_context,
+                )
                 final_prompt = prompt
 
                 # 2. 通过 API 生成图片

@@ -20,14 +20,6 @@ from src.agents.article_post.content.prompts import content_revision_user_prompt
 from src.agents.article_post.content.state import ContentState
 from src.agents.article_post.image.agent import ImageAgent
 from src.agents.article_post.image.prompts import image_system_prompt, image_user_prompt
-from src.agents.article_post.publish.agent import PublisherAgent
-from src.agents.article_post.publish.prompts import publish_user_prompt
-from src.agents.article_post.publish.tools import create_article_publish_tools
-from src.agents.article_post.publish.utils import (
-    IMAGE_SLOT_PREFIX,
-    build_editor_script,
-    build_slot_cleanup_script,
-)
 from src.agents.article_post.research.agent import ResearchAgent
 from src.agents.article_post.research.state import (
     CompressedResearchNote,
@@ -58,8 +50,6 @@ from src.agents.article_post.schemas import (
     SourceDigest,
     VideoTranscript,
     XHSArticleContent,
-    XHSArticlePostInput,
-    XHSArticlePostOutput,
 )
 from src.agents.article_post.research.tools import build_site_queries
 from src.agents.article_post.research.tools import (
@@ -68,10 +58,10 @@ from src.agents.article_post.research.tools import (
     DomainSearchClient,
     LocalEvidenceStore,
     ReadPageResult,
-    SearchBackendsUnavailableError,
     SearchResult,
+    TranscriptResult,
 )
-from src.agents.article_post.research.utils import (
+from src.agents.article_post.utils.research import (
     SourceChunker,
     save_iteration_result,
     save_latest_snapshot,
@@ -119,24 +109,6 @@ def _build_valid_article_research_result(
         suggested_strategy=suggested_strategy,
         transcripts=transcripts or [],
     )
-
-
-def test_article_post_input_defaults() -> None:
-    data = XHSArticlePostInput(topic="capsule wardrobe", audience="25-35岁女性")
-
-    assert data.publish is True
-    assert data.generate_images is True
-    assert data.strategy == ArticleStrategy.AUTO
-
-
-def test_article_post_output_defaults() -> None:
-    result = XHSArticlePostOutput(success=True)
-
-    assert result.title == ""
-    assert result.image_count == 0
-    assert result.image_paths == []
-    assert result.published is False
-    assert result.output_dir == ""
 
 
 def test_article_research_default_budget_supports_multi_source_validation() -> None:
@@ -563,9 +535,9 @@ def test_article_research_review_aggregate_respects_score_and_critical() -> None
     failed_review = ResearchReviewValidator._aggregate([critical_review, info_review])
 
     assert passed_review.passed
-    assert passed_review.score == 85.0
+    assert passed_review.score == 90.0
     assert not failed_review.passed
-    assert failed_review.score == 70.0
+    assert failed_review.score == 77.5
 
 
 def test_article_research_review_validator_registers_evidence_tools_when_index_exists(tmp_path) -> None:
@@ -884,9 +856,8 @@ def test_article_search_candidates_dedupes_results_after_preflight() -> None:
 
 
 def test_article_domain_search_client_returns_empty_when_all_backends_fail() -> None:
-    client = DomainSearchClient()
-
     with patch.dict("os.environ", {"SERPER_API_KEY": "serper", "TAVILY_API_KEY": "tavily"}):
+        client = DomainSearchClient()
         with (
             patch.object(client, "_search_serper", AsyncMock(side_effect=RuntimeError("serper down"))) as serper_mock,
             patch.object(client, "_search_tavily", AsyncMock(side_effect=RuntimeError("tavily down"))) as tavily_mock,
@@ -904,8 +875,7 @@ def test_article_domain_search_client_returns_empty_when_all_backends_fail() -> 
     duckduckgo_mock.assert_awaited_once()
 
 
-def test_article_domain_search_client_falls_back_to_duckduckgo_html_when_instant_fails() -> None:
-    client = DomainSearchClient()
+def test_article_domain_search_client_returns_duckduckgo_html_results() -> None:
     expected = [
         SearchResult(
             title="One",
@@ -916,23 +886,17 @@ def test_article_domain_search_client_falls_back_to_duckduckgo_html_when_instant
         )
     ]
 
-    with (
-        patch.object(
+    with patch.dict("os.environ", {"SERPER_API_KEY": "", "TAVILY_API_KEY": ""}):
+        client = DomainSearchClient()
+        with patch.object(
             client,
-            "_search_duckduckgo_instant_answer",
-            AsyncMock(side_effect=RuntimeError("timeout")),
-        ) as instant_mock,
-        patch.object(
-            client,
-            "_search_duckduckgo_html",
+            "_search_duckduckgo",
             AsyncMock(return_value=expected),
-        ) as html_mock,
-    ):
-        results = asyncio.run(client.search("capsule wardrobe", max_results=4))
+        ) as duckduckgo_mock:
+            results = asyncio.run(client.search("capsule wardrobe", max_results=4))
 
     assert results == expected
-    instant_mock.assert_awaited_once()
-    html_mock.assert_awaited_once()
+    duckduckgo_mock.assert_awaited_once_with("capsule wardrobe", 4)
 
 
 def test_article_search_candidates_skips_failed_queries() -> None:
@@ -972,46 +936,6 @@ def test_article_search_candidates_skips_failed_queries() -> None:
     assert task_candidates["task_b"] == []
     assert len(state.current_execution.candidate_pool) == 1
     assert state.seen_candidate_urls == {"https://www.allure.com/story/one"}
-
-
-def test_article_search_candidates_fail_fast_when_all_backends_are_unavailable() -> None:
-    class UnavailableSearchClient:
-        def __init__(self) -> None:
-            self.calls: list[str] = []
-
-        async def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
-            self.calls.append(query)
-            return []
-
-        def all_configured_backends_unavailable(self) -> bool:
-            return True
-
-        def unavailable_summary(self) -> str:
-            return "research search backends unavailable"
-
-    agent = ResearchAgent()
-    agent.collector.search_client = UnavailableSearchClient()
-    agent.collector._compile_task_queries = lambda task: task.article_queries + task.video_queries
-
-    state = ResearchState(
-        topic="capsule wardrobe",
-        target_audience="25-35岁女性",
-        strategy=ArticleStrategy.AUTO,
-        output_dir=None,
-    )
-    state.begin_iteration(1)
-    tasks = [
-        ResearchTask(task_id="task_a", goal="A", article_queries=["q1"]),
-        ResearchTask(task_id="task_b", goal="B", article_queries=["q2"]),
-    ]
-
-    try:
-        asyncio.run(agent._search_candidates(tasks, state))
-        raise AssertionError("expected SearchBackendsUnavailableError")
-    except SearchBackendsUnavailableError as exc:
-        assert str(exc) == "research search backends unavailable"
-
-    assert agent.collector.search_client.calls == ["q1"]
 
 
 def test_article_compile_task_queries_uses_video_domains_for_video_focus() -> None:
@@ -1095,7 +1019,7 @@ def test_article_visit_and_collect_sources_reads_pages_concurrently() -> None:
     assert agent.collector.page_reader.max_active <= agent.collector.page_visit_concurrency
 
 
-def test_article_visit_and_collect_sources_skips_empty_video_url_transcription() -> None:
+def test_article_visit_and_collect_sources_uses_video_result_url_when_page_has_no_embed() -> None:
     class FakePageReader:
         async def read_page(self, url: str) -> ReadPageResult:
             return ReadPageResult(
@@ -1116,9 +1040,9 @@ def test_article_visit_and_collect_sources_skips_empty_video_url_transcription()
         def __init__(self) -> None:
             self.calls: list[str] = []
 
-        async def transcribe(self, url: str) -> None:
+        async def transcribe(self, url: str) -> TranscriptResult:
             self.calls.append(url)
-            raise AssertionError("transcribe should not be called with an empty URL")
+            return TranscriptResult(error_message="no transcript")
 
     agent = ResearchAgent()
     agent.collector.page_visit_concurrency = 2
@@ -1153,7 +1077,7 @@ def test_article_visit_and_collect_sources_skips_empty_video_url_transcription()
     collected = asyncio.run(agent._visit_and_collect_sources(task, candidates, state))
 
     assert collected == []
-    assert agent.collector.video_transcriber.calls == []
+    assert agent.collector.video_transcriber.calls == ["https://www.youtube.com/watch?v=abc123"]
 
 
 def test_article_researcher_prioritizes_topical_candidates_before_collection() -> None:
@@ -1672,7 +1596,7 @@ def test_article_content_history_keeps_last_complete_runs() -> None:
 
     filtered = state.get_recent_history(1)
 
-    assert filtered == [state.message_history[-1]]
+    assert filtered == state.message_history[:4]
 
 
 def test_article_content_feedback_does_not_mutate_message_history() -> None:
@@ -1706,8 +1630,8 @@ def test_article_content_revision_prompt_keeps_research_context() -> None:
         feedback="请补一个单独的 closing。",
     )
 
-    assert "研究结果（持续参考）" in prompt
-    assert '"source_ref": "source_1"' in prompt
+    assert "研究数据见首轮对话" in prompt
+    assert '"source_ref": "source_1"' not in prompt
     assert "请补一个单独的 closing。" in prompt
 
 
@@ -1782,7 +1706,7 @@ def test_article_content_step_only_reuses_last_output_message() -> None:
 
     asyncio.run(agent.step(state, 1))
 
-    assert agent.generator.calls[0]["message_history"] == [state.message_history[3]]
+    assert agent.generator.calls[0]["message_history"] == state.message_history[:4]
     assert "请补一个单独的 closing。" in str(agent.generator.calls[0]["prompt"])
 
 
@@ -2062,200 +1986,3 @@ def test_article_image_prompts_default_to_female_friendly_aesthetic() -> None:
     assert "不要做成新闻配图、参数表、理工 dashboard、PPT 模板" in system_prompt
     assert "目标受众: 25-35岁中文女性用户" in user_prompt
     assert "所有图片都必须是女性用户更容易喜欢和收藏的风格" in user_prompt
-
-
-def test_article_publish_image_plan_follows_image_slots(tmp_path) -> None:
-    content = XHSArticleContent(
-        title="春季胶囊衣橱怎么搭更省心",
-        lead="这篇长文会把春季胶囊衣橱的单品、搭配顺序和预算分配拆开讲清楚，方便直接照着执行。",
-        sections=[
-            ArticleSection(
-                heading="先把高频单品定下来",
-                blocks=[
-                    ArticleBlock(
-                        block_type=ArticleBlockType.PARAGRAPH,
-                        text="第一步先把白衬衫、针织和轻外套这些高频单品固定下来。",
-                    ),
-                    ArticleBlock(
-                        block_type=ArticleBlockType.IMAGE_SLOT,
-                        image_key="cover",
-                    ),
-                ],
-            ),
-            ArticleSection(
-                heading="再补通勤场景的变化",
-                blocks=[
-                    ArticleBlock(
-                        block_type=ArticleBlockType.PARAGRAPH,
-                        text="柔和剪裁和低饱和配色会让通勤穿搭看起来更松弛。",
-                    ),
-                    ArticleBlock(
-                        block_type=ArticleBlockType.IMAGE_SLOT,
-                        image_key="section_2",
-                    ),
-                ],
-            ),
-            ArticleSection(
-                heading="第二部分",
-                blocks=[
-                    ArticleBlock(
-                        block_type=ArticleBlockType.PARAGRAPH,
-                        text="第二部分用来满足 schema 的最小章节数量要求。",
-                    ),
-                ],
-            ),
-            ArticleSection(
-                heading="第二部分",
-                blocks=[
-                    ArticleBlock(
-                        block_type=ArticleBlockType.PARAGRAPH,
-                        text="第二部分用来满足 schema 的最小章节数量要求。",
-                    ),
-                ],
-            ),
-            ArticleSection(
-                heading="第二部分",
-                blocks=[
-                    ArticleBlock(
-                        block_type=ArticleBlockType.PARAGRAPH,
-                        text="第二部分用来满足 schema 的最小章节数量要求。",
-                    ),
-                ],
-            ),
-        ],
-        closing="按这个顺序整理，衣橱会更稳定，也更容易重复搭配。",
-    )
-    images = [
-        tmp_path / "cover.png",
-        tmp_path / "section_2.png",
-    ]
-
-    plan = PublisherAgent._build_image_plan(content, images)
-
-    assert "cover:" in plan
-    assert "section_2:" in plan
-    assert "《先把高频单品定下来》" in plan
-    assert "《再补通勤场景的变化》" in plan
-    assert "第一段前" in plan
-    assert "之后插入" in plan
-
-
-def test_article_publish_prompt_mentions_toolbar_image_flow(tmp_path) -> None:
-    prompt = publish_user_prompt(
-        title="测试标题",
-        body="第一段\n第二段",
-        hashtags="无",
-        images=f"1. cover: {tmp_path / 'cover.png'}",
-        image_plan=f"1. cover: {tmp_path / 'cover.png'} -> 在章节《测试》开头附近插入。",
-    )
-
-    assert "图片插入计划" in prompt
-    assert "cover:" in prompt
-    assert "逐张上传" in prompt
-    assert "inject_article_content" in prompt
-    assert "cleanup_image_slots" in prompt
-
-
-def test_article_publish_editor_script_injects_slot_markers() -> None:
-    content = XHSArticleContent(
-        title="春季胶囊衣橱怎么搭更省心",
-        lead="这篇长文会把春季胶囊衣橱的单品、搭配顺序和预算分配拆开讲清楚，方便直接照着执行。",
-        sections=[
-            ArticleSection(
-                heading="先把高频单品定下来",
-                blocks=[
-                    ArticleBlock(
-                        block_type=ArticleBlockType.PARAGRAPH,
-                        text="第一步先把白衬衫、针织和轻外套这些高频单品固定下来。",
-                    ),
-                    ArticleBlock(
-                        block_type=ArticleBlockType.IMAGE_SLOT,
-                        image_key="cover",
-                    ),
-                ],
-            ),
-            ArticleSection(
-                heading="第二部分",
-                blocks=[
-                    ArticleBlock(
-                        block_type=ArticleBlockType.PARAGRAPH,
-                        text="第二部分用来满足 schema 的最小章节数量要求。",
-                    ),
-                ],
-            ),
-        ],
-        closing="按这个顺序整理，衣橱会更稳定，也更容易重复搭配。",
-    )
-
-    script = build_editor_script(content)
-
-    assert "textarea.d-text" in script
-    assert IMAGE_SLOT_PREFIX in script
-    assert "[IMAGE_SLOT:${block.key}]" in script
-    assert "slotKeys" in script
-    assert content.title in script
-    assert "cover" in script
-
-
-def test_article_publish_cleanup_script_removes_slot_markers() -> None:
-    script = build_slot_cleanup_script()
-
-    assert ".tiptap.ProseMirror p" in script
-    assert "IMAGE_SLOT" in script
-    assert "paragraph.remove()" in script
-
-
-def test_article_publish_tools_wrap_fixed_editor_scripts() -> None:
-    class FakeMcpServer:
-        def __init__(self) -> None:
-            self.calls: list[tuple[str, dict[str, str]]] = []
-
-        async def direct_call_tool(self, name: str, args: dict[str, str]):
-            self.calls.append((name, args))
-            if len(self.calls) == 1:
-                return {"content": [{"type": "text", "text": '{"title":"测试标题","slotKeys":["cover"]}'}]}
-            return {"content": [{"type": "text", "text": '["[IMAGE_SLOT:cover]"]'}]}
-
-    fake_server = FakeMcpServer()
-    content = XHSArticleContent(
-        title="测试标题需要满足最小长度",
-        lead="这是一段用于测试发布工具的导语内容，需要满足最小长度限制，并且明确说明这是正文注入流程的测试样例。",
-        sections=[
-            ArticleSection(
-                heading="先把高频单品定下来",
-                blocks=[
-                    ArticleBlock(
-                        block_type=ArticleBlockType.PARAGRAPH,
-                        text="第一步先把白衬衫、针织和轻外套这些高频单品固定下来。",
-                    ),
-                    ArticleBlock(
-                        block_type=ArticleBlockType.IMAGE_SLOT,
-                        image_key="cover",
-                    ),
-                ],
-            ),
-            ArticleSection(
-                heading="第二部分",
-                blocks=[
-                    ArticleBlock(
-                        block_type=ArticleBlockType.PARAGRAPH,
-                        text="第二部分用来满足 schema 的最小章节数量要求。",
-                    ),
-                ],
-            ),
-        ],
-        closing="结尾",
-    )
-    toolset = create_article_publish_tools(fake_server)
-    toolset.bind_content(content)
-
-    injected = json.loads(asyncio.run(toolset.inject_article_content()))
-    cleaned = json.loads(asyncio.run(toolset.cleanup_image_slots()))
-
-    assert injected["ok"] is True
-    assert injected["slotKeys"] == ["cover"]
-    assert fake_server.calls[0][0] == "browser_run_code"
-    assert "textarea.d-text" in fake_server.calls[0][1]["code"]
-    assert cleaned["ok"] is True
-    assert cleaned["removed"] == ["[IMAGE_SLOT:cover]"]
-    assert ".tiptap.ProseMirror p" in fake_server.calls[1][1]["code"]

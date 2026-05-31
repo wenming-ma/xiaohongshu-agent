@@ -14,16 +14,16 @@
 6. `synthesis`
 7. `validation and retry`
 
-外部契约保持不变：
+外部契约：
 
-- `XHSArticlePostPipeline.execute()` 不改调用方式
 - `ResearchAgent.forward()` 不改签名
 - `ArticleResearchResult` 不改公共 schema
 - `content` 和 `image` phase 继续消费完整的 research JSON
+- 正式路线由 `src/orchestration/article_route.py` 调用，并把结果包装为飞书 `DeliveryPackage`
 
 ## 入口和核心文件
 
-- Pipeline 入口: `src/agents/article_post/pipeline.py`
+- Route 入口: `src/orchestration/article_route.py`
 - Research Agent: `src/agents/article_post/research/agent.py`
 - Research prompts: `src/agents/article_post/research/prompts.py`
 - Research state: `src/agents/article_post/research/state.py`

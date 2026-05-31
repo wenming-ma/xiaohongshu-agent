@@ -3,11 +3,13 @@ from __future__ import annotations
 from src.config.settings import PathConfig
 
 from .autonomous import resolve_autonomous_request
+from .article_route import ArticlePostOrchestrator
 from .conversation import ContentRoute, ConversationRequest, WorkflowPlan
 from .image_route import ImagePostOrchestrator
-from .legacy_routes import ArticlePostOrchestrator, VideoPostOrchestrator
 from .route_runner import RouteRunner
 from .skills import ProjectSkillRegistry
+from .style_context import StyleContext
+from .video_route import VideoPostOrchestrator
 
 
 class FeishuContentPlanner:
@@ -27,7 +29,9 @@ class FeishuContentPlanner:
                 route.value,
             ]
         )
-        matched_skills = [skill.name for skill in self.skill_registry.match(query)]
+        skill_matches = self.skill_registry.match(query)
+        matched_skills = [skill.name for skill in skill_matches]
+        style_context = StyleContext.from_request(request, matched_skills=skill_matches)
         rationale = (
             f"对话线索指向 {route.value}"
             if request.route_hint is not None
@@ -38,6 +42,7 @@ class FeishuContentPlanner:
             matched_skills=matched_skills,
             rationale=rationale,
             style_constraints=list(request.style_constraints),
+            style_context=style_context,
         )
 
     def _infer_route(self, request: ConversationRequest) -> ContentRoute:
@@ -79,6 +84,7 @@ class FeishuContentOrchestrator:
             run_id=run_id,
             chat_id=chat_id,
             send_to_feishu=send_to_feishu,
+            style_context=plan.style_context,
         )
 
     def prepare_request(self, request: ConversationRequest) -> ConversationRequest:

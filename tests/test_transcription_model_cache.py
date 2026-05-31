@@ -3,11 +3,18 @@ from pathlib import Path
 
 import huggingface_hub.constants as hf_constants
 
-from src.agents.shared.utils.asr import model_sources as model_sources_module
-from src.agents.video_post.utils import video_dubbing as video_dubbing_module
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+MODEL_SOURCES_MODULE = "src.agents.shared.utils.asr.model_sources"
+VIDEO_DUBBING_MODULE = "src.agents.video_post.utils.video_dubbing"
+
+
+def _model_sources_module():
+    return importlib.import_module(MODEL_SOURCES_MODULE)
+
+
+def _video_dubbing_module():
+    return importlib.import_module(VIDEO_DUBBING_MODULE)
 
 
 def _write_model_stub(model_dir: Path) -> None:
@@ -22,6 +29,8 @@ def _write_model_stub(model_dir: Path) -> None:
 
 
 def test_cache_roots_resolve_from_huggingface_defaults() -> None:
+    model_sources_module = _model_sources_module()
+    video_dubbing_module = _video_dubbing_module()
     expected_hf_hub_cache = Path(hf_constants.HF_HUB_CACHE)
 
     assert model_sources_module.PROJECT_ROOT == PROJECT_ROOT
@@ -35,14 +44,16 @@ def test_model_sources_respect_explicit_hf_cache_env(monkeypatch, tmp_path: Path
         env_ctx.setenv("HF_HOME", str(tmp_path / "hf-home"))
         env_ctx.setenv("HF_HUB_CACHE", str(tmp_path / "hf-home" / "hub"))
 
+        model_sources_module = _model_sources_module()
         reloaded = importlib.reload(model_sources_module)
         assert reloaded.HF_HOME_DIR == tmp_path / "hf-home"
         assert reloaded.HF_HUB_CACHE_DIR == tmp_path / "hf-home" / "hub"
 
-    importlib.reload(model_sources_module)
-    importlib.reload(video_dubbing_module)
+    importlib.reload(_model_sources_module())
+    importlib.reload(_video_dubbing_module())
 
 def test_resolve_model_source_from_root_prefers_direct_model_dir(tmp_path: Path) -> None:
+    model_sources_module = _model_sources_module()
     model_root = tmp_path / "models--Systran--faster-whisper-large-v3"
     direct_model_dir = model_root / model_sources_module.FASTER_WHISPER_MODEL_SPEC.direct_model_dir_name
     _write_model_stub(direct_model_dir)
@@ -62,6 +73,7 @@ def test_resolve_model_source_from_root_prefers_direct_model_dir(tmp_path: Path)
 def test_resolve_model_source_from_root_uses_latest_snapshot(tmp_path: Path) -> None:
     import os
 
+    model_sources_module = _model_sources_module()
     model_root = tmp_path / "models--Systran--faster-whisper-large-v3"
     snapshots_dir = model_root / "snapshots"
     older_snapshot = snapshots_dir / "older"
@@ -84,6 +96,7 @@ def test_resolve_model_source_from_root_uses_latest_snapshot(tmp_path: Path) -> 
 
 
 def test_resolve_model_source_from_root_falls_back_to_repo_id(tmp_path: Path) -> None:
+    model_sources_module = _model_sources_module()
     model_root = tmp_path / "models--Systran--faster-whisper-large-v3"
 
     model_source, download_root = model_sources_module.resolve_model_source_from_root(

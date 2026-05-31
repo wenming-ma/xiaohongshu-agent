@@ -9,8 +9,6 @@ import pytest
 
 _VISION_MODULES = (
     "src.agents.image_post.research.tools",
-    "src.agents.styled_image_post.research.tools",
-    "src.agents.outfit_post.research.tools",
 )
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 

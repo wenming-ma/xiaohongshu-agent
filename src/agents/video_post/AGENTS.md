@@ -1,27 +1,18 @@
-# XHS 视频帖子流水线
+# Video Post Agents
 
-小红书视频创作、字幕、封面和发布流水线。
+Video post is a formal route for sourcing, processing, scripting, and packaging
+video-based content for Feishu review.
 
-## 工作流
+## Phases
 
-```text
-pipeline.py (XHSVideoPostPipeline.execute)
-    │
-    ├── research/  → ResearchAgent.forward()
-    ├── download/  → DownloadAgent.forward()
-    ├── content/   → ContentAgent.forward()
-    ├── cover/     → CoverAgent.forward()
-    └── publish/   → PublisherAgent.forward()
-```
+- `research/`: finds candidate videos for a topic.
+- `download/`: selects, downloads, transcribes, and subtitles source video.
+- `content/`: writes the Xiaohongshu-style video note copy.
+- `cover/`: generates a cover image from frames and content context.
+- `utils/`: video-specific helpers for frames, dubbing, subtitles, and TTS.
 
-## 目录约定
+## Boundaries
 
-- phase 代码继续放在各自目录：`research/`、`download/`、`content/`、`cover/`、`publish/`
-- `src/agents/video_post/utils/` 统一承载视频专用 helper，例如配音、字幕 tag、抽帧
-- 不在 phase 目录下新增 `utils.py`
-
-## 代码规范
-
-- 视频专用 helper 放 `src/agents/video_post/utils/`
-- 跨多个 pipeline 复用的业务 helper 放 `src/agents/shared/utils/`
-- `src/utils` 只保留 infra；provider 不做去水印、去 AI 这类业务后处理
+- Feishu orchestration is handled by `src/orchestration/video_route.py`.
+- Downloaded video and cover image files are exposed as `ArtifactRef` entries.
+- Final output is a `DeliveryPackage` envelope for Feishu review.

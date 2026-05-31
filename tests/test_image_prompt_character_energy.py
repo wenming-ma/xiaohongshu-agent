@@ -1,12 +1,8 @@
 from src.agents.image_post.image.prompts import image_system_prompt as image_post_system_prompt
-from src.agents.outfit_post.image.prompts import image_system_prompt as outfit_post_system_prompt
-from src.agents.styled_image_post.image.prompts import image_system_prompt as styled_image_post_system_prompt
 
 
 _SYSTEM_PROMPTS = (
     image_post_system_prompt,
-    styled_image_post_system_prompt,
-    outfit_post_system_prompt,
 )
 
 _REMOVED_PHRASES = (

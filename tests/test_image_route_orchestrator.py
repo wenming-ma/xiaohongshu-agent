@@ -8,6 +8,7 @@ from src.agents.image_post.schemas import GeneratedImage, ResearchItem, Research
 from src.agents.shared.login import AuthResult
 from src.orchestration.conversation import ConversationRequest
 from src.orchestration.image_route import ImagePostOrchestrator
+from src.orchestration.style_context import StyleContext
 
 
 class FakeResearchAgent:
@@ -76,8 +77,11 @@ class FakeImageAgent:
         topic: str,
         output_dir: Path,
         image_spec: dict[str, object],
+        style_context: StyleContext | None = None,
     ) -> GeneratedImage:
         image_type = str(image_spec["type"])
+        if style_context is not None and style_context.hard_constraints:
+            assert "纯色背景" in style_context.hard_constraints
         image_path = output_dir / f"{image_type}.png"
         image_path.write_bytes(b"fake-image")
         return GeneratedImage(
@@ -245,6 +249,41 @@ async def test_image_post_orchestrator_passes_single_look_constraint_to_grouping
     assert result.payload.metadata["single_item_per_image"] is True
     requirements = next(block.text for block in result.payload.text_blocks if block.label == "requirements")
     assert "单图单内容：每张图只展示一个主体/一套穿搭" in requirements
+
+
+@pytest.mark.anyio
+async def test_image_post_orchestrator_records_style_context_in_image_artifacts(tmp_path: Path) -> None:
+    orchestrator = ImagePostOrchestrator(
+        workspace_root=tmp_path,
+        research_agent_factory=FakeResearchAgent,
+        content_agent_factory=FakeContentAgent,
+        image_agent_factory=FakeImageAgent,
+    )
+    style_context = StyleContext(
+        user_constraints=["纯色背景", "不要人物"],
+        matched_skills=["pure-color-single-look"],
+        prompt_refs=[],
+        hard_constraints=["纯色背景", "不要人物"],
+        negative_constraints=["不要生成登录弹窗或研究限制说明"],
+        trace={"source": "test"},
+    )
+
+    result = await orchestrator.run(
+        ConversationRequest(
+            topic="登山穿搭",
+            audience="户外新手",
+            style_constraints=["纯色背景", "不要人物"],
+            image_count=1,
+        ),
+        run_id="run-image-route-style-context",
+        send_to_feishu=False,
+        style_context=style_context,
+    )
+
+    assert result.payload is not None
+    artifact = result.payload.artifacts[0]
+    assert artifact.metadata["style_context"]["matched_skills"] == ["pure-color-single-look"]
+    assert artifact.metadata["style_context"]["hard_constraints"] == ["纯色背景", "不要人物"]
 
 
 @pytest.mark.anyio

@@ -5,25 +5,6 @@ from pydantic import BaseModel, Field, computed_field
 from typing import List, Optional, Dict, Any, TypedDict
 
 
-class XHSImagePostInput(BaseModel):
-    topic: str
-    audience: str
-    publish: bool = True
-
-
-class XHSImagePostOutput(BaseModel):
-    success: bool
-    title: str = ""
-    body_preview: str = ""
-    hashtags: list[str] = []
-    image_count: int = 0
-    image_paths: list[str] = []
-    published: bool = False
-    post_url: str | None = None
-    output_dir: str = ""
-    error_message: str | None = None
-
-
 @dataclass
 class ImageGenContext:
     """图片生成上下文（用于依赖注入）"""
@@ -179,14 +160,3 @@ class VideoReadResult(BaseModel):
     language: str = "unknown"
     duration_seconds: float = 0.0
     error_message: str = ""
-
-
-class PublishResult(BaseModel):
-    published: bool
-    platform: str = "xiaohongshu"
-    publish_time: str
-    post_url: str = ""
-    error_message: str = ""
-    retry_count: int = 0
-    content_snapshot: Optional[Dict[str, Any]] = None
-    image_paths: Optional[List[str]] = None

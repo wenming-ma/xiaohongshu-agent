@@ -25,6 +25,7 @@ from .schemas import (
     GroupingResult,
     ResultEnvelope,
 )
+from .style_context import StyleContext
 from .workspace import WorkflowWorkspace
 
 
@@ -53,6 +54,7 @@ def _build_image_delivery_package(
     groups: ResultEnvelope[GroupingResult],
     content: ResultEnvelope[XHSContent],
     images: list[ResultEnvelope[ImageResult]],
+    style_context: StyleContext | None = None,
 ) -> DeliveryPackage:
     content_payload = content.payload
     research_payload = research.payload
@@ -92,6 +94,7 @@ def _build_image_delivery_package(
             "requested_image_count": brief.image_count,
             "single_item_per_image": brief.single_item_per_image,
             "style_constraints": list(brief.style_constraints),
+            "style_context": style_context.metadata() if style_context is not None else {},
         },
     )
 
@@ -143,8 +146,10 @@ class ImagePostOrchestrator:
         run_id: str | None = None,
         chat_id: str | None = None,
         send_to_feishu: bool = False,
+        style_context: StyleContext | None = None,
     ) -> ResultEnvelope[DeliveryPackage]:
         brief = build_request_brief(request)
+        style_context = style_context or StyleContext.from_request(request)
         resolved_run_id = run_id or f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{_safe_slug(brief.topic)}"
         workspace = WorkflowWorkspace.create(
             root_dir=self.workspace_root,
@@ -291,13 +296,18 @@ class ImagePostOrchestrator:
                 topic=execution_text,
                 output_dir=workspace_dir,
                 image_spec=image_spec,
+                style_context=style_context,
             )
             image_artifact = ArtifactRef(
                 artifact_type="image",
                 label=image_type,
                 path=generated.image_path,
                 mime_type=_guess_mime_type(generated.image_path),
-                metadata={"group_title": str(group.get("title") or "")},
+                metadata={
+                    "group_title": str(group.get("title") or ""),
+                    "style_context": style_context.metadata(),
+                    "prompt_summary": generated.prompt_used[:500],
+                },
             )
             payload = ImageResult(
                 images=[generated],
@@ -332,6 +342,7 @@ class ImagePostOrchestrator:
                 groups=groups,
                 content=content,
                 images=images,
+                style_context=style_context,
             )
             envelope = ResultEnvelope[DeliveryPackage].success(
                 agent_name="review_delivery_agent",

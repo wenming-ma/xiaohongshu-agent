@@ -22,6 +22,7 @@ class FakeRunner:
         run_id: str | None = None,
         chat_id: str | None = None,
         send_to_feishu: bool = False,
+        style_context=None,
     ) -> ResultEnvelope[DeliveryPackage]:
         self.calls.append(
             {
@@ -33,6 +34,7 @@ class FakeRunner:
                 "run_id": run_id,
                 "chat_id": chat_id,
                 "send_to_feishu": send_to_feishu,
+                "style_context": style_context,
             }
         )
         return ResultEnvelope[DeliveryPackage].success(
@@ -87,6 +89,9 @@ def test_planner_matches_skills_and_prefers_route_hint(tmp_path: Path) -> None:
     assert plan.route is ContentRoute.IMAGE_POST
     assert "纯色背景单套穿搭" in plan.matched_skills
     assert "飞书交付整理" in plan.matched_skills
+    assert plan.style_context is not None
+    assert plan.style_context.user_constraints == ["纯色背景", "单套展示"]
+    assert "纯色背景单套穿搭" in plan.style_context.matched_skills
 
 
 def test_planner_uses_open_ended_intent_without_fixed_source_categories(tmp_path: Path) -> None:
@@ -160,3 +165,7 @@ async def test_orchestrator_passes_dynamic_constraints_to_route_runner(tmp_path:
     assert image_runner.calls[0]["user_message"] == "做 5 张图，不要人物，衣服平铺在纯色背景上"
     assert image_runner.calls[0]["style_constraints"] == ["纯色背景", "平铺", "不要人物"]
     assert image_runner.calls[0]["image_count"] == 5
+    style_context = image_runner.calls[0]["style_context"]
+    assert style_context is not None
+    assert style_context.user_constraints == ["纯色背景", "平铺", "不要人物"]
+    assert "不要人物" in " ".join(style_context.hard_constraints)

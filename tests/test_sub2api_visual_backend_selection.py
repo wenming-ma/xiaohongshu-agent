@@ -9,16 +9,12 @@ import pytest
 
 _IMAGE_AGENT_MODULES = (
     ("src.agents.image_post.image.agent", "ImageAgent", {}),
-    ("src.agents.outfit_post.image.agent", "ImageAgent", {}),
-    ("src.agents.styled_image_post.image.agent", "ImageAgent", {}),
     ("src.agents.article_post.image.agent", "ImageAgent", {"aspect_ratio": "16:9"}),
     ("src.agents.video_post.cover.agent", "CoverAgent", {"aspect_ratio": "16:9"}),
 )
 
 _VALIDATOR_MODULES = (
     "src.agents.image_post.image.validator",
-    "src.agents.outfit_post.image.validator",
-    "src.agents.styled_image_post.image.validator",
 )
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -169,8 +165,6 @@ def _ensure_fake_agent_support_modules() -> None:
 
     for module_name in (
         "src.agents.image_post.utils.image",
-        "src.agents.outfit_post.utils.image",
-        "src.agents.styled_image_post.utils.image",
     ):
         if module_name in sys.modules:
             continue

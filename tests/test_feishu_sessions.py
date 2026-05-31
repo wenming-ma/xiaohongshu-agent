@@ -14,16 +14,16 @@ def test_session_manager_blocks_second_session_until_takeover(tmp_path):
 
     first = manager.acquire(
         chat_id="chat-1",
-        workflow="outfit_post",
+        workflow="image_post",
         owner_pid=1001,
-        current_phase="discuss_items",
+        current_phase="research",
         summary="first run",
     )
     second = manager.acquire(
         chat_id="chat-1",
-        workflow="styled_image_post",
+        workflow="article_post",
         owner_pid=1002,
-        current_phase="collect_items",
+        current_phase="content",
         summary="second run",
     )
 
@@ -43,16 +43,16 @@ def test_session_manager_takeover_promotes_challenger_and_revokes_old_session(tm
 
     first = manager.acquire(
         chat_id="chat-1",
-        workflow="outfit_post",
+        workflow="image_post",
         owner_pid=1001,
-        current_phase="discuss_items",
+        current_phase="research",
         summary="first run",
     )
     second = manager.acquire(
         chat_id="chat-1",
-        workflow="styled_image_post",
+        workflow="article_post",
         owner_pid=1002,
-        current_phase="collect_items",
+        current_phase="content",
         summary="second run",
     )
 
@@ -63,7 +63,7 @@ def test_session_manager_takeover_promotes_challenger_and_revokes_old_session(tm
     )
 
     state = manager.assert_active(second.session)
-    assert state.workflow == "styled_image_post"
+    assert state.workflow == "article_post"
     assert state.session_id == second.session.session_id
     assert state.status == "active"
     assert state.challenger_session_id is None
@@ -77,16 +77,16 @@ def test_session_manager_continue_existing_clears_pending_challenger(tmp_path):
 
     first = manager.acquire(
         chat_id="chat-1",
-        workflow="outfit_post",
+        workflow="image_post",
         owner_pid=1001,
-        current_phase="discuss_items",
+        current_phase="research",
         summary="first run",
     )
     second = manager.acquire(
         chat_id="chat-1",
-        workflow="styled_image_post",
+        workflow="article_post",
         owner_pid=1002,
-        current_phase="collect_items",
+        current_phase="content",
         summary="second run",
     )
 
@@ -107,9 +107,9 @@ def test_session_manager_reclaims_stale_active_session(tmp_path):
 
     manager.acquire(
         chat_id="chat-1",
-        workflow="outfit_post",
+        workflow="image_post",
         owner_pid=1001,
-        current_phase="discuss_items",
+        current_phase="research",
         summary="first run",
     )
 
@@ -122,9 +122,9 @@ def test_session_manager_reclaims_stale_active_session(tmp_path):
 
     second = manager.acquire(
         chat_id="chat-1",
-        workflow="styled_image_post",
+        workflow="article_post",
         owner_pid=1002,
-        current_phase="collect_items",
+        current_phase="content",
         summary="second run",
     )
 
@@ -132,7 +132,7 @@ def test_session_manager_reclaims_stale_active_session(tmp_path):
     assert second.reason == "expired_session"
 
     state = manager.assert_active(second.session)
-    assert state.workflow == "styled_image_post"
+    assert state.workflow == "article_post"
     assert state.session_id == second.session.session_id
     assert state.challenger_session_id is None
 
@@ -143,9 +143,9 @@ def test_session_manager_reclaims_abandoned_owner_pid(tmp_path, monkeypatch):
 
     first = manager.acquire(
         chat_id="chat-1",
-        workflow="outfit_post",
+        workflow="image_post",
         owner_pid=999999,
-        current_phase="discuss_items",
+        current_phase="research",
         summary="orphaned run",
     )
     second = manager.acquire(
@@ -171,9 +171,9 @@ def test_session_manager_reclaims_stale_takeover_pending_session(tmp_path):
 
     first = manager.acquire(
         chat_id="chat-1",
-        workflow="outfit_post",
+        workflow="image_post",
         owner_pid=1001,
-        current_phase="discuss_items",
+        current_phase="research",
         summary="first run",
     )
     manager.acquire(

@@ -4,6 +4,8 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from .style_context import StyleContext
+
 
 class ContentRoute(str, Enum):
     IMAGE_POST = "image_post"
@@ -25,3 +27,4 @@ class WorkflowPlan(BaseModel):
     matched_skills: list[str] = Field(default_factory=list)
     rationale: str = ""
     style_constraints: list[str] = Field(default_factory=list)
+    style_context: StyleContext | None = None
