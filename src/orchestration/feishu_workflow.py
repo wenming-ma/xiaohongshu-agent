@@ -69,7 +69,7 @@ class FeishuWorkflowService:
             if callable(prepare_request):
                 request = prepare_request(request)
             planner = getattr(self.orchestrator, "planner", None)
-            plan = planner.plan(request) if planner is not None else None
+            plan = await planner.plan(request) if planner is not None else None
             route_label = plan.route.value if plan is not None else (request.route_hint.value if request.route_hint else "auto")
             await self.interaction_tools.announce_execution_started(session, request, route_label=route_label)
             result = await self.orchestrator.run_request(
@@ -94,13 +94,8 @@ class FeishuWorkflowService:
     def _build_run_id(self, route: str) -> str:
         return f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{route}"
 
-    def _resolve_route_for_interactions(self, request: ConversationRequest) -> ContentRoute:
+    async def _resolve_route_for_interactions(self, request: ConversationRequest) -> ContentRoute:
         planner = getattr(self.orchestrator, "planner", None)
         if planner is not None:
-            return planner.plan(request).route
-        text = " ".join([request.topic, request.message]).lower()
-        if any(token in text for token in ("视频", "video", "短片", "混剪", "reel", "clip")):
-            return ContentRoute.VIDEO_POST
-        if any(token in text for token in ("长文", "文章", "article", "深度", "解读")):
-            return ContentRoute.ARTICLE_POST
-        return ContentRoute.IMAGE_POST
+            return (await planner.plan(request)).route
+        return request.route_hint or ContentRoute.IMAGE_POST

@@ -78,3 +78,17 @@ def test_feishu_orchestrator_is_promoted_to_formal_app_module() -> None:
     assert not (REPO_ROOT / "workshop" / "video_post").exists()
     assert not (REPO_ROOT / "workshop" / STYLED_MODULE).exists()
     assert not (REPO_ROOT / "workshop" / OUTFIT_MODULE).exists()
+
+
+def test_design_system_first_class_citizens_are_documented_and_present() -> None:
+    agents_doc = (REPO_ROOT / "src" / "agents" / "AGENTS.md").read_text(encoding="utf-8")
+
+    assert (REPO_ROOT / "src" / "agents").is_dir()
+    assert (REPO_ROOT / ".agents" / "skills").is_dir()
+    assert (REPO_ROOT / ".agents" / "prompt").is_dir()
+
+    assert "three first-class citizens" in agents_doc
+    assert "Atomic Agents" in agents_doc
+    assert "Claude-style Skills" in agents_doc
+    assert "Prompt Templates" in agents_doc
+    assert "Agent chooses" in agents_doc

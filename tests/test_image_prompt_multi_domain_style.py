@@ -3,9 +3,7 @@ import asyncio
 from src.agents.image_post.image.agent import ImageAgent
 from src.agents.image_post.image.template_agent import TemplateSelectionResult
 from src.agents.image_post.schemas import ImageGenContext, ResearchItem, ResearchResult, XHSContent
-from src.config.settings import PathConfig
 from src.orchestration.conversation import ConversationRequest
-from src.orchestration.skills import ProjectSkillRegistry
 from src.orchestration.style_context import StyleContext
 
 
@@ -60,7 +58,6 @@ def _research(*items: tuple[str, str]) -> ResearchResult:
 
 
 def test_image_prompt_injects_dynamic_prompt_library_for_multiple_domains() -> None:
-    registry = ProjectSkillRegistry(skills_root=PathConfig.AGENT_SKILLS_DIR)
     cases = [
         {
             "request": ConversationRequest(
@@ -130,8 +127,7 @@ def test_image_prompt_injects_dynamic_prompt_library_for_multiple_domains() -> N
 
     for case in cases:
         request = case["request"]
-        matched_skills = registry.match(" ".join([request.topic, request.message, *request.style_constraints]))
-        style_context = StyleContext.from_request(request, matched_skills=matched_skills)
+        style_context = StyleContext.from_request(request, matched_skills=[])
         assert not any(".agents/prompt" in ref.source for ref in style_context.prompt_refs)
         prompt = asyncio.run(
             agent.generate_prompt(

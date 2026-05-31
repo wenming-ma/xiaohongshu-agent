@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from inspect import isawaitable
 from typing import Any
 
 from src.utils.feishu_notifier import FeishuNotifier, get_feishu_notifier
@@ -11,7 +12,7 @@ from .request_parser import is_autonomous_request_text, parse_conversation_reque
 from .schemas import DeliveryPackage, ResultEnvelope
 
 
-RouteResolver = Callable[[ConversationRequest], ContentRoute]
+RouteResolver = Callable[[ConversationRequest], ContentRoute | Awaitable[ContentRoute]]
 
 
 class FeishuInteractionTools:
@@ -39,7 +40,7 @@ class FeishuInteractionTools:
         if self._needs_route_choice(request):
             request = await self.ask_route_choice(session, request)
 
-        route = request.route_hint or self._resolve_route(request)
+        route = request.route_hint or await self._resolve_route(request)
         if route is ContentRoute.IMAGE_POST and self._needs_style_choices(request):
             request = await self.ask_style_choices(session, request)
         return request
@@ -159,17 +160,15 @@ class FeishuInteractionTools:
             return False
         return len(request.message.strip()) <= 40 or any(token in text for token in ("图片", "图文", "穿搭"))
 
-    def _resolve_route(self, request: ConversationRequest) -> ContentRoute:
+    async def _resolve_route(self, request: ConversationRequest) -> ContentRoute:
         if self.route_resolver is not None:
-            return self.route_resolver(request)
+            result = self.route_resolver(request)
+            if isawaitable(result):
+                return await result
+            return result
         return self._infer_route_for_clarification(request)
 
     def _infer_route_for_clarification(self, request: ConversationRequest) -> ContentRoute:
-        text = " ".join([request.topic, request.message]).lower()
-        if any(token in text for token in ("视频", "video", "短片", "混剪", "reel", "clip")):
-            return ContentRoute.VIDEO_POST
-        if any(token in text for token in ("长文", "文章", "article", "深度", "解读")):
-            return ContentRoute.ARTICLE_POST
         return ContentRoute.IMAGE_POST
 
     def _apply_route_reply(self, request: ConversationRequest, reply: str) -> ConversationRequest:

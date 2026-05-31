@@ -23,6 +23,8 @@ _EXPORTS = {
     "GroupingResult": ".schemas",
     "ImagePostOrchestrator": ".image_route",
     "ManifestStep": ".workspace",
+    "PlanningAgent": ".planning_agent",
+    "PlanningDecision": ".planning_agent",
     "ProjectSkillRegistry": ".skills",
     "ResultEnvelope": ".schemas",
     "SkillSpec": ".skills",

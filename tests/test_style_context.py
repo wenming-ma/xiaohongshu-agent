@@ -55,10 +55,11 @@ def test_style_context_uses_user_constraints_and_repository_skill_references(tmp
         image_count=5,
     )
 
-    context = StyleContext.from_request(
-        request,
-        matched_skills=registry.match("纯色背景 单套展示 不要人物"),
-    )
+    matched_skills = [
+        skill for skill in registry.discover()
+        if skill.name == "pure-color-single-look"
+    ]
+    context = StyleContext.from_request(request, matched_skills=matched_skills)
 
     assert context.user_constraints == ["纯色背景", "平铺", "不要人物"]
     assert context.matched_skills == ["pure-color-single-look"]
@@ -127,3 +128,12 @@ def test_style_context_does_not_keyword_select_prompt_library() -> None:
     assert context.prompt_refs == []
     assert context.trace["source"] == "conversation_request_and_project_skills"
     assert context.trace["prompt_ref_count"] == 0
+    assert "query" not in context.trace
+
+
+def test_prompt_library_readme_records_agent_driven_template_selection() -> None:
+    readme = (PROJECT_ROOT / ".agents" / "prompt" / "README.md").read_text(encoding="utf-8")
+
+    assert "ImagePromptTemplateAgent" in readme
+    assert "`StyleContext`" not in readme
+    assert "keyword" not in readme.lower()

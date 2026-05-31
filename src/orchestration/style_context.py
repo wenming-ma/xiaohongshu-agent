@@ -33,7 +33,6 @@ class StyleContext(BaseModel):
         user_constraints = _dedupe(getattr(request, "style_constraints", []) or [])
         hard_constraints = _derive_hard_constraints(request, user_constraints)
         negative_constraints = _derive_negative_constraints(user_constraints)
-        query = _build_prompt_library_query(request, user_constraints)
         prompt_refs: list[StylePromptRef] = []
         for skill in matched_skills:
             prompt_refs.extend(_load_skill_prompt_refs(skill))
@@ -48,7 +47,6 @@ class StyleContext(BaseModel):
                 "source": "conversation_request_and_project_skills",
                 "skill_count": len(matched_skills),
                 "prompt_ref_count": len(prompt_refs),
-                "query": query,
             },
         )
 
@@ -115,16 +113,6 @@ def _derive_negative_constraints(user_constraints: Sequence[str]) -> list[str]:
     if any(marker in joined for marker in ("不要人物", "无人物", "不需要人物", "no people")):
         negatives.append("不要人物、模特、人台或拟人化身体部位")
     return _dedupe(negatives)
-
-
-def _build_prompt_library_query(request: Any, user_constraints: Sequence[str]) -> str:
-    parts = [
-        getattr(request, "topic", ""),
-        getattr(request, "audience", ""),
-        getattr(request, "message", ""),
-        *user_constraints,
-    ]
-    return " ".join(str(part).strip() for part in parts if str(part).strip())
 
 
 def _load_skill_prompt_refs(skill: SkillSpec) -> list[StylePromptRef]:

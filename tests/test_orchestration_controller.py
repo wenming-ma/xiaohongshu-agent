@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -46,6 +47,34 @@ class FakeRunner:
         )
 
 
+class FakePlanningAgent:
+    def __init__(
+        self,
+        *,
+        route: ContentRoute = ContentRoute.IMAGE_POST,
+        selected_skill_names: list[str] | None = None,
+        rationale: str = "agent selected the workflow",
+    ) -> None:
+        self.route = route
+        self.selected_skill_names = selected_skill_names or []
+        self.rationale = rationale
+        self.calls: list[dict[str, object]] = []
+
+    async def decide(self, request: ConversationRequest, *, available_skills: list[object]):
+        self.calls.append(
+            {
+                "request": request,
+                "available_skill_names": [getattr(skill, "name") for skill in available_skills],
+            }
+        )
+
+        return SimpleNamespace(
+            route=self.route,
+            selected_skill_names=self.selected_skill_names,
+            rationale=self.rationale,
+        )
+
+
 def _write_skill(root: Path, slug: str, *, name: str, description: str) -> None:
     skill_dir = root / slug
     skill_dir.mkdir(parents=True, exist_ok=True)
@@ -60,7 +89,8 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
-def test_planner_matches_skills_and_prefers_route_hint(tmp_path: Path) -> None:
+@pytest.mark.anyio
+async def test_planner_delegates_route_and_skill_selection_to_agent(tmp_path: Path) -> None:
     skills_root = tmp_path / "skills"
     _write_skill(
         skills_root,
@@ -74,9 +104,17 @@ def test_planner_matches_skills_and_prefers_route_hint(tmp_path: Path) -> None:
         name="飞书交付整理",
         description="Use when final content should be packaged and delivered to Feishu as the formal endpoint.",
     )
-    planner = FeishuContentPlanner(skill_registry=ProjectSkillRegistry(skills_root=skills_root))
+    planning_agent = FakePlanningAgent(
+        route=ContentRoute.IMAGE_POST,
+        selected_skill_names=["纯色背景单套穿搭", "飞书交付整理"],
+        rationale="Agent read the request and selected image post with two skills.",
+    )
+    planner = FeishuContentPlanner(
+        skill_registry=ProjectSkillRegistry(skills_root=skills_root),
+        planning_agent=planning_agent,
+    )
 
-    plan = planner.plan(
+    plan = await planner.plan(
         ConversationRequest(
             topic="纯色背景穿搭",
             audience="通勤女生",
@@ -92,26 +130,52 @@ def test_planner_matches_skills_and_prefers_route_hint(tmp_path: Path) -> None:
     assert plan.style_context is not None
     assert plan.style_context.user_constraints == ["纯色背景", "单套展示"]
     assert "纯色背景单套穿搭" in plan.style_context.matched_skills
+    assert planning_agent.calls[0]["available_skill_names"] == ["纯色背景单套穿搭", "飞书交付整理"]
+    assert "Agent read the request" in plan.rationale
 
 
-def test_planner_uses_open_ended_intent_without_fixed_source_categories(tmp_path: Path) -> None:
-    planner = FeishuContentPlanner(skill_registry=ProjectSkillRegistry(skills_root=tmp_path))
+@pytest.mark.anyio
+async def test_planner_does_not_keyword_match_skills_when_agent_selects_another_skill(tmp_path: Path) -> None:
+    skills_root = tmp_path / "skills"
+    _write_skill(
+        skills_root,
+        "pure-color",
+        name="纯色背景单套穿搭",
+        description="Use when the user wants a pure-color background and one outfit per image.",
+    )
+    _write_skill(
+        skills_root,
+        "food-editorial",
+        name="美食编辑摄影",
+        description="Use when food images need tabletop editorial photography.",
+    )
+    planner = FeishuContentPlanner(
+        skill_registry=ProjectSkillRegistry(skills_root=skills_root),
+        planning_agent=FakePlanningAgent(
+            route=ContentRoute.IMAGE_POST,
+            selected_skill_names=["美食编辑摄影"],
+        ),
+    )
 
-    plan = planner.plan(
+    plan = await planner.plan(
         ConversationRequest(
-            topic="穿搭热点",
+            topic="纯色背景穿搭",
             audience="通勤女生",
-            message="寻找热点并进行发帖，最后发到飞书",
+            message="这句话里有纯色背景和单套展示，但测试要求只信任 Planner Agent 的选择",
+            style_constraints=["纯色背景", "单套展示"],
         )
     )
 
     assert plan.route is ContentRoute.IMAGE_POST
-    assert "根据对话上下文动态选择" in plan.rationale
+    assert plan.matched_skills == ["美食编辑摄影"]
 
 
 @pytest.mark.anyio
 async def test_orchestrator_dispatches_to_selected_route_runner(tmp_path: Path) -> None:
-    planner = FeishuContentPlanner(skill_registry=ProjectSkillRegistry(skills_root=tmp_path))
+    planner = FeishuContentPlanner(
+        skill_registry=ProjectSkillRegistry(skills_root=tmp_path),
+        planning_agent=FakePlanningAgent(route=ContentRoute.VIDEO_POST),
+    )
     image_runner = FakeRunner("image_post")
     article_runner = FakeRunner("article_post")
     video_runner = FakeRunner("video_post")
@@ -144,7 +208,10 @@ async def test_orchestrator_dispatches_to_selected_route_runner(tmp_path: Path) 
 
 @pytest.mark.anyio
 async def test_orchestrator_passes_dynamic_constraints_to_route_runner(tmp_path: Path) -> None:
-    planner = FeishuContentPlanner(skill_registry=ProjectSkillRegistry(skills_root=tmp_path))
+    planner = FeishuContentPlanner(
+        skill_registry=ProjectSkillRegistry(skills_root=tmp_path),
+        planning_agent=FakePlanningAgent(route=ContentRoute.IMAGE_POST),
+    )
     image_runner = FakeRunner("image_post")
     orchestrator = FeishuContentOrchestrator(planner=planner, image_runner=image_runner)
 
