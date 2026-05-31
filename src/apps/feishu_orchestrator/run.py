@@ -21,6 +21,12 @@ FEISHU_INTERACTIVE_ENV_DEFAULTS = {
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.apps.feishu_orchestrator.cli_image_options import (  # noqa: E402
+    add_image_request_arguments,
+    add_image_run_option_arguments,
+    build_image_post_run_options_from_args,
+)
+
 def _resolve_env_path() -> Path:
     candidates = [
         PROJECT_ROOT / ".env",
@@ -61,6 +67,8 @@ def parse_args() -> argparse.Namespace:
         default=[],
         help="风格约束，可重复传入，如 --style 纯色背景 --style 单套展示",
     )
+    add_image_request_arguments(parser)
+    add_image_run_option_arguments(parser)
     parser.add_argument(
         "--explore",
         action="store_true",
@@ -131,16 +139,20 @@ async def main_async(args: argparse.Namespace) -> int:
         message=message,
         route_hint=ContentRoute(args.route) if args.route else None,
         style_constraints=list(args.style),
+        image_count=args.image_count,
+        reference_images=list(args.reference_image),
     )
     if args.smoke_test:
         logger.info("启用 feishu_orchestrator smoke-test 模式：降低研究/审核/分组/图片重试参数")
 
+    run_options = build_image_post_run_options_from_args(args)
     with orchestration_smoke_test_overrides(args.smoke_test):
         result = await orchestrator.run_request(
             request,
             chat_id=args.chat_id,
             run_id=args.run_id,
             send_to_feishu=not args.no_feishu,
+            run_options=run_options,
         )
 
     if result.payload is not None:

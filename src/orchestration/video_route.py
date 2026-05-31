@@ -131,6 +131,7 @@ class VideoPostOrchestrator:
         chat_id: str | None = None,
         send_to_feishu: bool = False,
         style_context: StyleContext | None = None,
+        run_options: Any | None = None,
     ) -> ResultEnvelope[DeliveryPackage]:
         brief = build_request_brief(request)
         style_context = style_context or StyleContext.from_request(request)

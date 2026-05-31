@@ -7,6 +7,7 @@ import pytest
 
 from src.orchestration.controller import FeishuContentOrchestrator, FeishuContentPlanner
 from src.orchestration.conversation import ContentRoute, ConversationRequest
+from src.orchestration.run_options import ImagePostRunOptions, ImageRunOptions, ResearchRunOptions
 from src.orchestration.schemas import DeliveryPackage, ResultEnvelope
 from src.orchestration.skills import ProjectSkillRegistry
 
@@ -24,6 +25,7 @@ class FakeRunner:
         chat_id: str | None = None,
         send_to_feishu: bool = False,
         style_context=None,
+        run_options=None,
     ) -> ResultEnvelope[DeliveryPackage]:
         self.calls.append(
             {
@@ -36,6 +38,7 @@ class FakeRunner:
                 "chat_id": chat_id,
                 "send_to_feishu": send_to_feishu,
                 "style_context": style_context,
+                "run_options": run_options,
             }
         )
         return ResultEnvelope[DeliveryPackage].success(
@@ -236,3 +239,33 @@ async def test_orchestrator_passes_dynamic_constraints_to_route_runner(tmp_path:
     assert style_context is not None
     assert style_context.user_constraints == ["纯色背景", "平铺", "不要人物"]
     assert "不要人物" in " ".join(style_context.hard_constraints)
+
+
+@pytest.mark.anyio
+async def test_orchestrator_passes_call_time_run_options_to_route_runner(tmp_path: Path) -> None:
+    planner = FeishuContentPlanner(
+        skill_registry=ProjectSkillRegistry(skills_root=tmp_path),
+        planning_agent=FakePlanningAgent(route=ContentRoute.IMAGE_POST),
+    )
+    image_runner = FakeRunner("image_post")
+    orchestrator = FeishuContentOrchestrator(planner=planner, image_runner=image_runner)
+    run_options = ImagePostRunOptions(
+        research=ResearchRunOptions(min_posts_researched=5, validation_max_retries=2),
+        image=ImageRunOptions(max_retries=2, image_size="4K"),
+    )
+
+    await orchestrator.run_request(
+        ConversationRequest(
+            topic="参考图穿搭",
+            audience="通勤女生",
+            message="参考图里的衣服必须出现",
+            route_hint=ContentRoute.IMAGE_POST,
+            image_count=2,
+        ),
+        chat_id="chat-1",
+        run_id="run-controller-runtime-options",
+        send_to_feishu=True,
+        run_options=run_options,
+    )
+
+    assert image_runner.calls[0]["run_options"] is run_options

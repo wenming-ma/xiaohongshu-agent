@@ -71,6 +71,7 @@ class FeishuContentOrchestrator:
         chat_id: str | None = None,
         run_id: str | None = None,
         send_to_feishu: bool = False,
+        run_options: object | None = None,
     ):
         request = self.prepare_request(request)
         plan = await self.planner.plan(request)
@@ -81,6 +82,7 @@ class FeishuContentOrchestrator:
             chat_id=chat_id,
             send_to_feishu=send_to_feishu,
             style_context=plan.style_context,
+            run_options=run_options,
         )
 
     def prepare_request(self, request: ConversationRequest) -> ConversationRequest:

@@ -462,6 +462,8 @@ class ImageAgent(BaseAgent):
                 "lighting: natural or controlled lighting with direction, shadows, texture, and non-flat visual depth",
                 f"style: {style_seed}",
                 f"reference_constraints: {reference_seed}",
+                f"target_resolution: {self._run_options().image_size}",
+                f"target_aspect_ratio: {self._run_options().aspect_ratio}",
                 f"template_context: {template_seed}",
             ]
         )

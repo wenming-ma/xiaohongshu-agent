@@ -16,6 +16,11 @@ from src.apps.feishu_orchestrator.serve import (  # noqa: E402
     _resolve_env_path,
     apply_feishu_interactive_defaults,
 )
+from src.apps.feishu_orchestrator.cli_image_options import (  # noqa: E402
+    add_image_request_arguments,
+    add_image_run_option_arguments,
+    build_image_post_run_options_from_args,
+)
 
 
 def configure_windows_stdio() -> None:
@@ -30,19 +35,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--topic", required=True)
     parser.add_argument("--audience", required=True)
     parser.add_argument("--message", default="")
-    parser.add_argument("--image-count", type=int, default=None)
+    add_image_request_arguments(parser)
     parser.add_argument("--style", action="append", default=[])
     parser.add_argument("--run-id", default=None)
     parser.add_argument("--chat-id", default=None)
     parser.add_argument("--send-to-feishu", action="store_true")
     parser.add_argument("--research-envelope", default=None)
-    parser.add_argument("--research-min-posts", type=int, default=None)
-    parser.add_argument("--research-validation-retries", type=int, default=None)
-    parser.add_argument("--research-min-key-infos", type=int, default=None)
-    parser.add_argument("--research-min-cases", type=int, default=None)
-    parser.add_argument("--image-max-retries", type=int, default=None)
-    parser.add_argument("--image-size", default=None)
-    parser.add_argument("--image-aspect-ratio", default=None)
+    add_image_run_option_arguments(parser)
     return parser.parse_args()
 
 
@@ -68,7 +67,6 @@ async def main_async() -> int:
         ImagePostOrchestrator,
         ResultEnvelope,
     )
-    from src.orchestration.run_options import ImagePostRunOptions
     from src.agents.image_post.schemas import ResearchResult
     from src.utils.feishu_notifier import get_feishu_notifier
     from src.utils.logger import get_logger, setup_logging
@@ -76,21 +74,7 @@ async def main_async() -> int:
     setup_logging()
     logger = get_logger(__name__)
     args = parse_args()
-    run_options = ImagePostRunOptions()
-    if args.research_min_posts is not None:
-        run_options.research.min_posts_researched = args.research_min_posts
-    if args.research_validation_retries is not None:
-        run_options.research.validation_max_retries = args.research_validation_retries
-    if args.research_min_key_infos is not None:
-        run_options.research.min_key_infos = args.research_min_key_infos
-    if args.research_min_cases is not None:
-        run_options.research.min_cases = args.research_min_cases
-    if args.image_max_retries is not None:
-        run_options.image.max_retries = args.image_max_retries
-    if args.image_size is not None:
-        run_options.image.image_size = args.image_size
-    if args.image_aspect_ratio is not None:
-        run_options.image.aspect_ratio = args.image_aspect_ratio
+    run_options = build_image_post_run_options_from_args(args)
 
     research_agent_factory = None
     if args.research_envelope:
@@ -126,6 +110,7 @@ async def main_async() -> int:
         route_hint=ContentRoute.IMAGE_POST,
         style_constraints=list(args.style),
         image_count=args.image_count,
+        reference_images=list(args.reference_image),
     )
 
     logger.info("启动一次性 image_post 工作流: topic=%s image_count=%s", args.topic, args.image_count)

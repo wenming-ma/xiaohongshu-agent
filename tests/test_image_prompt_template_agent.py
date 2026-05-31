@@ -7,7 +7,9 @@ from src.agents.image_post.image.template_agent import (
     TemplateSelectionResult,
     build_template_selection_prompt,
 )
+from src.agents.image_post.image.prompts import image_system_prompt
 from src.agents.image_post.schemas import ImageGenContext, ImageQualityReview, ResearchItem, ResearchResult, XHSContent
+from src.orchestration.run_options import ImageRunOptions
 
 
 class _EchoPromptGenerator:
@@ -163,6 +165,32 @@ def test_generate_prompt_passes_style_context_to_template_agent() -> None:
     assert "lighting:" in prompt
     assert "style:" in prompt
     assert "所有关键词都必须被纳入最终 Gemini 图片提示词" in prompt
+
+
+def test_generate_prompt_keyword_expansion_uses_call_time_image_size() -> None:
+    agent = ImageAgent.__new__(ImageAgent)
+    agent.run_options = ImageRunOptions(image_size="2K", aspect_ratio="3:4")
+    agent.prompt_generator = _EchoPromptGenerator()
+    agent.template_selector = _FailingTemplateSelector()
+
+    prompt = asyncio.run(
+        agent.generate_prompt(
+            content=_content(),
+            research=_research(),
+            topic="西安周末美食路线",
+            image_spec={
+                "type": "detail_1",
+                "desc": "详情图1 - 语义分组：早餐路线",
+                "group_title": "早餐路线",
+                "indices": [0],
+            },
+            gen_ctx=ImageGenContext(topic="西安周末美食路线", image_type="detail_1"),
+        )
+    )
+
+    assert "target_resolution: 2K" in prompt
+    assert "target_aspect_ratio: 3:4" in prompt
+    assert "4K ultra-high resolution" not in image_system_prompt()
 
 
 def test_generate_prompt_falls_back_when_template_agent_fails() -> None:
