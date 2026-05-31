@@ -1,4 +1,5 @@
 from src.agents.shared.login.agent import (
+    RednoteLoginAgent,
     _build_session_auth_result,
     _build_system_prompt,
     _build_user_prompt,
@@ -67,3 +68,27 @@ def test_session_state_report_short_circuits_logged_in_session():
     assert result.success is True
     assert result.auth_type == "session"
     assert "无需扫码" in result.message
+
+
+def test_rednote_login_agent_exposes_research_access_via_single_login_entry(anyio_backend: str = "asyncio"):
+    class StubRednoteLoginAgent(RednoteLoginAgent):
+        def __init__(self) -> None:
+            pass
+
+        async def login(self, url: str, action: str = "login", hint: str = ""):
+            self.last_call = {
+                "url": url,
+                "action": action,
+                "hint": hint,
+            }
+            return "ok"
+
+    import asyncio
+
+    agent = StubRednoteLoginAgent()
+    result = asyncio.run(agent.ensure_rednote_research_access())
+
+    assert result == "ok"
+    assert agent.last_call["url"] == "https://www.rednote.com/explore"
+    assert agent.last_call["action"] == "login"
+    assert "研究前检查登录态" in agent.last_call["hint"]

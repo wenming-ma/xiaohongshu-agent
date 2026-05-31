@@ -125,7 +125,10 @@ class ImageQualityValidator(ExternalValidator):
                 f"{i+1}. {title or '未知'}: {text or ''}"
                 for i, (title, text) in enumerate(selected_infos)
             )
-            parts.append(f"本图必须覆盖的关键信息（共 {len(selected_infos)} 条）：\n{infos_text}")
+            parts.append(
+                f"本图参考信息（共 {len(selected_infos)} 条，仅用于判断大方向是否相关，不要求逐条写出或全部出现）：\n"
+                f"{infos_text}"
+            )
 
         return "\n".join(parts) if parts else "（未提供）"
 

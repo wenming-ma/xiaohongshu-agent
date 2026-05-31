@@ -67,7 +67,7 @@ class ImageConfig:
     ENTITIES_PER_DETAIL = 6
     MIN_DETAIL_IMAGES = 1
     MAX_DETAIL_IMAGES = 12
-    GROUPING_REVIEW_MAX_RETRIES = 20
+    GROUPING_REVIEW_MAX_RETRIES = int(os.getenv("IMAGE_GROUPING_REVIEW_MAX_RETRIES", "20"))
     MAX_GROUP_SIZE_CAP = 16
     COMPACT_TEXT_MAX_LEN = 240
     MIN_GROUP_SIZE_THRESHOLD = 8
@@ -86,9 +86,11 @@ class TimeoutConfig:
 
 class PathConfig:
     _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+    AGENT_SKILLS_DIR = _PROJECT_ROOT / '.agents' / 'skills'
     PROMPT_TEMPLATE_ROOT = Path(os.getenv("PROMPT_TEMPLATE_ROOT", _PROJECT_ROOT / ".prompt-template-repos"))
     DOWNLOADS_DIR = _PROJECT_ROOT / 'output' / 'playwright-downloads'
     FEISHU_SESSION_DIR = _PROJECT_ROOT / 'output' / 'feishu-sessions'
+    ORCHESTRATION_RUN_DIR = _PROJECT_ROOT / 'output' / 'orchestrator-runs'
     IMAGE_PROJECT_DIR = _PROJECT_ROOT / 'posts' / 'image-posts'
     OUTFIT_PROJECT_DIR = _PROJECT_ROOT / 'posts' / 'outfit-posts'
     ARTICLE_PROJECT_DIR = _PROJECT_ROOT / 'posts' / 'article-posts'
@@ -121,7 +123,9 @@ class APIConfig:
     VERTEX_AI_PROJECT_ID = os.getenv("VERTEX_AI_PROJECT_ID")
     VERTEX_AI_LOCATION = os.getenv("VERTEX_AI_LOCATION", "global")
     VERTEX_AI_VISION_MODEL = os.getenv("VERTEX_AI_VISION_MODEL", "gemini-2.5-flash")
+    VERTEX_AI_VISION_MAX_CONCURRENCY = int(os.getenv("VERTEX_AI_VISION_MAX_CONCURRENCY", "3"))
     VERTEX_AI_IMAGE_MODEL = os.getenv("VERTEX_AI_IMAGE_MODEL", "gemini-3-pro-image-preview")
+    VERTEX_AI_IMAGE_MAX_CONCURRENCY = int(os.getenv("VERTEX_AI_IMAGE_MAX_CONCURRENCY", "1"))
     RETRYABLE_STATUS_CODES = (429, 500, 502, 503, 504)
     # "api" = API only, "web" = web only, "auto" = API first then web fallback
     GEMINI_IMAGE_PROVIDER = os.getenv("GEMINI_IMAGE_PROVIDER", "auto")
@@ -136,12 +140,12 @@ class PublishConfig:
 
 
 class ResearchConfig:
-    MIN_POSTS_RESEARCHED = 21
-    MIN_KEY_INFOS = 15
-    MIN_CASES = 10
+    MIN_POSTS_RESEARCHED = int(os.getenv("RESEARCH_MIN_POSTS_RESEARCHED", "21"))
+    MIN_KEY_INFOS = int(os.getenv("RESEARCH_MIN_KEY_INFOS", "15"))
+    MIN_CASES = int(os.getenv("RESEARCH_MIN_CASES", "10"))
     MIN_COMMENT_DATA_RATIO = 0.4
-    VALIDATION_MAX_RETRIES = 15
-    VALIDATION_PASS_SCORE = 70
+    VALIDATION_MAX_RETRIES = int(os.getenv("RESEARCH_VALIDATION_MAX_RETRIES", "15"))
+    VALIDATION_PASS_SCORE = int(os.getenv("RESEARCH_VALIDATION_PASS_SCORE", "70"))
 
 
 class TelegramConfig:

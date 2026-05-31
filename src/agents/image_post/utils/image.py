@@ -52,9 +52,22 @@ def build_compact_items(items: list) -> list[CompactKeyInfo]:
     return compact_items
 
 
-def calculate_grouping_params(item_count: int) -> tuple[int, int, int]:
+def calculate_grouping_params(
+    item_count: int,
+    *,
+    requested_image_count: int | None = None,
+    single_item_per_image: bool = False,
+) -> tuple[int, int, int, bool]:
     """根据 item 数量计算分组参数"""
     max_detail_images = ImageConfig.MAX_DETAIL_IMAGES
+    if single_item_per_image:
+        target_groups = min(
+            max_detail_images,
+            item_count,
+            max(1, requested_image_count) if requested_image_count is not None else item_count,
+        )
+        return target_groups, 1, 1, target_groups >= item_count
+
     target_groups = min(
         max_detail_images,
         max(ImageConfig.MIN_DETAIL_IMAGES, math.ceil(item_count / ImageConfig.ENTITIES_PER_DETAIL))
@@ -69,7 +82,7 @@ def calculate_grouping_params(item_count: int) -> tuple[int, int, int]:
         ImageConfig.ENTITIES_PER_DETAIL,
         target_group_size,  # 确保 cap >= 实际每组需要的数量，避免数学上不可能通过验证
     )
-    return target_groups, target_group_size, max_group_size_cap
+    return target_groups, target_group_size, max_group_size_cap, True
 
 
 def groups_to_image_specs(groups: list[GroupSpec]) -> list[ImageTypeSpec]:
@@ -96,6 +109,7 @@ async def review_groups(
     target_groups: int,
     max_group_size: int,
     max_groups: int,
+    require_all_items: bool = True,
     message_history: list[ModelMessage] | None = None,
 ) -> tuple[ImageGroupingReviewResult, list[ModelMessage]]:
     """验证并审核分组结果"""
@@ -117,15 +131,14 @@ async def review_groups(
             if isinstance(idx, int) and 0 <= idx < n_items:
                 all_indices.append(idx)
 
-    expected = set(range(n_items))
     actual = set(all_indices)
-    missing = sorted(expected - actual)
+    missing = sorted(set(range(n_items)) - actual)
     duplicates = sorted(idx for idx in actual if all_indices.count(idx) > 1)
-    if missing:
+    if missing and require_all_items:
         issues.append(f"缺少 indices: {missing}")
     if duplicates:
         issues.append(f"重复 indices: {duplicates}")
-    if len(all_indices) != n_items and not missing and not duplicates:
+    if require_all_items and len(all_indices) != n_items and not missing and not duplicates:
         issues.append(f"索引总数 {len(all_indices)} != 期望 {n_items}")
 
     if issues:
@@ -138,6 +151,7 @@ async def review_groups(
             groups_json=json.dumps(groups, ensure_ascii=False, indent=2),
             target_groups=target_groups,
             max_group_size=max_group_size,
+            item_usage_rule=_item_usage_rule(require_all_items=require_all_items, max_group_size=max_group_size),
         )
         result = await reviewer.run(user_prompt, message_history=message_history or [])
         review_result, new_messages = result.output, list(result.new_messages())
@@ -155,6 +169,7 @@ async def run_grouping_with_review(
     target_groups: int,
     target_group_size: int,
     max_group_size_cap: int,
+    require_all_items: bool = True,
 ) -> list[GroupSpec]:
     """语义分组 + 审核循环"""
     max_detail_images = ImageConfig.MAX_DETAIL_IMAGES
@@ -176,6 +191,10 @@ async def run_grouping_with_review(
                 key_infos_json=json.dumps(compact_items, ensure_ascii=False, indent=2),
                 max_group_size=target_group_size,
                 target_groups=target_groups,
+                item_usage_rule=_item_usage_rule(
+                    require_all_items=require_all_items,
+                    max_group_size=target_group_size,
+                ),
             )
             grouping_result = await grouping_agent.run(user_prompt, message_history=messages)
             round_messages = list(grouping_result.new_messages())
@@ -186,6 +205,10 @@ async def run_grouping_with_review(
                 topic=topic,
                 max_group_size=target_group_size,
                 target_groups=target_groups,
+                item_usage_rule=_item_usage_rule(
+                    require_all_items=require_all_items,
+                    max_group_size=target_group_size,
+                ),
                 feedback=feedback,
             )
             grouping_result = await grouping_agent.run(
@@ -210,6 +233,7 @@ async def run_grouping_with_review(
             target_groups=target_groups,
             max_group_size=max_group_size_cap,
             max_groups=max_detail_images,
+            require_all_items=require_all_items,
             message_history=history_mgr.get_review_history(),
         )
 
@@ -229,3 +253,17 @@ async def run_grouping_with_review(
         max_review_retries, review.score, review.summary
     )
     return groups
+
+
+def _item_usage_rule(*, require_all_items: bool, max_group_size: int) -> str:
+    if require_all_items:
+        return "完整覆盖模式：每个 key_info 必须被分到且只分到 1 个组。"
+    if max_group_size <= 1:
+        return (
+            "精选模式：只选择最适合成图的 target_groups 个 key_info；"
+            "每组必须且只能包含 1 个 index；未被选中的素材可以不使用。"
+        )
+    return (
+        "精选模式：只选择最适合成图的素材组成 target_groups 个组；"
+        "每个被选中的 index 只能出现一次，未被选中的素材可以不使用。"
+    )

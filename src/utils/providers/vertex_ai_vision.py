@@ -23,6 +23,16 @@ class VertexAIVisionClient:
     """Analyze local images using a Vertex AI multimodal text model."""
 
     _MAX_RETRIES = 8
+    _semaphore: asyncio.Semaphore | None = None
+    _semaphore_limit: int | None = None
+
+    @classmethod
+    def _get_semaphore(cls) -> asyncio.Semaphore:
+        limit = max(1, int(getattr(APIConfig, "VERTEX_AI_VISION_MAX_CONCURRENCY", 3)))
+        if cls._semaphore is None or cls._semaphore_limit != limit:
+            cls._semaphore = asyncio.Semaphore(limit)
+            cls._semaphore_limit = limit
+        return cls._semaphore
 
     def __init__(
         self,
@@ -96,13 +106,14 @@ class VertexAIVisionClient:
         last_error: Exception | None = None
         for attempt in range(self._MAX_RETRIES):
             try:
-                response = await asyncio.to_thread(
-                    lambda: self.client.models.generate_content(
-                        model=self.model,
-                        contents=contents,
-                        config=config,
+                async with self._get_semaphore():
+                    response = await asyncio.to_thread(
+                        lambda: self.client.models.generate_content(
+                            model=self.model,
+                            contents=contents,
+                            config=config,
+                        )
                     )
-                )
                 output_text = self._extract_text(response)
                 if response_model is None:
                     return output_text

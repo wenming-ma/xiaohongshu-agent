@@ -2,6 +2,7 @@ import asyncio
 import json
 from pathlib import Path
 
+from src.agents.image_post.research.agent import ResearchAgent
 from src.agents.image_post.research.state import ResearchState, build_progress_snapshot
 from src.agents.image_post.research.tools import ImageReaderAgent
 from src.agents.image_post.schemas import ResearchItem, ResearchResult
@@ -92,3 +93,52 @@ def test_read_image_returns_structured_error_on_preprocess_failure(
     assert "图片预处理失败" in payload["issues"][0]
     assert "ValueError" in payload["issues"][0]
     assert agent._agent.called is False
+
+
+def test_research_agent_wires_post_image_reader_through_navigate_tracker(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeLoginAgent:
+        def __init__(self, mcp_server):
+            captured["login_mcp_server"] = mcp_server
+
+        def get_tool(self):
+            return object()
+
+    class FakeImageReaderAgent:
+        def get_tool(self):
+            return object()
+
+    class FakePostImageReaderAgent:
+        def __init__(self, mcp_server):
+            captured["post_reader_mcp_server"] = mcp_server
+
+        def get_tool(self):
+            return object()
+
+    class FakeVideoExtractTool:
+        def get_extract_tool(self):
+            return object()
+
+        def get_read_tool(self):
+            return object()
+
+    monkeypatch.setattr("src.agents.image_post.research.agent.RednoteLoginAgent", FakeLoginAgent)
+    monkeypatch.setattr("src.agents.image_post.research.agent.ImageReaderAgent", FakeImageReaderAgent)
+    monkeypatch.setattr(
+        "src.agents.image_post.research.agent.PostImageReaderAgent",
+        FakePostImageReaderAgent,
+    )
+    monkeypatch.setattr(
+        "src.agents.image_post.research.agent.create_video_extract_tool",
+        lambda mcp_server: FakeVideoExtractTool(),
+    )
+
+    agent = ResearchAgent.__new__(ResearchAgent)
+    agent.mcp_server = object()
+    agent.navigate_tracker = object()
+
+    agent.init_tools()
+
+    assert captured["login_mcp_server"] is agent.mcp_server
+    assert captured["post_reader_mcp_server"] is agent.navigate_tracker

@@ -93,10 +93,12 @@ class FeishuSessionManager:
         state_dir: str | Path | None = None,
         *,
         stale_after_seconds: int = 15 * 60,
+        owner_liveness_check: bool = True,
     ) -> None:
         self.state_dir = Path(state_dir or PathConfig.FEISHU_SESSION_DIR)
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.stale_after_seconds = stale_after_seconds
+        self.owner_liveness_check = owner_liveness_check
 
     def _state_path(self, chat_id: str) -> Path:
         return self.state_dir / f"{_safe_filename(chat_id)}.json"
@@ -152,6 +154,49 @@ class FeishuSessionManager:
             heartbeat_at = heartbeat_at.replace(tzinfo=timezone.utc)
         return (_utcnow() - heartbeat_at).total_seconds() > self.stale_after_seconds
 
+    def _owner_process_alive(self, pid: int) -> bool:
+        if not self.owner_liveness_check:
+            return True
+        if pid <= 0:
+            return False
+        if pid == os.getpid():
+            return True
+
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            SYNCHRONIZE = 0x00100000
+            STILL_ACTIVE = 259
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            handle = kernel32.OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE,
+                False,
+                pid,
+            )
+            if not handle:
+                return False
+            try:
+                exit_code = wintypes.DWORD()
+                if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                    return False
+                return exit_code.value == STILL_ACTIVE
+            finally:
+                kernel32.CloseHandle(handle)
+
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    def _is_abandoned(self, state: FeishuChatSessionState) -> bool:
+        return not self._owner_process_alive(state.owner_pid)
+
     def _build_active_state(
         self,
         *,
@@ -179,7 +224,7 @@ class FeishuSessionManager:
             state = self._read_state_unlocked(chat_id)
             if state is None:
                 return None
-            if state.status == "active" and self._is_stale(state):
+            if state.status == "active" and (self._is_stale(state) or self._is_abandoned(state)):
                 state.status = "expired"
                 self._write_state_unlocked(chat_id, state)
             return state
@@ -190,7 +235,7 @@ class FeishuSessionManager:
             return None
         if state.status not in ACTIVE_SESSION_STATUSES:
             return None
-        if self._is_stale(state):
+        if self._is_stale(state) or self._is_abandoned(state):
             return None
         return state
 
@@ -223,6 +268,24 @@ class FeishuSessionManager:
                 return SessionAcquireResult("acquired", "available", handle, state)
 
             stale = self._is_stale(state)
+            abandoned = self._is_abandoned(state)
+
+            if state.status in ACTIVE_SESSION_STATUSES and (stale or abandoned):
+                logger.info(
+                    "回收过期/孤儿 Feishu 会话: chat_id=%s status=%s owner_pid=%s",
+                    chat_id,
+                    state.status,
+                    state.owner_pid,
+                )
+                state = self._build_active_state(
+                    handle=handle,
+                    owner_pid=owner_pid,
+                    current_phase=current_phase,
+                    summary=summary,
+                )
+                self._write_state_unlocked(chat_id, state)
+                return SessionAcquireResult("acquired", "expired_session", handle, state)
+
             if stale and state.status == "active":
                 state.status = "expired"
 
@@ -257,7 +320,7 @@ class FeishuSessionManager:
                 return state
             if action == "continue_existing":
                 state = self._clear_challenger(state)
-                state.status = "expired" if self._is_stale(state) else "active"
+                state.status = "expired" if (self._is_stale(state) or self._is_abandoned(state)) else "active"
             elif action == "takeover":
                 state = self._promote_challenger(state)
             else:
@@ -272,7 +335,7 @@ class FeishuSessionManager:
                 raise SessionInactiveError("session state not found")
             if state.session_id != handle.session_id:
                 raise SessionRevokedError(f"session {handle.session_id} revoked by another run")
-            if self._is_stale(state):
+            if self._is_stale(state) or self._is_abandoned(state):
                 state.status = "expired"
                 self._write_state_unlocked(handle.chat_id, state)
                 raise SessionExpiredError(f"session {handle.session_id} expired")
@@ -294,7 +357,7 @@ class FeishuSessionManager:
                 raise SessionInactiveError("session state not found")
             if state.session_id != handle.session_id:
                 raise SessionRevokedError(f"session {handle.session_id} revoked by another run")
-            if self._is_stale(state):
+            if self._is_stale(state) or self._is_abandoned(state):
                 state.status = "expired"
                 self._write_state_unlocked(handle.chat_id, state)
                 raise SessionExpiredError(f"session {handle.session_id} expired")
@@ -330,7 +393,7 @@ class FeishuSessionManager:
 
             if state.challenger_session_id == handle.session_id:
                 state = self._clear_challenger(state)
-                state.status = "expired" if self._is_stale(state) else "active"
+                state.status = "expired" if (self._is_stale(state) or self._is_abandoned(state)) else "active"
                 return self._write_state_unlocked(handle.chat_id, state)
 
             return state

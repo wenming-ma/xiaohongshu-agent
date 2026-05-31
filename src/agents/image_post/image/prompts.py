@@ -198,6 +198,8 @@ IMAGE_GROUPING_SYSTEM_PROMPT = """你是”配图分发/编排专家”。你的
 - 每个 key_info 必须被分到且只分到 1 个组（覆盖完整、不重复）。
 - 每组建议不超过 max_group_size 条（尽量按语义自然分组）。
 - 尽量输出 target_groups 个组（允许 ±1，但优先满足 target_groups）。
+- 如果用户要求”每张图只展示一套/单套展示/一图一套”，则一张图只对应一个主体或一套穿搭，不要把多套内容塞进同一组。
+- topic 中的用户明确要求优先级最高。key_infos 是参考素材，可能包含与用户要求相反的历史案例或展示方式；这类条目不要覆盖用户要求，只作为参考信息归组。
 
 ## 标题要求
 - group title 必须准确概括本组多数条目的共同主题。
@@ -219,6 +221,7 @@ IMAGE_GROUPING_SYSTEM_PROMPT = """你是”配图分发/编排专家”。你的
 IMAGE_GROUPING_USER_PROMPT_TEMPLATE = """主题：{topic}
 目标分组数：{target_groups}
 每组最大条数（建议）：{max_group_size}
+素材使用规则：{item_usage_rule}
 
 下面是 key_infos（JSON数组，包含 index 与文本信息）：
 ```json
@@ -231,6 +234,7 @@ IMAGE_GROUPING_USER_PROMPT_TEMPLATE = """主题：{topic}
 IMAGE_GROUPING_REVISION_USER_PROMPT_TEMPLATE = """主题：{topic}
 目标分组数：{target_groups}
 每组最大条数（建议）：{max_group_size}
+素材使用规则：{item_usage_rule}
 
 （key_infos 同首轮，请参考上文）
 
@@ -256,6 +260,11 @@ IMAGE_GROUPING_REVIEW_SYSTEM_PROMPT = """你是”图片分组审核专家”。
 5) 组内内容矛盾：同一组内的条目之间不应存在事实或观点上的矛盾（例如一条说”全年开放”另一条说”仅冬季营业”；或一条说”免费入场”另一条说”门票200元”）。如发现矛盾，记录到 issues 并扣分。
 6) 跨组内容矛盾：不同组中如果涉及同一事物或同一建议维度，描述和结论不应互相矛盾（例如 A 组说”黄黑皮避免穿驼色/卡其色”，B 组却推荐驼色大衣显白；或 A 组说某景点”免费开放”，B 组说同一景点”门票80元”）。如发现跨组矛盾，记录到 issues 并扣分。
 
+## 用户约束优先
+- topic 中的用户明确要求优先级最高，key_infos 只是参考素材。
+- 如果某个 key_info 是历史案例、展示方式或评论反馈，并且与 topic 中的用户要求冲突，不要因此判定分组失败；只需在 summary 中提示下游应优先用户要求。
+- 例如 topic 要求”单套展示/平铺/无人物”，而某条 key_info 提到”多套集合展示”，这属于不采纳的参考案例，不属于分组语义错误。
+
 通过标准：
 - passed = true 当且仅当：不存在明显货不对板（严重错配）、组内内容矛盾或跨组内容矛盾。
 - score 给出 0-100 的综合评分。
@@ -272,6 +281,7 @@ IMAGE_GROUPING_REVIEW_SYSTEM_PROMPT = """你是”图片分组审核专家”。
 IMAGE_GROUPING_REVIEW_USER_PROMPT_TEMPLATE = """主题：{topic}
 目标组数：{target_groups}
 每组最大条数（参考）：{max_group_size}
+素材使用规则：{item_usage_rule}
 
 key_infos（JSON数组，包含 index 与文本信息）：
 ```json
@@ -357,7 +367,9 @@ IMAGE_QUALITY_REVIEW_SYSTEM_PROMPT = """# 角色定义
 
 **要求**：图片内容必须与“本图应表达的内容”一致，不得货不对板/跑题。
 - 以“本图应表达的内容”为准，topic 仅作背景参考（不要被 topic 里的数量口径误导，例如“5个/10个”）
-- 如果图片内容与本图主题板块、关键信息明显不一致：无条件判定 passed=false
+- 研究要点/参考信息用于判断方向是否相关，不要求图片逐条写出、完整覆盖或变成清单/信息图
+- 当用户明确要求纯色背景、无人物、单套展示、平铺等画面形式时，应优先按这些视觉约束判断；不要因为图片没有展示研究文字、用户反馈、选购标准等抽象信息而判失败
+- 如果图片内容与本图主题板块明显不一致：无条件判定 passed=false
 - 需要在 issues 与 summary 中明确指出不一致点（例如：图里是 A，但本图应讲 B）
 
 ## 输出格式
@@ -376,7 +388,7 @@ IMAGE_QUALITY_REVIEW_SYSTEM_PROMPT = """# 角色定义
 2. style_score >= 60
 3. aspect_ratio_correct == true
 4. text_is_chinese == true（主体中文；允许极少量专有名词英文/数字）
-5. 内容与"本图应表达的内容"一致（不跑题/不货不对板；不应新增大量与本图无关的要点）
+5. 内容与"本图应表达的内容"一致（不跑题/不货不对板；研究参考信息不要求逐条覆盖）
 6. 图片文字中不得出现"网友说"、"用户反馈"、"评论区"等来源归属措辞，也不得出现任何评论者的用户名、昵称、@提及（如有则判定 passed=false）
 """
 

@@ -121,6 +121,9 @@ class ImageAgent(BaseAgent):
         self,
         research: ResearchResult,
         topic: str,
+        *,
+        requested_image_count: int | None = None,
+        single_item_per_image: bool = False,
     ) -> list[GroupSpec]:
         """
         独立的语义分组入口，供 tool.py 在 Content 之前调用。
@@ -136,7 +139,16 @@ class ImageAgent(BaseAgent):
         if item_count == 0:
             return []
 
-        target_groups, target_group_size, max_group_size_cap = calculate_grouping_params(item_count)
+        (
+            target_groups,
+            target_group_size,
+            max_group_size_cap,
+            require_all_items,
+        ) = calculate_grouping_params(
+            item_count,
+            requested_image_count=requested_image_count,
+            single_item_per_image=single_item_per_image,
+        )
         if target_groups <= 0:
             logger.info("详情图数量配置为 0，跳过语义分组")
             return []
@@ -151,6 +163,7 @@ class ImageAgent(BaseAgent):
             target_groups=target_groups,
             target_group_size=target_group_size,
             max_group_size_cap=max_group_size_cap,
+            require_all_items=require_all_items,
         )
 
     # ========================================================================
@@ -252,7 +265,7 @@ class ImageAgent(BaseAgent):
 
         gen_ctx = ImageGenContext(topic=topic, image_type=image_type)
 
-        logger.info("启动 Sub2API 图片生成...")
+        logger.info("启动 Vertex AI 图片生成...")
         image_path, final_prompt = await self.generate_via_api(
             output_dir=output_dir,
             image_type=image_type,
@@ -328,7 +341,13 @@ class ImageAgent(BaseAgent):
                     f"{i+1}. {item.title if hasattr(item, 'title') else item.get('title', '未知')}: {item.content if hasattr(item, 'content') else item.get('content', item.get('description', ''))}"
                     for i, item in enumerate(items)
                 ])
-                body_excerpt = f"本图主题板块：{group_title}\n本图需要展示以下 {len(items)} 个关键信息：\n{infos_text}"
+                body_excerpt = (
+                    f"本图主题板块：{group_title}\n"
+                    f"以下 {len(items)} 个研究要点仅作为画面灵感和选品参考，不要求在图片中逐条写出或全部出现：\n"
+                    f"{infos_text}\n\n"
+                    "如果用户要求纯色背景、无人物、单套展示、平铺等画面形式，必须优先满足这些画面形式。"
+                    "不要把参考要点强行做成清单、信息图或大段文字。"
+                )
             else:
                 body_excerpt = f"本图主题板块：{group_title or topic}"
 

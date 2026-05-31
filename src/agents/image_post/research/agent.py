@@ -28,7 +28,7 @@ from ....utils.logger import get_logger
 from ....config.settings import RetryConfig, ResearchConfig, PathConfig
 from ...shared import create_shared_playwright_mcp_server
 from ...shared.video_extract import create_video_extract_tool
-from ...shared.login import create_login_tool
+from ...shared.login import AuthResult, RednoteLoginAgent
 from ...shared.utils.tail_soft_limit import build_tail_soft_limit_history_processor
 
 from .validator import ResearchDepthValidator, ResearchReviewValidator
@@ -71,9 +71,10 @@ class ResearchAgent(BaseAgent):
 
     def init_tools(self) -> None:
         """初始化工具集"""
-        self.login_tool = create_login_tool(self.mcp_server)
+        self.login_agent = RednoteLoginAgent(self.mcp_server)
+        self.login_tool = self.login_agent.get_tool()
         self.image_reader_agent = ImageReaderAgent()
-        self.post_image_reader = PostImageReaderAgent(self.mcp_server)
+        self.post_image_reader = PostImageReaderAgent(self.navigate_tracker)
         self.video_extract_tool = create_video_extract_tool(self.mcp_server)
         self.web_search_agent = WebSearchAgent()
 
@@ -109,6 +110,14 @@ class ResearchAgent(BaseAgent):
             min_posts=ResearchConfig.MIN_POSTS_RESEARCHED
         )
         self.max_iterations = ResearchConfig.VALIDATION_MAX_RETRIES
+
+    async def prepare_research_access(self) -> AuthResult:
+        """在研究开始前预检 Rednote 登录态，并在需要时触发自动扫码登录。"""
+        logger.info("开始研究前登录预检")
+        async with self.mcp_server:
+            result = await self.login_agent.ensure_rednote_research_access()
+        logger.info("研究前登录预检完成: success=%s auth_type=%s", result.success, result.auth_type)
+        return result
 
     # ========================================================================
     # 核心循环：forward

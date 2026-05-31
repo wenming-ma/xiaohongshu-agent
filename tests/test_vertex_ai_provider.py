@@ -25,9 +25,12 @@ def _load_module(module_name: str):
         "src.utils.providers": _REPO_ROOT / "src" / "utils" / "providers",
     }
     for package_name, package_path in package_roots.items():
-        package_module = types.ModuleType(package_name)
+        package_module = sys.modules.get(package_name) or types.ModuleType(package_name)
         package_module.__path__ = [str(package_path)]
         sys.modules[package_name] = package_module
+        if "." in package_name:
+            parent_name, child_name = package_name.rsplit(".", 1)
+            setattr(sys.modules[parent_name], child_name, package_module)
 
     module_path = _REPO_ROOT.joinpath(*module_name.split(".")).with_suffix(".py")
     spec = importlib.util.spec_from_file_location(module_name, module_path)

@@ -73,7 +73,7 @@ class ResearchAgent(BaseAgent):
         """初始化工具集"""
         self.login_tool = create_login_tool(self.mcp_server)
         self.image_reader_agent = ImageReaderAgent()
-        self.post_image_reader = PostImageReaderAgent(self.mcp_server)
+        self.post_image_reader = PostImageReaderAgent(self.navigate_tracker)
         self.video_extract_tool = create_video_extract_tool(self.mcp_server)
         self.web_search_agent = WebSearchAgent()
 

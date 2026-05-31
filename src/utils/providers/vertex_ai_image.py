@@ -20,6 +20,16 @@ class VertexAIImageClient:
     """Generate images through Vertex AI Gemini image models."""
 
     _MAX_RETRIES = 12
+    _semaphore: asyncio.Semaphore | None = None
+    _semaphore_limit: int | None = None
+
+    @classmethod
+    def _get_semaphore(cls) -> asyncio.Semaphore:
+        limit = max(1, int(getattr(APIConfig, "VERTEX_AI_IMAGE_MAX_CONCURRENCY", 1)))
+        if cls._semaphore is None or cls._semaphore_limit != limit:
+            cls._semaphore = asyncio.Semaphore(limit)
+            cls._semaphore_limit = limit
+        return cls._semaphore
 
     def __init__(
         self,
@@ -122,15 +132,16 @@ class VertexAIImageClient:
         last_error: Exception | None = None
         for attempt in range(max_retries):
             try:
-                chunks = await asyncio.to_thread(
-                    lambda: list(
-                        self.client.models.generate_content_stream(
-                            model=self.model,
-                            contents=contents,
-                            config=config,
+                async with self._get_semaphore():
+                    chunks = await asyncio.to_thread(
+                        lambda: list(
+                            self.client.models.generate_content_stream(
+                                model=self.model,
+                                contents=contents,
+                                config=config,
+                            )
                         )
                     )
-                )
                 image_bytes, mime_type = self._extract_image_bytes(chunks)
                 ext = mimetypes.guess_extension(mime_type) or ".png"
                 if output_path.suffix.lower() != ext.lower():

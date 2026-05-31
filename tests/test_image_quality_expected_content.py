@@ -35,3 +35,5 @@ def test_image_quality_expected_content_uses_research_items_for_detail_groups() 
     assert "肉夹馍" in expected
     assert "适合放在早餐路线里" in expected
     assert "冰峰" not in expected
+    assert "本图参考信息" in expected
+    assert "本图必须覆盖" not in expected

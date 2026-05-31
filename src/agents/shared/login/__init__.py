@@ -1,6 +1,6 @@
 """Shared login capability for Xiaohongshu tools."""
 
-from .agent import AuthResult, create_login_tool
+from .agent import AuthResult, RednoteLoginAgent, create_login_tool
 from .android_qr import (
     AndroidQrLoginAutomator,
     AndroidQrLoginConfig,
@@ -16,6 +16,7 @@ __all__ = [
     "AndroidQrLoginResult",
     "AndroidQrLoginToolset",
     "AuthResult",
+    "RednoteLoginAgent",
     "build_android_qr_tool_message",
     "classify_android_login_hierarchy",
     "create_login_tool",

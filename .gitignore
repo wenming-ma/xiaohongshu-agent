@@ -26,6 +26,7 @@ workshop/image_post/image_post_failed_*.json
 # Local tool state
 .cache/
 .tmp/
+.worktrees/
 .prompt-template-repos/
 .claude/
 .cursor/

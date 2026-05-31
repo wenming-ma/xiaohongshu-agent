@@ -234,8 +234,8 @@ def _build_user_prompt(url: str, action: str, hint: str) -> str:
 # 工厂函数
 # ============================================================================
 
-def create_login_tool(mcp_server: MCPServerStdio) -> Tool:
-    """创建登录工具（Agent Delegation 模式）
+def _build_login_tool(mcp_server: MCPServerStdio) -> Tool:
+    """构建登录工具（Agent Delegation 模式）
 
     返回一个 pydantic-ai Tool，可直接加入父 Agent 的 tools 列表。
 
@@ -411,3 +411,37 @@ def create_login_tool(mcp_server: MCPServerStdio) -> Tool:
 
     logger.info("login_tool 创建完成")
     return Tool(login, takes_ctx=False)
+
+
+class RednoteLoginAgent:
+    """专门负责 Rednote / 小红书网页登录态和扫码登录的共享 Agent。"""
+
+    def __init__(self, mcp_server: MCPServerStdio) -> None:
+        self.mcp_server = mcp_server
+        self._tool = _build_login_tool(mcp_server)
+
+    def get_tool(self) -> Tool:
+        """返回可挂载到其他 Agent 的登录工具。"""
+        return self._tool
+
+    async def login(
+        self,
+        url: str,
+        action: str = "login",
+        hint: str = "",
+    ) -> AuthResult:
+        """统一登录入口；其他 Agent 不直接处理登录细节。"""
+        return await self._tool.function(url=url, action=action, hint=hint)
+
+    async def ensure_rednote_research_access(self) -> AuthResult:
+        """确保研究任务开始前 Rednote 网页登录态可用。"""
+        return await self.login(
+            url=XHS_EXPLORE_LOGIN_URL,
+            action="login",
+            hint="小红书研究前检查登录态；如需要登录，自动完成扫码登录",
+        )
+
+
+def create_login_tool(mcp_server: MCPServerStdio) -> Tool:
+    """创建登录工具，兼容既有调用方。"""
+    return RednoteLoginAgent(mcp_server).get_tool()

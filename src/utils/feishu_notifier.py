@@ -230,12 +230,32 @@ class FeishuNotifier:
                 queue_text = f"__FORM__:{form_json}"
                 logger.info(f"收到表单提交: {form_json[:200]}")
                 self._record("user", "form", form_json[:200])
-                asyncio.run_coroutine_threadsafe(
-                    self._reply_queue.put(queue_text), self._loop
-                )
-                asyncio.run_coroutine_threadsafe(
-                    self._media_queue.put((queue_text, None)), self._loop
-                )
+                session_id = action_value.get("session_id", "")
+                phase = action_value.get("phase")
+                chat_id = action_value.get("chat_id") or self.chat_id
+                if session_id:
+                    routing_state = self._session_manager.get_routing_state(chat_id)
+                    if routing_state is not None and routing_state.session_id == session_id:
+                        self._enqueue_session_event(
+                            session_id,
+                            FeishuInputEvent(
+                                kind="form",
+                                text=queue_text,
+                                phase=phase,
+                                action=action_value.get("action", "form_submit"),
+                                payload=dict(form_value),
+                            ),
+                        )
+                elif self._loop is not None:
+                    asyncio.run_coroutine_threadsafe(
+                        self._reply_queue.put(queue_text), self._loop
+                    )
+                    asyncio.run_coroutine_threadsafe(
+                        self._media_queue.put((queue_text, None)), self._loop
+                    )
+                else:
+                    self._reply_queue.put_nowait(queue_text)
+                    self._media_queue.put_nowait((queue_text, None))
                 resp = P2CardActionTriggerResponse()
                 resp.toast = CallBackToast()
                 resp.toast.type = "success"
@@ -316,7 +336,11 @@ class FeishuNotifier:
         return queue
 
     def _enqueue_session_event(self, session_id: str, event: FeishuInputEvent) -> None:
-        self._get_session_queue(session_id).put_nowait(event)
+        queue = self._get_session_queue(session_id)
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(queue.put_nowait, event)
+        else:
+            queue.put_nowait(event)
 
     def _route_text_event(self, *, chat_id: str | None, text: str) -> None:
         routing_state = self._session_manager.get_routing_state(chat_id or self.chat_id)
@@ -642,6 +666,66 @@ class FeishuNotifier:
         await session.update_phase(phase, summary=summary)
         patched = self._inject_session_button_values(card, session=session, phase=phase)
         return await self.send_card_message_raw(patched, chat_id=session.chat_id)
+
+    async def send_session_form_card(
+        self,
+        session: FeishuWorkflowSession,
+        title: str,
+        checkers: list[dict],
+        *,
+        phase: str,
+        input_name: str = "",
+        input_placeholder: str = "",
+        submit_label: str = "确认",
+        summary: str | None = None,
+    ) -> Optional[str]:
+        await session.ensure_active()
+        await session.update_phase(phase, summary=summary)
+
+        form_elements: list[dict] = [
+            {"tag": "markdown", "content": title},
+        ]
+        for item in checkers:
+            form_elements.append({
+                "tag": "checker",
+                "name": item["name"],
+                "checked": item.get("checked", False),
+                "text": {"tag": "plain_text", "content": item["text"]},
+                "behaviors": [{"type": "callback", "value": {}}],
+            })
+        if input_name:
+            form_elements.append({
+                "tag": "input",
+                "name": input_name,
+                "placeholder": {"tag": "plain_text", "content": input_placeholder or "可以补充一句话"},
+            })
+        form_elements.append({
+            "tag": "button",
+            "text": {"tag": "plain_text", "content": submit_label},
+            "type": "primary",
+            "form_action_type": "submit",
+            "behaviors": [{
+                "type": "callback",
+                "value": {
+                    "action": "form_submit",
+                    "session_id": session.handle.session_id,
+                    "chat_id": session.chat_id,
+                    "phase": phase,
+                },
+            }],
+        })
+
+        card = {
+            "schema": "2.0",
+            "body": {
+                "elements": [{
+                    "tag": "form",
+                    "name": "orchestrator_clarification_form",
+                    "elements": form_elements,
+                }],
+            },
+        }
+        return await self.send_card_message_raw(card, chat_id=session.chat_id)
 
     async def wait_for_session_image_or_text(
         self,
