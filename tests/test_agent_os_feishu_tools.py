@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from src.agent_os.feishu_tools import AgentOSFeishuTools
@@ -30,13 +32,31 @@ class FakeNotifier:
         self.messages.append({"session": session, "message": message, **kwargs})
 
 
+def test_agent_os_feishu_tool_public_methods_are_prefixed() -> None:
+    public_tool_methods = {
+        name
+        for name, value in inspect.getmembers(
+            AgentOSFeishuTools,
+            predicate=inspect.iscoroutinefunction,
+        )
+        if not name.startswith("_")
+    }
+
+    assert public_tool_methods == {
+        "feishu_ask_single_choice",
+        "feishu_ask_multi_select",
+        "feishu_send_delivery_summary",
+        "feishu_send_progress",
+    }
+
+
 @pytest.mark.anyio
 async def test_feishu_tools_ask_single_choice_uses_translator() -> None:
     translator = FakeTranslator()
     notifier = FakeNotifier()
     tools = AgentOSFeishuTools(notifier=notifier, translator=translator)
 
-    reply = await tools.ask_single_choice(
+    reply = await tools.feishu_ask_single_choice(
         object(),
         title="选路线",
         options_spec="图文::image_post||文章::article_post",
@@ -56,7 +76,7 @@ async def test_feishu_tools_ask_multi_select_uses_translator() -> None:
     notifier.replies = ["__FORM__:{\"style_pure_color\":true,\"style_no_people\":true}"]
     tools = AgentOSFeishuTools(notifier=notifier, translator=translator)
 
-    reply = await tools.ask_multi_select(
+    reply = await tools.feishu_ask_multi_select(
         object(),
         title="选择图片约束",
         options_spec="纯色背景::style_pure_color||不要人物::style_no_people",
@@ -84,6 +104,6 @@ async def test_feishu_tools_send_delivery_summary() -> None:
         step_id="delivery",
     )
 
-    await tools.send_delivery_summary(object(), envelope)
+    await tools.feishu_send_delivery_summary(object(), envelope)
 
     assert "标题" in notifier.messages[0]["message"]

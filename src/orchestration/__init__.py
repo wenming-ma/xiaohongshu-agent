@@ -39,6 +39,8 @@ _EXPORTS = {
     "ImagePostRunOptions": ".run_options",
     "ImageRunOptions": ".run_options",
     "ResearchRunOptions": ".run_options",
+    "VideoPostRunOptions": ".run_options",
+    "VideoResearchRunOptions": ".run_options",
     "SkillSpec": ".skills",
     "StyleContext": ".style_context",
     "StylePromptRef": ".style_context",

@@ -414,7 +414,7 @@ def _register_resource_tools(registry: AgentToolRegistry) -> None:
 def _register_feishu_tools(registry: AgentToolRegistry, *, notifier: Any | None) -> None:
     feishu = AgentOSFeishuTools(notifier=notifier)
 
-    async def ask_single_choice(
+    async def feishu_ask_single_choice(
         ctx: AgentToolContext,
         *,
         options_spec: str = "",
@@ -434,7 +434,7 @@ def _register_feishu_tools(registry: AgentToolRegistry, *, notifier: Any | None)
             return _tool_error(ctx, "feishu_tools", "缺少问题标题，无法渲染点选卡片")
         if not resolved_options:
             return _tool_error(ctx, "feishu_tools", "缺少选项，无法渲染点选卡片")
-        reply = await feishu.ask_single_choice(
+        reply = await feishu.feishu_ask_single_choice(
             ctx.session,
             title=resolved_title,
             options_spec=resolved_options,
@@ -444,7 +444,7 @@ def _register_feishu_tools(registry: AgentToolRegistry, *, notifier: Any | None)
         )
         return _tool_success(ctx, "feishu_tools", "single_choice", {"reply": reply})
 
-    async def ask_multi_select(
+    async def feishu_ask_multi_select(
         ctx: AgentToolContext,
         *,
         options_spec: str = "",
@@ -477,7 +477,7 @@ def _register_feishu_tools(registry: AgentToolRegistry, *, notifier: Any | None)
                 or custom_text_placeholder
                 or "也可以补充其他要求"
             )
-        reply = await feishu.ask_multi_select(
+        reply = await feishu.feishu_ask_multi_select(
             ctx.session,
             title=resolved_title,
             options_spec=resolved_options,
@@ -489,7 +489,7 @@ def _register_feishu_tools(registry: AgentToolRegistry, *, notifier: Any | None)
         )
         return _tool_success(ctx, "feishu_tools", "multi_select", {"reply": reply})
 
-    async def send_progress(
+    async def feishu_send_progress(
         ctx: AgentToolContext,
         *,
         message: str,
@@ -498,14 +498,14 @@ def _register_feishu_tools(registry: AgentToolRegistry, *, notifier: Any | None)
     ) -> AgentToolResult:
         if ctx.session is None:
             return _tool_error(ctx, "feishu_tools", "缺少 Feishu 会话，无法发送会话进度")
-        await feishu.send_progress(ctx.session, message, phase=phase, summary=summary)
+        await feishu.feishu_send_progress(ctx.session, message, phase=phase, summary=summary)
         return _tool_success(ctx, "feishu_tools", "progress", {"sent": True})
 
     registry.register(
         AgentTool(
             name="feishu_ask_single_choice",
             description="Ask the user to pick one option in Feishu using delimited options.",
-            execute=ask_single_choice,
+            execute=feishu_ask_single_choice,
             category="feishu",
         )
     )
@@ -517,7 +517,7 @@ def _register_feishu_tools(registry: AgentToolRegistry, *, notifier: Any | None)
                 "delimited options formatted as label::value||label::value. "
                 "Use this when missing constraints are easier to pick than type."
             ),
-            execute=ask_multi_select,
+            execute=feishu_ask_multi_select,
             category="feishu",
         )
     )
@@ -525,7 +525,7 @@ def _register_feishu_tools(registry: AgentToolRegistry, *, notifier: Any | None)
         AgentTool(
             name="feishu_send_progress",
             description="Send a short progress update to the current Feishu session.",
-            execute=send_progress,
+            execute=feishu_send_progress,
             category="feishu",
         )
     )

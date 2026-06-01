@@ -21,6 +21,7 @@ from src.config.settings import PathConfig
 
 from .conversation import ConversationRequest
 from .request_brief import RequestBrief, build_request_brief
+from .run_options import VideoPostRunOptions
 from .schemas import ArtifactRef, DeliveryPackage, DeliveryTextBlock, ResultEnvelope
 from .style_context import StyleContext
 from .workspace import WorkflowWorkspace
@@ -60,6 +61,7 @@ def _build_video_delivery_package(
     content: XHSVideoContent,
     cover: CoverImageResult | None,
     style_context: StyleContext,
+    run_options: VideoPostRunOptions,
 ) -> DeliveryPackage:
     artifacts = [
         _artifact_from_path(
@@ -98,6 +100,7 @@ def _build_video_delivery_package(
             "audience": brief.audience,
             "style_constraints": list(brief.style_constraints),
             "style_context": style_context.metadata(),
+            "run_options": run_options.model_dump(mode="json"),
             "source_count": research.sources_count,
             "video_path": download.local_path,
             "cover_path": cover.cover_path if cover is not None else "",
@@ -115,6 +118,7 @@ class VideoPostOrchestrator:
         download_agent_factory: type[DownloadAgent] = DownloadAgent,
         content_agent_factory: type[ContentAgent] = ContentAgent,
         cover_agent_factory: type[CoverAgent] = CoverAgent,
+        run_options: VideoPostRunOptions | None = None,
     ) -> None:
         self.workspace_root = workspace_root or PathConfig.ORCHESTRATION_RUN_DIR
         self.delivery_sender = delivery_sender
@@ -122,6 +126,7 @@ class VideoPostOrchestrator:
         self.download_agent_factory = download_agent_factory
         self.content_agent_factory = content_agent_factory
         self.cover_agent_factory = cover_agent_factory
+        self.run_options = run_options or VideoPostRunOptions()
 
     async def run(
         self,
@@ -135,6 +140,11 @@ class VideoPostOrchestrator:
     ) -> ResultEnvelope[DeliveryPackage]:
         brief = build_request_brief(request)
         style_context = style_context or StyleContext.from_request(request)
+        resolved_run_options = (
+            run_options
+            if isinstance(run_options, VideoPostRunOptions)
+            else self.run_options
+        )
         resolved_run_id = run_id or f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{_safe_slug(brief.topic)}"
         workspace = WorkflowWorkspace.create(
             root_dir=self.workspace_root,
@@ -144,10 +154,12 @@ class VideoPostOrchestrator:
             audience=brief.audience,
         )
 
-        research = await self.research_agent_factory().forward(
+        research = await self.research_agent_factory(
+            run_options=resolved_run_options.research
+        ).forward(
             topic=brief.execution_text,
             platforms=list(Platform),
-            max_videos=5,
+            max_videos=resolved_run_options.research.max_videos,
             output_dir=workspace.run_dir,
         )
         research_envelope = ResultEnvelope[VideoResearchResult].success(
@@ -236,6 +248,7 @@ class VideoPostOrchestrator:
             content=content,
             cover=cover,
             style_context=style_context,
+            run_options=resolved_run_options,
         )
         envelope = ResultEnvelope[DeliveryPackage].success(
             agent_name="review_delivery_agent",

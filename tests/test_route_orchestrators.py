@@ -33,6 +33,8 @@ from src.orchestration.run_options import (
     ArticleImageRunOptions,
     ArticlePostRunOptions,
     ArticleResearchRunOptions,
+    VideoPostRunOptions,
+    VideoResearchRunOptions,
 )
 from src.orchestration.video_route import VideoPostOrchestrator
 
@@ -144,6 +146,9 @@ class FakeArticleImageAgent:
 
 
 class FakeVideoResearchAgent:
+    def __init__(self, run_options=None) -> None:
+        self.run_options = run_options
+
     async def forward(
         self,
         topic: str,
@@ -163,6 +168,30 @@ class FakeVideoResearchAgent:
                 )
             ],
             keywords=["视频"],
+        )
+
+
+class OptionsRecordingVideoResearchAgent(FakeVideoResearchAgent):
+    seen_run_options = None
+    seen_max_videos = None
+
+    def __init__(self, run_options=None) -> None:
+        super().__init__(run_options=run_options)
+        type(self).seen_run_options = run_options
+
+    async def forward(
+        self,
+        topic: str,
+        platforms: list[Platform],
+        max_videos: int = 5,
+        output_dir: Path | None = None,
+    ) -> VideoResearchResult:
+        type(self).seen_max_videos = max_videos
+        return await super().forward(
+            topic=topic,
+            platforms=platforms,
+            max_videos=max_videos,
+            output_dir=output_dir,
         )
 
 
@@ -312,3 +341,31 @@ async def test_video_post_orchestrator_runs_specialist_agents_into_delivery_enve
     assert result.payload.title == "视频混剪灵感整理方案"
     assert [artifact.artifact_type for artifact in result.payload.artifacts] == ["video", "image"]
     assert sender.sent[0][1] == "chat-video"
+
+
+@pytest.mark.anyio
+async def test_video_post_orchestrator_passes_run_options_to_research_agent(tmp_path: Path) -> None:
+    OptionsRecordingVideoResearchAgent.seen_run_options = None
+    OptionsRecordingVideoResearchAgent.seen_max_videos = None
+    run_options = VideoPostRunOptions(
+        research=VideoResearchRunOptions(max_iterations=1, max_videos=1),
+    )
+    orchestrator = VideoPostOrchestrator(
+        workspace_root=tmp_path,
+        research_agent_factory=OptionsRecordingVideoResearchAgent,
+        download_agent_factory=FakeDownloadAgent,
+        content_agent_factory=FakeVideoContentAgent,
+        cover_agent_factory=FakeCoverAgent,
+        run_options=run_options,
+    )
+
+    result = await orchestrator.run(
+        ConversationRequest(topic="视频混剪灵感", audience="剪辑新手"),
+        run_id="run-video-options",
+    )
+
+    assert OptionsRecordingVideoResearchAgent.seen_run_options is run_options.research
+    assert OptionsRecordingVideoResearchAgent.seen_max_videos == 1
+    assert result.payload is not None
+    assert result.payload.metadata["run_options"]["research"]["max_iterations"] == 1
+    assert result.payload.metadata["run_options"]["research"]["max_videos"] == 1

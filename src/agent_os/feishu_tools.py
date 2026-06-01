@@ -20,7 +20,7 @@ class AgentOSFeishuTools:
         self.notifier = notifier or get_feishu_notifier()
         self.translator = translator or FeishuInteractionTranslator(notifier=self.notifier)
 
-    async def ask_single_choice(
+    async def feishu_ask_single_choice(
         self,
         session: object,
         *,
@@ -45,7 +45,7 @@ class AgentOSFeishuTools:
         )
         return reply
 
-    async def ask_multi_select(
+    async def feishu_ask_multi_select(
         self,
         session: object,
         *,
@@ -74,7 +74,7 @@ class AgentOSFeishuTools:
         )
         return reply
 
-    async def send_progress(
+    async def feishu_send_progress(
         self,
         session: object,
         message: str,
@@ -89,7 +89,7 @@ class AgentOSFeishuTools:
             summary=summary,
         )
 
-    async def send_delivery_summary(
+    async def feishu_send_delivery_summary(
         self,
         session: object,
         envelope: ResultEnvelope[DeliveryPackage],

@@ -9,7 +9,7 @@ from src.agent_os.specialist_tools import (
 )
 from src.agent_os.tools import AgentToolContext
 from src.orchestration.conversation import ContentRoute, ConversationRequest
-from src.orchestration.run_options import ArticlePostRunOptions, ImagePostRunOptions
+from src.orchestration.run_options import ArticlePostRunOptions, ImagePostRunOptions, VideoPostRunOptions
 from src.orchestration.schemas import DeliveryPackage, ResultEnvelope
 
 
@@ -172,3 +172,27 @@ async def test_route_tool_applies_research_max_items_to_article_route_options() 
     assert route_options.research.max_source_pages == 1
     assert route_options.research.min_source_pages == 1
     assert route_options.research.min_unique_domains == 1
+
+
+@pytest.mark.anyio
+async def test_route_tool_applies_research_max_items_to_video_route_options() -> None:
+    video_runner = FakeRouteRunner("video_post")
+    registry = build_route_tool_registry(video_runner=video_runner)
+    spec = TaskRunSpec(
+        objective="低预算视频实测",
+        route=ContentRoute.VIDEO_POST,
+        topic="雨天通勤包必备清单短视频",
+        run_options=RunOptions(research=ResearchRunOptionsSpec(max_items=1)),
+    )
+
+    result = await registry.execute(
+        "execute_video_post",
+        AgentToolContext(run_id="run-1", chat_id="chat-1"),
+        spec=spec.model_dump(mode="json"),
+    )
+
+    route_options = video_runner.calls[0]["kwargs"]["run_options"]
+    assert result.envelope.status == "success"
+    assert isinstance(route_options, VideoPostRunOptions)
+    assert route_options.research.max_iterations == 1
+    assert route_options.research.max_videos == 1

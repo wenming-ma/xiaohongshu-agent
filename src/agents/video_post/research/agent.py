@@ -13,6 +13,7 @@ from ....utils.logger import get_logger
 from ....config.settings import RetryConfig, PathConfig
 from ...shared import create_shared_playwright_mcp_server
 from ...shared.utils.tail_soft_limit import build_tail_soft_limit_history_processor
+from ....orchestration.run_options import VideoResearchRunOptions
 
 from .validator import VideoSearchValidator, VideoListQualityFilter
 from .prompts import research_system_prompt, research_user_prompt
@@ -36,7 +37,8 @@ class ResearchAgent(BaseAgent):
     role = "跨平台视频研究员"
     goal = "在 X/Instagram/Facebook/TikTok 搜索高质量视频"
 
-    def __init__(self):
+    def __init__(self, run_options: VideoResearchRunOptions | None = None):
+        self.run_options = run_options or VideoResearchRunOptions()
         self.init_mcp_server()
         super().__init__()
         self.init_validators()
@@ -64,12 +66,13 @@ class ResearchAgent(BaseAgent):
         )
 
     def init_validators(self) -> None:
-        self.search_validator = VideoSearchValidator(min_videos=5)
+        self.search_validator = VideoSearchValidator(min_videos=self.run_options.max_videos)
         self.quality_filter = VideoListQualityFilter(
             pass_score=70.0,
             min_quality_videos=DEFAULT_MIN_QUALITY_VIDEOS,
         )
-        self.max_iterations = MAX_ITERATIONS
+        self.quality_filter.min_quality_videos = self.run_options.min_quality_videos
+        self.max_iterations = self.run_options.max_iterations
         self._accumulated_quality_videos: list[VideoSource] = []
         self._filtered_sources: list[VideoSource] | None = None
 

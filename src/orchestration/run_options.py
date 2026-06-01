@@ -112,3 +112,17 @@ class ArticlePostRunOptions(BaseModel):
     research: ArticleResearchRunOptions = Field(default_factory=ArticleResearchRunOptions)
     content: ArticleContentRunOptions = Field(default_factory=ArticleContentRunOptions)
     image: ArticleImageRunOptions = Field(default_factory=ArticleImageRunOptions)
+
+
+class VideoResearchRunOptions(BaseModel):
+    """Runtime knobs for one video research-agent invocation."""
+
+    max_iterations: int = Field(default=10, ge=1)
+    max_videos: int = Field(default=5, ge=1)
+    min_quality_videos: int = Field(default=10, ge=1)
+
+
+class VideoPostRunOptions(BaseModel):
+    """Route-level runtime options passed to video specialist agents."""
+
+    research: VideoResearchRunOptions = Field(default_factory=VideoResearchRunOptions)

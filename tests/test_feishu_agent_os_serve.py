@@ -506,6 +506,14 @@ def test_default_agent_os_registry_exposes_routes_resources_and_feishu_tools() -
     assert "restart_background_agent_task" in tool_names
     assert "cancel_background_agent_task" in tool_names
 
+    feishu_tool_names = {
+        tool.name
+        for tool in registry._tools.values()
+        if tool.category == "feishu"
+    }
+    assert feishu_tool_names
+    assert all(name.startswith("feishu_") for name in feishu_tool_names)
+
 
 @pytest.mark.anyio
 async def test_feishu_multi_select_tool_renders_form_and_returns_reply() -> None:

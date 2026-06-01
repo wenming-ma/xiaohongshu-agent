@@ -9,6 +9,8 @@ from src.orchestration.run_options import (
     ImagePostRunOptions,
     ImageRunOptions,
     ResearchRunOptions,
+    VideoPostRunOptions,
+    VideoResearchRunOptions,
 )
 from src.orchestration.schemas import DeliveryPackage, ResultEnvelope
 
@@ -140,6 +142,19 @@ def _route_run_options_from_task_spec(task_spec: TaskRunSpec, route: ContentRout
                 }
             )
         return ArticlePostRunOptions(research=ArticleResearchRunOptions(**research_updates))
+
+    if route == ContentRoute.VIDEO_POST:
+        research_updates: dict[str, Any] = {}
+        if task_spec.run_options.research.max_items is not None:
+            research_budget = task_spec.run_options.research.max_items
+            research_updates.update(
+                {
+                    "max_iterations": research_budget,
+                    "max_videos": research_budget,
+                    "min_quality_videos": research_budget,
+                }
+            )
+        return VideoPostRunOptions(research=VideoResearchRunOptions(**research_updates))
 
     return None
 
