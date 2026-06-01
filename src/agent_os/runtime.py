@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from pathlib import Path
 from typing import Protocol
 
 from .schemas import AgentOSEvent, EventPriority
@@ -45,6 +46,20 @@ class MainAgentRuntime:
             self._pending.append(event)
             return
         self._enqueue_event(event)
+
+    def ingest_text(self, text: str, *, priority: EventPriority = "asap") -> None:
+        self.ingest_event(AgentOSEvent.text(text, priority=priority))
+
+    def ingest_event_from_image(
+        self,
+        image_path: Path,
+        *,
+        caption: str = "",
+        priority: EventPriority = "asap",
+    ) -> None:
+        self.ingest_event(
+            AgentOSEvent.image(str(image_path), caption=caption, priority=priority)
+        )
 
     def flush(self) -> None:
         while self._run is not None and self._pending:
