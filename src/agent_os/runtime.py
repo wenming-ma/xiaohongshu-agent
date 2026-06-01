@@ -2,13 +2,31 @@ from __future__ import annotations
 
 from collections import deque
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from .schemas import AgentOSEvent, EventPriority
 
 
 class SupportsMainAgentRun(Protocol):
     def enqueue(self, text: str, *, priority: str = "asap") -> None: ...
+
+
+class PydanticAgentRunAdapter:
+    def __init__(self, agent_run: Any) -> None:
+        self.agent_run = agent_run
+        self.cancelled = False
+
+    def enqueue(self, text: str, *, priority: str = "asap") -> None:
+        self.agent_run.enqueue(text, priority=priority)
+
+    def reset_session(self) -> None:
+        self.cancel_current_task()
+
+    def cancel_current_task(self) -> None:
+        self.cancelled = True
+        cancel = getattr(self.agent_run, "cancel", None)
+        if callable(cancel):
+            cancel()
 
 
 class MainAgentRuntime:

@@ -12,7 +12,7 @@ from .schemas import (
     TaskRunSpec,
     TaskStepSpec,
 )
-from .runtime import MainAgentRuntime
+from .runtime import MainAgentRuntime, PydanticAgentRunAdapter
 from .tools import AgentTool, AgentToolContext, AgentToolRegistry
 from .store import AgentOSStore
 from .specialist_tools import build_route_tool_registry, conversation_request_from_task_spec
@@ -36,6 +36,7 @@ __all__ = [
     "TaskRunSpec",
     "TaskStepSpec",
     "MainAgentRuntime",
+    "PydanticAgentRunAdapter",
     "AgentTool",
     "AgentToolContext",
     "AgentToolRegistry",

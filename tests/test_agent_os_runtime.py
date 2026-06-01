@@ -81,3 +81,14 @@ def test_runtime_interrupt_cancels_current_task_and_enqueues_control_message() -
 
     assert run.cancel_calls == 1
     assert run.enqueued == [("[用户控制事件]\naction: interrupt", "asap")]
+
+
+def test_runtime_attach_run_flushes_pending_in_order() -> None:
+    runtime = MainAgentRuntime()
+    run = FakeAgentRun()
+
+    runtime.ingest_text("第一条")
+    runtime.ingest_text("第二条", priority="when_idle")
+    runtime.attach_run(run)
+
+    assert run.enqueued == [("第一条", "asap"), ("第二条", "when_idle")]

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from src.agent_os.main_agent import create_main_agent
 from src.agent_os.runtime import MainAgentRuntime
 from src.agent_os.store import AgentOSStore
 from src.agent_os.tools import AgentToolRegistry
@@ -20,6 +21,7 @@ class FeishuAgentOSService:
     runtime: MainAgentRuntime
     tool_registry: AgentToolRegistry
     store: AgentOSStore
+    main_agent: Any
 
     async def serve_forever(self) -> None:
         await self.notifier.start_polling()
@@ -39,6 +41,7 @@ def create_service(*, notifier: Any | None = None) -> FeishuAgentOSService:
         runtime=MainAgentRuntime(),
         tool_registry=AgentToolRegistry(),
         store=AgentOSStore(Path("output") / "agent-os"),
+        main_agent=create_main_agent(),
     )
 
 
