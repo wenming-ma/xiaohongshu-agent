@@ -49,6 +49,28 @@ def test_parse_natural_language_style_clause_as_user_constraints() -> None:
     ]
 
 
+def test_parse_explicit_style_and_per_image_requirements_from_free_text() -> None:
+    request = parse_conversation_request(
+        "发一条关于出国留学的图文帖子，图片至少10张，"
+        "图片风格必须是末日废土风格，每张图片都必须要有人物出现。"
+    )
+
+    assert request.image_count == 10
+    assert request.style_constraints == [
+        "末日废土风格",
+        "每张图片都必须要有人物出现",
+    ]
+
+
+def test_parse_explicit_per_image_requirement_without_keyword_style_extraction() -> None:
+    request = parse_conversation_request(
+        "做 4 张探店图，每张图片都必须要有真实顾客出现，现场氛围自然。"
+    )
+
+    assert request.image_count == 4
+    assert request.style_constraints == ["每张图片都必须要有真实顾客出现"]
+
+
 def test_parse_image_count_from_explicit_bare_number_field() -> None:
     request = parse_conversation_request(
         "主题：纯色背景通勤面试穿搭；受众：通勤女性；图片数：3；风格：纯色背景、无人物。"

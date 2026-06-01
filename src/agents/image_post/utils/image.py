@@ -73,10 +73,16 @@ def calculate_grouping_params(
         )
         return target_groups, 1, 1, target_groups >= item_count
 
-    target_groups = min(
-        max_detail_images,
-        max(ImageConfig.MIN_DETAIL_IMAGES, math.ceil(item_count / ImageConfig.ENTITIES_PER_DETAIL))
-    )
+    if requested_image_count is not None:
+        requested_detail_images = max(0, requested_image_count - 1)
+        target_groups = min(max_detail_images, item_count, requested_detail_images)
+        if target_groups <= 0:
+            return 0, ImageConfig.ENTITIES_PER_DETAIL, ImageConfig.MAX_GROUP_SIZE_CAP, True
+    else:
+        target_groups = min(
+            max_detail_images,
+            max(ImageConfig.MIN_DETAIL_IMAGES, math.ceil(item_count / ImageConfig.ENTITIES_PER_DETAIL))
+        )
     if target_groups > 0:
         target_group_size = math.ceil(item_count / target_groups)
     else:

@@ -9,7 +9,7 @@ from src.agents.image_post.image.template_agent import (
 )
 from src.agents.image_post.image.prompts import image_system_prompt
 from src.agents.image_post.schemas import ImageGenContext, ImageQualityReview, ResearchItem, ResearchResult, XHSContent
-from src.agents.image_post.utils.image import groups_to_image_specs
+from src.agents.image_post.utils.image import calculate_grouping_params, groups_to_image_specs
 from src.orchestration.run_options import ImageRunOptions
 
 
@@ -48,6 +48,19 @@ class _RecordingTemplateSelector:
 class _FailingTemplateSelector:
     async def select_template(self, **_kwargs):
         raise RuntimeError("template directory missing")
+
+
+def test_calculate_grouping_params_uses_requested_count_for_general_image_posts() -> None:
+    target_groups, target_group_size, max_group_size_cap, require_all_items = calculate_grouping_params(
+        20,
+        requested_image_count=10,
+        single_item_per_image=False,
+    )
+
+    assert target_groups == 9
+    assert target_group_size >= 3
+    assert max_group_size_cap >= target_group_size
+    assert require_all_items is True
 
 
 class _RecordingImageClient:

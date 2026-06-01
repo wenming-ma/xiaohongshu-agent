@@ -11,9 +11,14 @@ _REFERENCE_IMAGE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _INSERTED_IMAGE_PATH_PATTERN = re.compile(r"^\s*path\s*[:=：]\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
-_NATURAL_STYLE_PATTERN = re.compile(r"风格\s*(?:是|为|要|需要|希望|偏向|走)\s*([^；;\n。]+)")
+_NATURAL_STYLE_PATTERN = re.compile(
+    r"(?:图片)?风格\s*(?:必须(?:是|为|要)?|是|为|要|需要|希望|偏向|走|采用|使用|用|固定为)\s*([^；;\n。]+)"
+)
 _BACKGROUND_CONSTRAINT_PATTERN = re.compile(r"((?:背景|底色)[^；;\n。]*(?:纯色|颜色|色彩|浅蓝|奶油白|鼠尾草绿)[^；;\n。]*)")
 _NEGATIVE_CONSTRAINT_PATTERN = re.compile(r"((?:不要|不需要|避免|禁止)[^；;\n。]+)")
+_PER_IMAGE_REQUIREMENT_PATTERN = re.compile(
+    r"((?:每张|每一张)(?:图|图片)[^，,；;\n。]*(?:必须|都要|需要|要有|要出现)[^，,；;\n。]*)"
+)
 
 _CHINESE_NUMBERS = {
     "一": 1,
@@ -158,15 +163,16 @@ def _extract_style_constraints(text: str, explicit: str | None) -> list[str]:
     natural_style_match = None if explicit else _NATURAL_STYLE_PATTERN.search(text)
     if natural_style_match:
         style_source = natural_style_match.group(1)
-    if not style_source:
-        return []
 
     items = []
-    for item in re.split(r"[,，、]", style_source):
-        _append_unique(items, item)
-    for match in _BACKGROUND_CONSTRAINT_PATTERN.finditer(text):
-        _append_unique(items, match.group(1))
-    for match in _NEGATIVE_CONSTRAINT_PATTERN.finditer(text):
+    if style_source:
+        for item in re.split(r"[,，、]", style_source):
+            _append_unique(items, item)
+        for match in _BACKGROUND_CONSTRAINT_PATTERN.finditer(text):
+            _append_unique(items, match.group(1))
+        for match in _NEGATIVE_CONSTRAINT_PATTERN.finditer(text):
+            _append_unique(items, match.group(1))
+    for match in _PER_IMAGE_REQUIREMENT_PATTERN.finditer(text):
         _append_unique(items, match.group(1))
     return items
 

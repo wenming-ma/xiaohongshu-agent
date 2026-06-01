@@ -432,15 +432,18 @@ async def test_image_workflow_pads_explicit_single_look_count_when_grouping_is_s
 
 
 @pytest.mark.anyio
-async def test_image_workflow_does_not_fabricate_images_when_requested_count_exceeds_groups(tmp_path: Path) -> None:
+async def test_image_workflow_pads_explicit_image_count_when_grouping_is_short(tmp_path: Path) -> None:
     seen_groups: list[dict[str, object]] = []
 
     async def run_research(**kwargs) -> ResultEnvelope[ResearchResult]:
         return ResultEnvelope[ResearchResult].success(
             agent_name="research_agent",
             payload=ResearchResult(
-                summary="调研完成",
-                items=[ResearchItem(title="item-1", content="核心信息")],
+                summary="降级研究只保留了用户约束和受众",
+                items=[
+                    ResearchItem(title="用户约束", content="用户明确要 5 张末日废土风留学图，每张都有人物"),
+                    ResearchItem(title="受众", content="准备出国留学的人群"),
+                ],
                 keywords=[],
                 sources=[],
             ),
@@ -452,8 +455,8 @@ async def test_image_workflow_does_not_fabricate_images_when_requested_count_exc
     async def run_grouping(**kwargs) -> ResultEnvelope[GroupingResult]:
         return ResultEnvelope[GroupingResult].success(
             agent_name="grouping_agent",
-            payload=GroupingResult(groups=[GroupingItem(title="核心图", indices=[0])]),
-            summary="grouping ok",
+            payload=GroupingResult(groups=[GroupingItem(title="创作总览", indices=[0, 1])]),
+            summary="grouping short",
             run_id=kwargs["run_id"],
             step_id="grouping",
         )
@@ -462,12 +465,12 @@ async def test_image_workflow_does_not_fabricate_images_when_requested_count_exc
         return ResultEnvelope[XHSContent].success(
             agent_name="content_agent",
             payload=XHSContent(
-                title="核心信息图文内容测试",
+                title="5张废土风留学图文内容测试",
                 body=(
-                    "这是一条用于测试图片数量策略的内容。"
-                    "当用户要求的图片数量超过实际分组数量时，系统应尊重分组结果，"
-                    "只生成已有分组可以支撑的图片，不应该额外补充空白或虚构图片。"
-                    "这样可以避免下游图片提示词缺少素材，也避免交付包看起来凑数。"
+                    "这是一条用于测试图片数量策略的内容。用户明确要求五张图片，"
+                    "每张图片都必须是末日废土风格，并且每张图片都要有人物出现。"
+                    "即使调研或分组降级只给出一个总览分组，执行层也要补足五个图片任务槽位，"
+                    "让图片 Agent 根据用户原始要求、正文和风格约束生成不同画面。"
                 ),
                 hashtags=["测试"],
                 call_to_action="查看即可。",
@@ -519,14 +522,23 @@ async def test_image_workflow_does_not_fabricate_images_when_requested_count_exc
     )
 
     await runner.run(
-        topic="测试主题",
-        audience="测试受众",
-        run_id="run-no-filler",
+        topic="出国留学废土风图文",
+        audience="准备出国留学的人群",
+        run_id="run-explicit-padding",
         workspace_dir=tmp_path,
         image_count=5,
     )
 
-    assert [group["image_type"] for group in seen_groups] == ["cover", "detail_1"]
+    assert [group["image_type"] for group in seen_groups] == [
+        "cover",
+        "detail_1",
+        "detail_2",
+        "detail_3",
+        "detail_4",
+    ]
+    assert seen_groups[2]["indices"] == []
+    assert "第3张" in str(seen_groups[2]["title"])
+    assert "用户明确要求的第3张图片" in str(seen_groups[2]["desc"])
 
 
 @pytest.mark.anyio
