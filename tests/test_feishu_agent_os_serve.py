@@ -418,6 +418,53 @@ async def test_background_task_tool_uses_current_user_text_for_omitted_runtime_a
 
 
 @pytest.mark.anyio
+async def test_background_task_tool_uses_current_user_text_for_reference_image_path(tmp_path) -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    reference = tmp_path / "reference-look.png"
+    reference.write_bytes(b"png")
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="execute_image_post",
+            description="Fake image specialist",
+            execute=fake_specialist_tool,
+            category="specialist",
+        )
+    )
+    task_manager = module.AgentOSTaskManager(tool_registry=registry)
+    module._register_task_tools(registry, task_manager=task_manager)
+
+    result = await registry.execute(
+        "start_background_agent_task",
+        AgentToolContext(
+            run_id="run-1",
+            metadata={
+                "current_user_text": (
+                    f"参考图路径：{reference}；图片数量=1；最终只发飞书。"
+                )
+            },
+        ),
+        task_type="image_post",
+        objective="创建参考图穿搭图文",
+        topic="参考图穿搭",
+    )
+    await task_manager.wait_for_all()
+
+    task_summary = result.envelope.payload
+    spec = task_manager.get_task(task_summary["task_id"]).params["spec"]
+    assert result.envelope.status == "success"
+    assert spec["reference_images"] == [
+        {
+            "artifact_type": "image",
+            "label": "reference_1",
+            "path": str(reference.resolve()),
+            "mime_type": "image/png",
+            "metadata": {},
+        }
+    ]
+
+
+@pytest.mark.anyio
 async def test_background_task_tool_rejects_empty_route_request_without_starting_task() -> None:
     module = importlib.import_module("src.apps.feishu_agent_os.serve")
     registry = AgentToolRegistry()
@@ -495,6 +542,8 @@ def test_default_agent_os_registry_exposes_routes_resources_and_feishu_tools() -
     assert "execute_video_post" in tool_names
     assert "list_skills" in tool_names
     assert "search_prompt_templates" in tool_names
+    assert "list_local_files" in tool_names
+    assert "read_local_text_file" in tool_names
     assert "feishu_ask_single_choice" in tool_names
     assert "feishu_ask_multi_select" in tool_names
     assert "feishu_send_progress" in tool_names

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import mimetypes
 from pathlib import Path
+from typing import Any
 
 
 class AgentOSResourceTools:
@@ -45,3 +47,42 @@ class AgentOSResourceTools:
         if root not in resolved.parents and resolved != root:
             raise ValueError(f"Prompt template path is outside prompt root: {path}")
         return resolved.read_text(encoding="utf-8")
+
+    def list_local_files(
+        self,
+        path: str,
+        *,
+        glob: str = "*",
+        recursive: bool = False,
+        limit: int = 80,
+    ) -> list[dict[str, Any]]:
+        root = Path(path).expanduser().resolve()
+        if not root.exists():
+            raise FileNotFoundError(f"Local path does not exist: {path}")
+
+        candidates = [root] if root.is_file() else (
+            root.rglob(glob) if recursive else root.glob(glob)
+        )
+        files: list[dict[str, Any]] = []
+        for candidate in sorted(candidates):
+            resolved = candidate.resolve()
+            mime_type, _ = mimetypes.guess_type(str(resolved))
+            files.append(
+                {
+                    "path": str(resolved),
+                    "name": resolved.name,
+                    "type": "directory" if resolved.is_dir() else "file",
+                    "size": 0 if resolved.is_dir() else resolved.stat().st_size,
+                    "mime_type": mime_type or "",
+                }
+            )
+            if len(files) >= max(1, min(limit, 500)):
+                break
+        return files
+
+    def read_local_text_file(self, path: str, *, max_chars: int = 12000) -> str:
+        resolved = Path(path).expanduser().resolve()
+        if not resolved.is_file():
+            raise FileNotFoundError(f"Local text file does not exist: {path}")
+        text = resolved.read_text(encoding="utf-8", errors="ignore")
+        return text[: max(1, max_chars)]

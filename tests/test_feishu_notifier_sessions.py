@@ -167,3 +167,38 @@ def test_session_wait_event_preserves_structured_control_event():
     assert event.kind == "control"
     assert event.action == "new_session"
     assert event.text == "__control__:new_session"
+
+
+def test_session_form_submit_button_has_required_name_field():
+    notifier = _build_notifier()
+    captured = {}
+
+    session = SimpleNamespace(
+        handle=SimpleNamespace(session_id="sess-active"),
+        chat_id="chat-1",
+        ensure_active=lambda: asyncio.sleep(0),
+        update_phase=lambda phase, summary=None: asyncio.sleep(0),
+    )
+
+    async def fake_send_card_message_raw(card, chat_id=None):
+        captured["card"] = card
+        captured["chat_id"] = chat_id
+        return "msg-1"
+
+    notifier.send_card_message_raw = fake_send_card_message_raw
+
+    asyncio.run(
+        notifier.send_session_form_card(
+            session,
+            "请选择图片约束",
+            [{"name": "style_pure_color", "text": "纯色背景"}],
+            phase="clarify_style",
+        )
+    )
+
+    form = captured["card"]["body"]["elements"][0]
+    submit_button = form["elements"][-1]
+    assert submit_button["tag"] == "button"
+    assert submit_button["form_action_type"] == "submit"
+    assert submit_button["name"] == "submit"
+    assert submit_button["behaviors"][0]["value"]["session_id"] == "sess-active"

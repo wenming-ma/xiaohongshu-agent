@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import mimetypes
 import os
 import re
 import sys
@@ -377,6 +378,34 @@ def _register_resource_tools(registry: AgentToolRegistry) -> None:
     async def read_prompt_template(ctx: AgentToolContext, *, path: str) -> AgentToolResult:
         return _tool_success(ctx, "resource_tools", "prompt_template", resources.read_prompt_template(path))
 
+    async def list_local_files(
+        ctx: AgentToolContext,
+        *,
+        path: str,
+        glob: str = "*",
+        recursive: bool = False,
+        limit: int = 80,
+    ) -> AgentToolResult:
+        return _tool_success(
+            ctx,
+            "resource_tools",
+            "local_files",
+            resources.list_local_files(path, glob=glob, recursive=recursive, limit=limit),
+        )
+
+    async def read_local_text_file(
+        ctx: AgentToolContext,
+        *,
+        path: str,
+        max_chars: int = 12000,
+    ) -> AgentToolResult:
+        return _tool_success(
+            ctx,
+            "resource_tools",
+            "local_text_file",
+            resources.read_local_text_file(path, max_chars=max_chars),
+        )
+
     registry.register(
         AgentTool(
             name="list_skills",
@@ -406,6 +435,25 @@ def _register_resource_tools(registry: AgentToolRegistry) -> None:
             name="read_prompt_template",
             description="Read a versioned prompt template from the prompt library.",
             execute=read_prompt_template,
+            category="resource",
+        )
+    )
+    registry.register(
+        AgentTool(
+            name="list_local_files",
+            description=(
+                "List files in a user-provided local file or folder path. "
+                "Use this before turning a folder into concrete artifact paths."
+            ),
+            execute=list_local_files,
+            category="resource",
+        )
+    )
+    registry.register(
+        AgentTool(
+            name="read_local_text_file",
+            description="Read a user-provided local text file path with a max_chars cap.",
+            execute=read_local_text_file,
             category="resource",
         )
     )
@@ -799,7 +847,7 @@ def _build_task_spec_from_direct_params(
 
     reference_images = params.get("reference_images")
     if reference_images:
-        spec["reference_images"] = reference_images
+        spec["reference_images"] = _coerce_reference_image_refs(reference_images)
 
     run_options = params.get("run_options")
     if isinstance(run_options, dict):
@@ -834,6 +882,8 @@ def _lift_task_spec_aliases(spec_input: Any, outer_params: dict[str, Any]) -> An
     spec = dict(spec_input)
     for source in (spec_input, outer_params):
         _lift_runtime_aliases_into_spec(spec, source)
+    if "reference_images" in spec:
+        spec["reference_images"] = _coerce_reference_image_refs(spec["reference_images"])
     return spec
 
 
@@ -881,8 +931,8 @@ def _lift_runtime_aliases_into_spec(spec: dict[str, Any], source: dict[str, Any]
         spec["run_options"] = normalized_run_options
 
 
-def _extract_runtime_aliases_from_text(text: str) -> dict[str, int]:
-    aliases: dict[str, int] = {}
+def _extract_runtime_aliases_from_text(text: str) -> dict[str, Any]:
+    aliases: dict[str, Any] = {}
     patterns = {
         "image_count": [
             r"(?:图片数量|图片数|image_count|num_images|count)\s*[=:：]\s*(\d+)",
@@ -901,7 +951,73 @@ def _extract_runtime_aliases_from_text(text: str) -> dict[str, int]:
             if match:
                 aliases[key] = int(match.group(1))
                 break
+    reference_images = _reference_image_refs_from_text(text)
+    if reference_images:
+        aliases["reference_images"] = reference_images
     return aliases
+
+
+def _reference_image_refs_from_text(text: str) -> list[dict[str, Any]]:
+    suffixes = "png|jpg|jpeg|webp|gif|bmp|tif|tiff"
+    patterns = [
+        rf"[A-Za-z]:\\[^；;\]\n\r]+?\.({suffixes})",
+        rf"/[^；;\]\n\r]+?\.({suffixes})",
+    ]
+    paths: list[str] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            raw_path = match.group(0).strip().rstrip("，,。.)）]")
+            if raw_path and raw_path not in paths:
+                paths.append(raw_path)
+    return _coerce_reference_image_refs(paths)
+
+
+def _coerce_reference_image_refs(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        stripped = value.strip().strip("[]")
+        raw_items = [
+            item.strip().strip("'\"")
+            for item in re.split(r"\s*[,\n]\s*", stripped)
+            if item.strip()
+        ]
+        if not raw_items:
+            raw_items = [stripped]
+        return _coerce_reference_image_refs(raw_items)
+    if isinstance(value, dict):
+        path = _coerce_text(value.get("path"))
+        if not path:
+            return []
+        return [_reference_image_ref(path, label=_coerce_text(value.get("label")))]
+    if isinstance(value, list | tuple | set):
+        refs: list[dict[str, Any]] = []
+        for item in value:
+            if isinstance(item, dict):
+                path = _coerce_text(item.get("path"))
+                if path:
+                    refs.append(_reference_image_ref(path, label=_coerce_text(item.get("label"))))
+            else:
+                path = _coerce_text(item)
+                if path:
+                    refs.append(_reference_image_ref(path))
+        for index, ref in enumerate(refs, start=1):
+            if not ref["label"]:
+                ref["label"] = f"reference_{index}"
+        return refs
+    return []
+
+
+def _reference_image_ref(path: str, *, label: str = "") -> dict[str, Any]:
+    resolved = Path(path).expanduser().resolve()
+    mime_type, _ = mimetypes.guess_type(str(resolved))
+    return {
+        "artifact_type": "image",
+        "label": label,
+        "path": str(resolved),
+        "mime_type": mime_type or "",
+        "metadata": {},
+    }
 
 
 def _route_from_background_tool_name(tool_name: str) -> str | None:

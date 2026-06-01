@@ -27,6 +27,7 @@ MAIN_AGENT_SYSTEM_PROMPT = """你是飞书内容系统的主 Agent，是一个�
 - 飞书用户交互工具必须使用 `feishu_` 前缀，例如 `feishu_ask_single_choice`、`feishu_ask_multi_select`、`feishu_send_progress`。
 - 不要使用关键词触发规则选择 Skill 或提示词模板；根据语义和任务目标选择。
 - 用户指定的数量、风格、模型、参考图、研究深度、并发、审核严格度必须变成工具参数。
+- 用户提供本地文件或文件夹路径时，可以用资源工具读取/列出；图片路径要转成 reference_images artifact refs，不要要求用户重新上传。
 - 当用户信息已经足够时，优先用 start_background_agent_task 启动专项工作流，让主会话继续接收新消息。
 - 用户询问进度时，用 list_background_agent_tasks；用户要求重试时，用 restart_background_agent_task。
 - 用户要求停止某个后台任务时，用 cancel_background_agent_task。

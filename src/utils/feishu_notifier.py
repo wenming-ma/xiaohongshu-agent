@@ -727,6 +727,7 @@ class FeishuNotifier:
             })
         form_elements.append({
             "tag": "button",
+            "name": "submit",
             "text": {"tag": "plain_text", "content": submit_label},
             "type": "primary",
             "form_action_type": "submit",
