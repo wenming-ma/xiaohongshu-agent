@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from src.orchestration.autonomous import resolve_autonomous_request
 from src.orchestration.conversation import ConversationRequest
-from src.orchestration.controller import FeishuContentOrchestrator
 
 
 def test_resolve_autonomous_request_builds_researchable_topic_for_generic_request() -> None:
@@ -29,15 +28,3 @@ def test_resolve_autonomous_request_uses_specific_audience_when_available() -> N
 
     assert resolved.topic == "适合通勤女性的近期小红书高互动内容趋势"
 
-
-def test_orchestrator_prepares_autonomous_request_before_planning() -> None:
-    orchestrator = FeishuContentOrchestrator()
-    request = ConversationRequest(
-        topic="飞书内容探索",
-        audience="泛人群",
-        message="你自己决定今天适合发什么内容，最后发到飞书。",
-    )
-
-    resolved = orchestrator.prepare_request(request)
-
-    assert resolved.topic == "近期小红书高互动生活方式内容趋势"

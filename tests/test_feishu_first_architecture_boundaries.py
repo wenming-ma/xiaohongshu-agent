@@ -74,12 +74,8 @@ def test_formal_content_routes_exclude_outfit_and_styled_image_modules() -> None
     assert not (REPO_ROOT / "src" / "agents" / STYLED_MODULE).exists()
 
 
-def test_feishu_orchestrator_compatibility_app_module_remains() -> None:
-    app_root = REPO_ROOT / "src" / "apps" / "feishu_orchestrator"
-    assert app_root.is_dir()
-    assert (app_root / "run.py").is_file()
-    assert (app_root / "serve.py").is_file()
-
+def test_old_feishu_orchestrator_app_module_is_removed() -> None:
+    assert not (REPO_ROOT / "src" / "apps" / "feishu_orchestrator").exists()
     assert not (REPO_ROOT / "workshop" / "image_post").exists()
     assert not (REPO_ROOT / "workshop" / "article_post").exists()
     assert not (REPO_ROOT / "workshop" / "video_post").exists()
@@ -87,13 +83,25 @@ def test_feishu_orchestrator_compatibility_app_module_remains() -> None:
     assert not (REPO_ROOT / "workshop" / OUTFIT_MODULE).exists()
 
 
-def test_formal_feishu_entrypoint_delegates_to_agent_os() -> None:
-    serve_path = REPO_ROOT / "src" / "apps" / "feishu_orchestrator" / "serve.py"
-    text = serve_path.read_text(encoding="utf-8")
+def test_fixed_route_feishu_orchestrator_is_removed() -> None:
+    assert not (REPO_ROOT / "src" / "orchestration" / "controller.py").exists()
+    assert not (REPO_ROOT / "src" / "orchestration" / "feishu_workflow.py").exists()
 
-    assert "src.apps.feishu_agent_os.serve" in text
-    assert "FeishuContentOrchestrator()" not in text
-    assert "FeishuWorkflowService(" not in text
+    forbidden = [
+        "FeishuContentOrchestrator",
+        "FeishuContentPlanner",
+        "FeishuWorkflowService",
+        "feishu_orchestrator",
+    ]
+    offenders: list[str] = []
+    for path in _tracked_text_files("src", "tests"):
+        if path.name == "test_feishu_first_architecture_boundaries.py":
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for needle in forbidden:
+            if needle in text:
+                offenders.append(f"{path.relative_to(REPO_ROOT).as_posix()} contains {needle}")
+    assert offenders == []
 
 
 def test_design_system_first_class_citizens_are_documented_and_present() -> None:
@@ -115,7 +123,7 @@ def test_agent_docs_identify_agent_os_as_formal_feishu_runtime() -> None:
 
     assert "Feishu Agent OS Runtime" in agents_doc
     assert "src/apps/feishu_agent_os/" in agents_doc
-    assert "compatibility shim" in agents_doc
+    assert "compatibility shim" not in agents_doc
     assert "runtime parameters" in agents_doc
     assert "keeps the main conversation context" in agents_doc
 

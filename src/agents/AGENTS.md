@@ -28,8 +28,9 @@ These citizens are composed at runtime. The Planner Agent or a specialist Agent 
 ## Feishu Agent OS Runtime
 
 - The formal Feishu entrypoint is `src/apps/feishu_agent_os/`.
-- The main Agent is a long-running task planner and organizer. It receives user events, keeps the main conversation context, builds `TaskRunSpec`, and calls specialist Agent tools.
-- `src/apps/feishu_orchestrator/` is a compatibility shim for older commands only; it must not own formal orchestration logic.
+- The main Agent is a long-running task planner and organizer. It receives user events, keeps the main conversation context, asks clarifying questions, builds `TaskRunSpec`, and starts specialist Agent workflows as background tasks when the request is clear enough.
+- Background tasks are independent task flows managed by Agent OS. Multiple workflows may run concurrently while the main Agent continues chatting, accepts status/restart commands, and reports task errors to Feishu.
+- Do not add compatibility app modules for old route orchestrators; new app entrypoints must go through Agent OS.
 - Specialist Agents remain atomic under `src/agents/<content_type>/<phase>/`.
 - User requirements become runtime parameters passed to tools. Config files provide defaults, not fixed behavior.
 

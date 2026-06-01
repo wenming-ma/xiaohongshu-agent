@@ -15,6 +15,7 @@ from .schemas import (
 from .runtime import MainAgentRuntime, PydanticAgentRunAdapter
 from .tools import AgentTool, AgentToolContext, AgentToolRegistry
 from .store import AgentOSStore
+from .task_manager import AgentOSTaskManager, AgentOSTaskRecord
 from .specialist_tools import build_route_tool_registry, conversation_request_from_task_spec
 from .resource_tools import AgentOSResourceTools
 from .feishu_tools import AgentOSFeishuTools
@@ -41,6 +42,8 @@ __all__ = [
     "AgentToolContext",
     "AgentToolRegistry",
     "AgentOSStore",
+    "AgentOSTaskManager",
+    "AgentOSTaskRecord",
     "build_route_tool_registry",
     "conversation_request_from_task_spec",
     "AgentOSResourceTools",

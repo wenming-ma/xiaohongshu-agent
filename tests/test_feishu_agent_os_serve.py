@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import importlib
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -53,6 +57,32 @@ def test_create_service_wires_runtime_and_notifier() -> None:
 
     assert hasattr(service, "runtime")
     assert hasattr(service, "serve_forever")
+    assert service.task_manager is not None
+
+
+def test_serve_module_loads_dotenv_before_feishu_config_initializes() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    if not (repo_root / ".env").exists():
+        pytest.skip("local .env is required for import-order regression coverage")
+
+    env = dict(os.environ)
+    for key in ("FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_CHAT_ID"):
+        env.pop(key, None)
+    code = (
+        "import src.apps.feishu_agent_os.serve\n"
+        "from src.config.settings import FeishuConfig\n"
+        "print('ready=' + str(bool(FeishuConfig.APP_ID and FeishuConfig.APP_SECRET and FeishuConfig.CHAT_ID)))\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=repo_root,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert "ready=True" in result.stdout
 
 
 @pytest.mark.anyio
@@ -112,3 +142,6 @@ def test_default_agent_os_registry_exposes_routes_resources_and_feishu_tools() -
     assert "list_skills" in tool_names
     assert "search_prompt_templates" in tool_names
     assert "ask_feishu_single_choice" in tool_names
+    assert "start_background_agent_task" in tool_names
+    assert "list_background_agent_tasks" in tool_names
+    assert "restart_background_agent_task" in tool_names

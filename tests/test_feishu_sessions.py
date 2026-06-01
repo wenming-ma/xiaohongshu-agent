@@ -154,7 +154,7 @@ def test_session_manager_reclaims_abandoned_owner_pid(tmp_path, monkeypatch):
     )
     second = manager.acquire(
         chat_id="chat-1",
-        workflow="feishu_orchestrator",
+        workflow="feishu_agent_os",
         owner_pid=os.getpid(),
         current_phase="startup",
         summary="new run",
@@ -165,7 +165,7 @@ def test_session_manager_reclaims_abandoned_owner_pid(tmp_path, monkeypatch):
     assert second.reason == "expired_session"
 
     state = manager.assert_active(second.session)
-    assert state.workflow == "feishu_orchestrator"
+    assert state.workflow == "feishu_agent_os"
     assert state.session_id == second.session.session_id
     assert state.challenger_session_id is None
 
@@ -192,7 +192,7 @@ def test_session_manager_reclaims_reused_owner_pid(tmp_path, monkeypatch):
     process_starts[1001] = "reused-by-other-process"
     second = manager.acquire(
         chat_id="chat-1",
-        workflow="feishu_orchestrator",
+        workflow="feishu_agent_os",
         owner_pid=1002,
         current_phase="startup",
         summary="new run",
@@ -203,7 +203,7 @@ def test_session_manager_reclaims_reused_owner_pid(tmp_path, monkeypatch):
     assert second.reason == "expired_session"
 
     state = manager.assert_active(second.session)
-    assert state.workflow == "feishu_orchestrator"
+    assert state.workflow == "feishu_agent_os"
     assert state.session_id == second.session.session_id
     assert state.challenger_session_id is None
 
@@ -220,7 +220,7 @@ def test_session_manager_reclaims_stale_takeover_pending_session(tmp_path):
     )
     manager.acquire(
         chat_id="chat-1",
-        workflow="feishu_orchestrator",
+        workflow="feishu_agent_os",
         owner_pid=1002,
         current_phase="startup",
         summary="stale challenger",
@@ -235,7 +235,7 @@ def test_session_manager_reclaims_stale_takeover_pending_session(tmp_path):
 
     recovered = manager.acquire(
         chat_id="chat-1",
-        workflow="feishu_orchestrator",
+        workflow="feishu_agent_os",
         owner_pid=1003,
         current_phase="startup",
         summary="new run",
@@ -246,7 +246,7 @@ def test_session_manager_reclaims_stale_takeover_pending_session(tmp_path):
     assert recovered.reason == "expired_session"
 
     state = manager.assert_active(recovered.session)
-    assert state.workflow == "feishu_orchestrator"
+    assert state.workflow == "feishu_agent_os"
     assert state.session_id == recovered.session.session_id
     assert state.challenger_session_id is None
 
@@ -266,7 +266,7 @@ async def test_waiting_challenger_auto_promotes_when_active_owner_dies(tmp_path,
     )
     second = manager.acquire(
         chat_id="chat-1",
-        workflow="feishu_orchestrator",
+        workflow="feishu_agent_os",
         owner_pid=1002,
         current_phase="startup",
         summary="new request",

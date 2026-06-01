@@ -10,6 +10,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - python-dotenv is a runtime dependency.
+    load_dotenv = None
+
+if load_dotenv is not None:
+    load_dotenv(PROJECT_ROOT / ".env")
+
 from src.agent_os.feishu_tools import AgentOSFeishuTools
 from src.agent_os.main_agent import MainAgentDependencies, create_main_agent
 from src.agent_os.resource_tools import AgentOSResourceTools
@@ -17,6 +30,7 @@ from src.agent_os.runtime import MainAgentRuntime
 from src.agent_os.schemas import AgentOSEvent, AgentToolResult
 from src.agent_os.specialist_tools import build_route_tool_registry
 from src.agent_os.store import AgentOSStore
+from src.agent_os.task_manager import AgentOSTaskManager
 from src.agent_os.tools import AgentTool, AgentToolContext, AgentToolRegistry
 from src.config.settings import PathConfig
 from src.orchestration.article_route import ArticlePostOrchestrator
@@ -28,8 +42,6 @@ from src.orchestration.video_route import VideoPostOrchestrator
 from src.utils.feishu_interactive_workflow import acquire_interactive_session
 from src.utils.feishu_notifier import get_feishu_notifier
 from src.utils.logger import get_logger, setup_logging
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 FEISHU_INTERACTIVE_ENV_DEFAULTS = {
     "RESEARCH_MIN_POSTS_RESEARCHED": "3",
@@ -54,9 +66,6 @@ FEISHU_INTERACTIVE_ENV_DEFAULTS = {
     "VERTEX_AI_IMAGE_MAX_CONCURRENCY": "1",
     "IMAGE_GROUPING_REVIEW_MAX_RETRIES": "3",
 }
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 logger = get_logger(__name__)
 
@@ -178,6 +187,12 @@ class AgentOSMainAgentSession:
 
 
 @dataclass
+class AgentOSToolRuntime:
+    registry: AgentToolRegistry
+    task_manager: AgentOSTaskManager
+
+
+@dataclass
 class FeishuAgentOSService:
     notifier: Any
     runtime: MainAgentRuntime
@@ -185,6 +200,7 @@ class FeishuAgentOSService:
     store: AgentOSStore
     main_agent: Any
     acquire_session: Any = acquire_interactive_session
+    task_manager: AgentOSTaskManager | None = None
     agent_session: AgentOSMainAgentSession | None = None
     session: object | None = None
 
@@ -196,11 +212,19 @@ class FeishuAgentOSService:
         logger.info("Feishu Agent OS 已启动，等待事件输入...")
         while True:
             try:
-                event = await self._wait_for_next_event()
-                self.store.append_event(event)
-                self.runtime.ingest_event(event)
+                await self.process_next_event_once()
             except Exception:
                 logger.exception("处理 Feishu Agent OS 事件失败")
+
+    async def process_next_event_once(self) -> AgentOSEvent | None:
+        if self.agent_session is None:
+            await self._start_main_agent_session()
+        event = await self._wait_for_next_event()
+        if event is None:
+            return None
+        self.store.append_event(event)
+        self.runtime.ingest_event(event)
+        return event
 
     async def _start_main_agent_session(self) -> None:
         if self.agent_session is not None:
@@ -237,7 +261,7 @@ class FeishuAgentOSService:
             logger.warning("无法获取 Feishu Agent OS 会话: %s", blocked_reason)
         return session
 
-    async def _wait_for_next_event(self) -> AgentOSEvent:
+    async def _wait_for_next_event(self) -> AgentOSEvent | None:
         if self.session is not None and hasattr(self.notifier, "wait_for_session_event"):
             feishu_event = await self.notifier.wait_for_session_event(
                 self.session,
@@ -251,16 +275,24 @@ class FeishuAgentOSService:
             return AgentOSEvent.image(str(Path(image_path)), caption=text)
         return self._text_or_control_event(text)
 
-    def _event_from_feishu_input(self, event: Any) -> AgentOSEvent:
-        action = getattr(event, "action", None) or parse_control_action_text(getattr(event, "text", "") or "")
-        if action:
-            return AgentOSEvent.control(action)
+    def _event_from_feishu_input(self, event: Any) -> AgentOSEvent | None:
+        text = getattr(event, "text", "") or ""
+        event_action = getattr(event, "action", None)
+        control_action = (
+            event_action
+            if event_action in {"new_session", "interrupt", "follow_up"}
+            else parse_control_action_text(text)
+        )
+        if control_action:
+            return AgentOSEvent.control(control_action)
         image_path = getattr(event, "image_path", None)
         if image_path is not None:
-            return AgentOSEvent.image(str(Path(image_path)), caption=getattr(event, "text", "") or "")
-        return self._text_or_control_event(getattr(event, "text", "") or "")
+            return AgentOSEvent.image(str(Path(image_path)), caption=text)
+        return self._text_or_control_event(text)
 
-    def _text_or_control_event(self, text: str) -> AgentOSEvent:
+    def _text_or_control_event(self, text: str) -> AgentOSEvent | None:
+        if not text.strip():
+            return None
         action = parse_control_action_text(text)
         if action:
             return AgentOSEvent.control(action)
@@ -291,7 +323,7 @@ def configure_windows_stdio() -> None:
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 
-def build_default_tool_registry(*, notifier: Any | None = None) -> AgentToolRegistry:
+def build_default_tool_runtime(*, notifier: Any | None = None) -> AgentOSToolRuntime:
     delivery_sender = DeliveryPackageSender(notifier=notifier) if notifier is not None else None
     registry = build_route_tool_registry(
         image_runner=ImagePostOrchestrator(delivery_sender=delivery_sender),
@@ -300,7 +332,13 @@ def build_default_tool_registry(*, notifier: Any | None = None) -> AgentToolRegi
     )
     _register_resource_tools(registry)
     _register_feishu_tools(registry, notifier=notifier)
-    return registry
+    task_manager = AgentOSTaskManager(tool_registry=registry, notifier=notifier)
+    _register_task_tools(registry, task_manager=task_manager)
+    return AgentOSToolRuntime(registry=registry, task_manager=task_manager)
+
+
+def build_default_tool_registry(*, notifier: Any | None = None) -> AgentToolRegistry:
+    return build_default_tool_runtime(notifier=notifier).registry
 
 
 def _register_resource_tools(registry: AgentToolRegistry) -> None:
@@ -419,6 +457,81 @@ def _register_feishu_tools(registry: AgentToolRegistry, *, notifier: Any | None)
     )
 
 
+def _register_task_tools(
+    registry: AgentToolRegistry,
+    *,
+    task_manager: AgentOSTaskManager,
+) -> None:
+    async def start_background_agent_task(
+        ctx: AgentToolContext,
+        *,
+        tool_name: str,
+        params: dict[str, Any] | None = None,
+    ) -> AgentToolResult:
+        try:
+            task = task_manager.start_task(tool_name, ctx, params=params or {})
+        except Exception as exc:
+            return _tool_error(ctx, "agent_os_task_manager", str(exc))
+        return _tool_success(
+            ctx,
+            "agent_os_task_manager",
+            "start_background_agent_task",
+            task.to_summary(),
+        )
+
+    async def list_background_agent_tasks(ctx: AgentToolContext) -> AgentToolResult:
+        return _tool_success(
+            ctx,
+            "agent_os_task_manager",
+            "list_background_agent_tasks",
+            [task.to_summary() for task in task_manager.list_tasks()],
+        )
+
+    async def restart_background_agent_task(
+        ctx: AgentToolContext,
+        *,
+        task_id: str,
+    ) -> AgentToolResult:
+        try:
+            task = task_manager.restart_task(task_id)
+        except Exception as exc:
+            return _tool_error(ctx, "agent_os_task_manager", str(exc))
+        return _tool_success(
+            ctx,
+            "agent_os_task_manager",
+            "restart_background_agent_task",
+            task.to_summary(),
+        )
+
+    registry.register(
+        AgentTool(
+            name="start_background_agent_task",
+            description=(
+                "Start a specialist Agent workflow in the background so the main "
+                "Feishu chat can continue."
+            ),
+            execute=start_background_agent_task,
+            category="task",
+        )
+    )
+    registry.register(
+        AgentTool(
+            name="list_background_agent_tasks",
+            description="List background Agent workflow status for the current runtime.",
+            execute=list_background_agent_tasks,
+            category="task",
+        )
+    )
+    registry.register(
+        AgentTool(
+            name="restart_background_agent_task",
+            description="Restart a previous background Agent workflow with its original parameters.",
+            execute=restart_background_agent_task,
+            category="task",
+        )
+    )
+
+
 def _tool_success(
     ctx: AgentToolContext,
     agent_name: str,
@@ -455,18 +568,27 @@ def create_service(
     notifier: Any | None = None,
     runtime: MainAgentRuntime | None = None,
     tool_registry: AgentToolRegistry | None = None,
+    task_manager: AgentOSTaskManager | None = None,
     store: AgentOSStore | None = None,
     main_agent: Any | None = None,
     acquire_session: Any = acquire_interactive_session,
 ) -> FeishuAgentOSService:
     resolved_notifier = notifier or get_feishu_notifier()
+    if tool_registry is None:
+        tool_runtime = build_default_tool_runtime(notifier=resolved_notifier)
+        resolved_registry = tool_runtime.registry
+        resolved_task_manager = task_manager or tool_runtime.task_manager
+    else:
+        resolved_registry = tool_registry
+        resolved_task_manager = task_manager
     return FeishuAgentOSService(
         notifier=resolved_notifier,
         runtime=runtime or MainAgentRuntime(),
-        tool_registry=tool_registry or build_default_tool_registry(notifier=resolved_notifier),
+        tool_registry=resolved_registry,
         store=store or AgentOSStore(Path("output") / "agent-os"),
         main_agent=main_agent or create_main_agent(),
         acquire_session=acquire_session,
+        task_manager=resolved_task_manager,
     )
 
 
