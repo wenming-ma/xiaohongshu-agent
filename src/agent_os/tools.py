@@ -40,11 +40,11 @@ class AgentToolRegistry:
             raise ValueError(f"Duplicate Agent OS tool: {tool.name}")
         self._tools[tool.name] = tool
 
-    def get(self, name: str) -> AgentTool:
+    def get(self, tool_name: str) -> AgentTool:
         try:
-            return self._tools[name]
+            return self._tools[tool_name]
         except KeyError as exc:
-            raise KeyError(f"Unknown Agent OS tool: {name}") from exc
+            raise KeyError(f"Unknown Agent OS tool: {tool_name}") from exc
 
     def describe_tools(self) -> list[dict[str, str]]:
         return [
@@ -58,9 +58,10 @@ class AgentToolRegistry:
 
     async def execute(
         self,
-        name: str,
+        tool_name: str,
         ctx: AgentToolContext,
+        /,
         **params: Any,
     ) -> AgentToolResult:
-        tool = self.get(name)
+        tool = self.get(tool_name)
         return await tool.execute(ctx, **params)

@@ -154,6 +154,23 @@ def test_serve_module_loads_dotenv_before_feishu_config_initializes() -> None:
     assert "ready=True" in result.stdout
 
 
+def test_feishu_service_does_not_replace_formal_route_defaults_with_smoke_budgets() -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+
+    forbidden_budget_keys = {
+        "RESEARCH_MIN_POSTS_RESEARCHED",
+        "RESEARCH_VALIDATION_MAX_RETRIES",
+        "RESEARCH_MAX_NEW_POSTS_PER_ITERATION",
+        "RESEARCH_PER_ITERATION_REQUEST_LIMIT",
+        "RESEARCH_PER_ITERATION_TOOL_CALLS_LIMIT",
+        "ARTICLE_RESEARCH_MAX_ITERATIONS",
+        "ARTICLE_RESEARCH_MAX_SOURCE_PAGES",
+        "ARTICLE_IMAGE_MAX_IMAGES",
+    }
+
+    assert forbidden_budget_keys.isdisjoint(module.FEISHU_INTERACTIVE_ENV_DEFAULTS)
+
+
 @pytest.mark.anyio
 async def test_agent_os_main_session_processes_inserted_messages_sequentially() -> None:
     module = importlib.import_module("src.apps.feishu_agent_os.serve")

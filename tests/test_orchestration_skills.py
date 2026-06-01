@@ -44,3 +44,15 @@ def test_skill_registry_discovers_project_skills_without_runtime_matching(tmp_pa
     ]
 
     assert not hasattr(registry, "match")
+
+
+def test_agent_os_conversation_planning_skill_is_versioned_in_project() -> None:
+    skill_path = Path(".agents/skills/agent-os-conversation-planning/SKILL.md")
+
+    body = skill_path.read_text(encoding="utf-8")
+
+    assert "主 Agent" in body
+    assert "追问" in body
+    assert "后台任务" in body
+    assert "定时" in body
+    assert "follow-up" in body

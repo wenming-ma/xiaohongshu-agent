@@ -389,4 +389,4 @@ async def test_task_summary_exposes_human_readable_runtime_plan() -> None:
 
     summary = task.to_summary()
 
-    assert summary["human_summary"] == "image_post｜雨天通勤包｜图片：自动上限9｜研究：默认｜风格：纯色背景、平铺"
+    assert summary["human_summary"] == "image_post｜雨天通勤包｜图片：自动上限9｜研究：21帖/15轮｜风格：纯色背景、平铺"

@@ -179,11 +179,7 @@ class ResearchAgent(BaseAgent):
                         # Step: 执行研究
                         await self.step(state, iteration)
                         if state.budget_exhausted:
-                            if state.iteration_results:
-                                logger.warning("研究单轮预算耗尽，返回已保存的历史研究结果")
-                                return _merge_results(state.iteration_results, state.tracked_stats)
-                            logger.warning("研究单轮预算耗尽，跳过验证并返回降级研究结果")
-                            return self.finalize(state, iteration + 1)
+                            logger.warning("研究单轮预算耗尽，将使用本轮降级结果参与验证并继续后续轮次")
 
                         # Validate: 验证结果
                         validation = await self.validate(state.current_result)
@@ -223,6 +219,7 @@ class ResearchAgent(BaseAgent):
         logger.info(f"第 {iteration + 1}/{self.max_iterations} 轮研究")
         logger.info("=" * 50)
         state.budget_exhausted = False
+        state.current_result = None
 
         # 构建提示词：首轮用完整研究提示，后续轮次用续研提示
         if iteration == 0:
@@ -264,10 +261,10 @@ class ResearchAgent(BaseAgent):
         """Keep the route moving when a research model/tool loop exhausts its budget."""
         logger.warning("研究单轮预算出口触发，使用降级研究结果继续流程: %s", reason)
         state.budget_exhausted = True
-        state.tracked_stats = state.tracked_stats or {}
-
-        if state.iteration_results and state.current_result is not None:
-            return
+        try:
+            state.tracked_stats = self.navigate_tracker.get_stats()
+        except Exception:
+            state.tracked_stats = state.tracked_stats or {}
 
         tracked_urls = list(state.tracked_stats.get("post_detail_urls") or [])
         sources = [

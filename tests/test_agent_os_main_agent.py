@@ -30,6 +30,8 @@ def test_main_agent_prompt_defines_planner_not_worker_role() -> None:
     assert "feishu_" in MAIN_AGENT_SYSTEM_PROMPT
     assert "本地文件" in MAIN_AGENT_SYSTEM_PROMPT
     assert "文件夹路径" in MAIN_AGENT_SYSTEM_PROMPT
+    assert "agent-os-conversation-planning" in MAIN_AGENT_SYSTEM_PROMPT
+    assert "read_skill" in MAIN_AGENT_SYSTEM_PROMPT
 
 
 def test_main_agent_dependencies_hold_tool_registry() -> None:

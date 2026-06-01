@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from uuid import uuid4
 
-from src.config.settings import ImageConfig
+from src.config.settings import ArticleResearchConfig, ImageConfig, ResearchConfig
 
 from .schemas import AgentToolResult
 from .tools import AgentToolContext, AgentToolRegistry
@@ -336,8 +336,7 @@ def build_human_task_summary(tool_name: str, params: dict[str, Any]) -> str:
 
     image_count = image_options.get("count")
     image_text = f"{image_count}张" if image_count else f"自动上限{ImageConfig.MAX_AUTO_IMAGES}"
-    research_max_items = research_options.get("max_items")
-    research_text = f"最多{research_max_items}项" if research_max_items else "默认"
+    research_text = _research_summary(route, research_options)
     style_text = "、".join(style_constraints) if style_constraints else "默认"
     return f"{route}｜{topic}｜图片：{image_text}｜研究：{research_text}｜风格：{style_text}"
 
@@ -348,3 +347,22 @@ def _route_from_tool_name(tool_name: str) -> str | None:
         "execute_article_post": "article_post",
         "execute_video_post": "video_post",
     }.get(tool_name)
+
+
+def _research_summary(route: str, research_options: dict[str, Any]) -> str:
+    research_max_items = research_options.get("max_items")
+    if research_max_items:
+        if route == "image_post":
+            return f"{research_max_items}帖/{research_max_items}轮"
+        return f"{research_max_items}项/{research_max_items}轮"
+    if route == "image_post":
+        return f"{ResearchConfig.MIN_POSTS_RESEARCHED}帖/{ResearchConfig.VALIDATION_MAX_RETRIES}轮"
+    if route == "article_post":
+        return (
+            f"{ArticleResearchConfig.MIN_SOURCE_PAGES}-"
+            f"{ArticleResearchConfig.MAX_SOURCE_PAGES}源/"
+            f"{ArticleResearchConfig.MAX_ITERATIONS}轮"
+        )
+    if route == "video_post":
+        return "10轮/5视频"
+    return "默认"
