@@ -44,6 +44,13 @@ def test_formal_agents_do_not_include_publish_phase_or_direct_publish_url() -> N
     )
     assert publish_dirs == []
 
+    publish_helpers = sorted(
+        path.relative_to(REPO_ROOT).as_posix()
+        for path in (REPO_ROOT / "src" / "agents").glob("*/utils/publish.py")
+        if path.is_file()
+    )
+    assert publish_helpers == []
+
     forbidden = [
         "creator.xiaohongshu.com/" + "publish",
         "XHS_" + "PUBLISH_URL",
