@@ -27,7 +27,7 @@ from src.agent_os.feishu_tools import AgentOSFeishuTools
 from src.agent_os.main_agent import MainAgentDependencies, create_main_agent
 from src.agent_os.resource_tools import AgentOSResourceTools
 from src.agent_os.runtime import MainAgentRuntime
-from src.agent_os.schemas import AgentOSEvent, AgentToolResult
+from src.agent_os.schemas import AgentOSEvent, AgentToolResult, TaskRunSpec
 from src.agent_os.specialist_tools import build_route_tool_registry
 from src.agent_os.store import AgentOSStore
 from src.agent_os.task_manager import AgentOSTaskManager
@@ -356,14 +356,18 @@ def _register_resource_tools(registry: AgentToolRegistry) -> None:
     async def search_prompt_templates(
         ctx: AgentToolContext,
         *,
-        query: str,
+        query: str = "",
         limit: int = 8,
+        **filters: Any,
     ) -> AgentToolResult:
+        resolved_query = query.strip()
+        if not resolved_query and filters:
+            resolved_query = " ".join(str(value) for value in filters.values() if value)
         return _tool_success(
             ctx,
             "resource_tools",
             "prompt_search",
-            resources.search_prompt_templates(query, limit=limit),
+            resources.search_prompt_templates(resolved_query, limit=limit),
         )
 
     async def read_prompt_template(ctx: AgentToolContext, *, path: str) -> AgentToolResult:
@@ -427,6 +431,31 @@ def _register_feishu_tools(registry: AgentToolRegistry, *, notifier: Any | None)
         )
         return _tool_success(ctx, "feishu_tools", "single_choice", {"reply": reply})
 
+    async def ask_multi_select(
+        ctx: AgentToolContext,
+        *,
+        title: str,
+        options_spec: str,
+        phase: str = "clarify",
+        input_name: str = "",
+        input_placeholder: str = "",
+        submit_label: str = "确认",
+        summary: str | None = None,
+    ) -> AgentToolResult:
+        if ctx.session is None:
+            return _tool_error(ctx, "feishu_tools", "缺少 Feishu 会话，无法渲染多选卡片")
+        reply = await feishu.ask_multi_select(
+            ctx.session,
+            title=title,
+            options_spec=options_spec,
+            phase=phase,
+            input_name=input_name,
+            input_placeholder=input_placeholder,
+            submit_label=submit_label,
+            summary=summary,
+        )
+        return _tool_success(ctx, "feishu_tools", "multi_select", {"reply": reply})
+
     async def send_progress(
         ctx: AgentToolContext,
         *,
@@ -449,6 +478,18 @@ def _register_feishu_tools(registry: AgentToolRegistry, *, notifier: Any | None)
     )
     registry.register(
         AgentTool(
+            name="ask_feishu_multi_select",
+            description=(
+                "Ask the user to select one or more options in Feishu using "
+                "delimited options formatted as label::value||label::value. "
+                "Use this when missing constraints are easier to pick than type."
+            ),
+            execute=ask_multi_select,
+            category="feishu",
+        )
+    )
+    registry.register(
+        AgentTool(
             name="send_feishu_progress",
             description="Send a short progress update to the current Feishu session.",
             execute=send_progress,
@@ -465,11 +506,25 @@ def _register_task_tools(
     async def start_background_agent_task(
         ctx: AgentToolContext,
         *,
-        tool_name: str,
+        tool_name: str = "",
         params: dict[str, Any] | None = None,
+        **extra_params: Any,
     ) -> AgentToolResult:
+        resolved_tool_name = _resolve_background_tool_name(
+            tool_name
+            or str(extra_params.pop("task_type", "") or "")
+            or str(extra_params.pop("route", "") or "")
+            or str(extra_params.pop("content_type", "") or "")
+        )
+        resolved_params = dict(params or {})
+        if extra_params:
+            resolved_params.update(extra_params)
         try:
-            task = task_manager.start_task(tool_name, ctx, params=params or {})
+            task_params = _normalize_background_task_params(
+                resolved_tool_name,
+                resolved_params,
+            )
+            task = task_manager.start_task(resolved_tool_name, ctx, params=task_params)
         except Exception as exc:
             return _tool_error(ctx, "agent_os_task_manager", str(exc))
         return _tool_success(
@@ -503,14 +558,44 @@ def _register_task_tools(
             task.to_summary(),
         )
 
+    async def cancel_background_agent_task(
+        ctx: AgentToolContext,
+        *,
+        task_id: str,
+    ) -> AgentToolResult:
+        try:
+            task = task_manager.cancel_task(task_id)
+        except Exception as exc:
+            return _tool_error(ctx, "agent_os_task_manager", str(exc))
+        return _tool_success(
+            ctx,
+            "agent_os_task_manager",
+            "cancel_background_agent_task",
+            task.to_summary(),
+        )
+
     registry.register(
         AgentTool(
             name="start_background_agent_task",
             description=(
                 "Start a specialist Agent workflow in the background so the main "
-                "Feishu chat can continue."
+                "Feishu chat can continue. Required params: tool_name or task_type, "
+                "plus params.spec as a TaskRunSpec dict. At minimum params.spec "
+                "must include objective; include route, topic, style_constraints, "
+                "run_options.image.count, reference_images, and delivery.target='feishu' "
+                "when the user provided them. Direct aliases such as objective, topic, "
+                "style_constraints, image_count, research_max_items, skill, and prompt_template are accepted "
+                "and normalized into params.spec."
             ),
             execute=start_background_agent_task,
+            category="task",
+        )
+    )
+    registry.register(
+        AgentTool(
+            name="cancel_background_agent_task",
+            description="Cancel a running background Agent workflow by task_id.",
+            execute=cancel_background_agent_task,
             category="task",
         )
     )
@@ -530,6 +615,186 @@ def _register_task_tools(
             category="task",
         )
     )
+
+
+def _resolve_background_tool_name(value: str) -> str:
+    normalized = value.strip()
+    route_aliases = {
+        "image": "execute_image_post",
+        "image_post": "execute_image_post",
+        "article": "execute_article_post",
+        "article_post": "execute_article_post",
+        "video": "execute_video_post",
+        "video_post": "execute_video_post",
+    }
+    return route_aliases.get(normalized, normalized)
+
+
+def _normalize_background_task_params(
+    tool_name: str,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    if "spec" in params:
+        spec_input = params["spec"]
+    elif "task_spec" in params:
+        spec_input = params["task_spec"]
+    else:
+        spec_input = _build_task_spec_from_direct_params(tool_name, params)
+
+    if spec_input is None:
+        raise ValueError(
+            "start_background_agent_task requires params.spec TaskRunSpec or "
+            "direct task details such as objective/topic/message."
+        )
+
+    task_spec = TaskRunSpec.model_validate(spec_input)
+    if task_spec.route is None:
+        route = _route_from_background_tool_name(tool_name)
+        if route:
+            task_spec = TaskRunSpec.model_validate(
+                {**task_spec.model_dump(mode="python"), "route": route}
+            )
+
+    normalized: dict[str, Any] = {"spec": task_spec.model_dump(mode="json")}
+    for key in (
+        "skill",
+        "selected_skill",
+        "prompt_template",
+        "selected_prompt_template",
+        "template",
+    ):
+        if key in params:
+            normalized[key] = params[key]
+    return normalized
+
+
+def _build_task_spec_from_direct_params(
+    tool_name: str,
+    params: dict[str, Any],
+) -> dict[str, Any] | None:
+    objective = _first_present_text(
+        params,
+        "objective",
+        "task",
+        "request",
+        "message",
+        "user_request",
+        "summary",
+        "topic",
+        "title",
+    )
+    if not objective:
+        return None
+
+    spec: dict[str, Any] = {
+        "objective": objective,
+        "route": _route_from_background_tool_name(tool_name),
+        "delivery": {"target": "feishu"},
+    }
+    for field_name in ("topic", "audience"):
+        value = _coerce_text(params.get(field_name))
+        if value:
+            spec[field_name] = value
+
+    constraints = _coerce_text_list(params.get("constraints") or params.get("requirements"))
+    if constraints:
+        spec["constraints"] = constraints
+
+    style_constraints = _coerce_text_list(
+        params.get("style_constraints")
+        or params.get("styles")
+        or params.get("style")
+        or params.get("visual_constraints")
+    )
+    if style_constraints:
+        spec["style_constraints"] = style_constraints
+
+    selected_skills = _coerce_text_list(params.get("selected_skills") or params.get("skill"))
+    if selected_skills:
+        spec["selected_skills"] = selected_skills
+
+    selected_prompt_templates = _coerce_text_list(
+        params.get("selected_prompt_templates")
+        or params.get("prompt_template")
+        or params.get("template")
+    )
+    if selected_prompt_templates:
+        spec["selected_prompt_templates"] = selected_prompt_templates
+
+    reference_images = params.get("reference_images")
+    if reference_images:
+        spec["reference_images"] = reference_images
+
+    run_options = params.get("run_options")
+    if isinstance(run_options, dict):
+        spec["run_options"] = dict(run_options)
+    else:
+        spec["run_options"] = {}
+
+    image_count = params.get("image_count") or params.get("count") or params.get("num_images")
+    if image_count is not None:
+        spec["run_options"].setdefault("image", {})["count"] = image_count
+
+    image_model = params.get("image_model") or params.get("model")
+    if image_model:
+        spec["run_options"].setdefault("image", {})["model"] = image_model
+
+    research_max_items = (
+        params.get("research_max_items")
+        or params.get("max_research_items")
+        or params.get("research_count")
+        or params.get("max_items")
+        or params.get("min_posts_researched")
+    )
+    if research_max_items is not None:
+        spec["run_options"].setdefault("research", {})["max_items"] = research_max_items
+
+    return spec
+
+
+def _route_from_background_tool_name(tool_name: str) -> str | None:
+    route_by_tool = {
+        "execute_image_post": "image_post",
+        "execute_article_post": "article_post",
+        "execute_video_post": "video_post",
+    }
+    return route_by_tool.get(tool_name)
+
+
+def _first_present_text(params: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = _coerce_text(params.get(key))
+        if value:
+            return value
+    return ""
+
+
+def _coerce_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float)):
+        return str(value)
+    return ""
+
+
+def _coerce_text_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        separators = ["\n", "；", ";", "|"]
+        values = [value]
+        for separator in separators:
+            values = [
+                part
+                for item in values
+                for part in item.split(separator)
+            ]
+        return [item.strip() for item in values if item.strip()]
+    if isinstance(value, list | tuple | set):
+        return [text for item in value if (text := _coerce_text(item))]
+    return []
 
 
 def _tool_success(

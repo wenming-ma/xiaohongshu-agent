@@ -95,6 +95,54 @@ async def test_task_manager_can_run_multiple_background_tasks_concurrently() -> 
     assert manager.get_task(second.task_id).status == "succeeded"
 
 
+@pytest.mark.anyio
+async def test_task_manager_serializes_tools_in_same_resource_group() -> None:
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    started: list[str] = []
+
+    async def wait_for_release(ctx: AgentToolContext, **params):
+        started.append(params["title"])
+        if params["title"] == "面试穿搭":
+            first_started.set()
+            await release_first.wait()
+        return await slow_success(ctx, **params)
+
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="execute_image_post",
+            description="Fake image route",
+            execute=wait_for_release,
+            category="specialist",
+            resource_group="rednote_browser",
+        )
+    )
+    manager = AgentOSTaskManager(tool_registry=registry)
+
+    first = manager.start_task(
+        "execute_image_post",
+        AgentToolContext(run_id="run-1"),
+        params={"title": "面试穿搭"},
+    )
+    second = manager.start_task(
+        "execute_image_post",
+        AgentToolContext(run_id="run-2"),
+        params={"title": "约会穿搭"},
+    )
+    await first_started.wait()
+    await asyncio.sleep(0.05)
+
+    assert started == ["面试穿搭"]
+
+    release_first.set()
+    await manager.wait_for_all()
+
+    assert started == ["面试穿搭", "约会穿搭"]
+    assert manager.get_task(first.task_id).status == "succeeded"
+    assert manager.get_task(second.task_id).status == "succeeded"
+
+
 class ProgressNotifier:
     def __init__(self) -> None:
         self.messages: list[dict[str, str | None]] = []
@@ -137,6 +185,45 @@ async def test_task_manager_notifies_feishu_when_background_task_fails() -> None
 
 
 @pytest.mark.anyio
+async def test_task_manager_treats_error_envelope_as_failed_task() -> None:
+    async def return_error_envelope(ctx: AgentToolContext, **_params):
+        return AgentToolResult(
+            envelope=ResultEnvelope[DeliveryPackage].error(
+                agent_name="fake_route",
+                summary="登录预检失败",
+                error_message="login required",
+                run_id=ctx.run_id,
+                step_id="research_access",
+            )
+        )
+
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="execute_image_post",
+            description="Fake image route",
+            execute=return_error_envelope,
+            category="specialist",
+        )
+    )
+    notifier = ProgressNotifier()
+    manager = AgentOSTaskManager(tool_registry=registry, notifier=notifier)
+
+    task = manager.start_task(
+        "execute_image_post",
+        AgentToolContext(run_id="run-1", chat_id="chat-1"),
+        params={"title": "约会穿搭"},
+    )
+    await manager.wait_for_all()
+
+    failed = manager.get_task(task.task_id)
+    assert failed.status == "failed"
+    assert failed.error_message == "login required"
+    assert notifier.messages[-1]["chat_id"] == "chat-1"
+    assert "login required" in notifier.messages[-1]["text"]
+
+
+@pytest.mark.anyio
 async def test_task_manager_restarts_failed_task_with_original_parameters() -> None:
     calls = 0
 
@@ -172,3 +259,38 @@ async def test_task_manager_restarts_failed_task_with_original_parameters() -> N
     assert manager.get_task(original.task_id).status == "failed"
     assert manager.get_task(restarted.task_id).status == "succeeded"
     assert manager.get_task(restarted.task_id).result.envelope.payload.title == "登山穿搭"
+
+
+@pytest.mark.anyio
+async def test_task_manager_cancels_running_background_task() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def wait_forever(ctx: AgentToolContext, **params):
+        started.set()
+        await release.wait()
+        return await slow_success(ctx, **params)
+
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="execute_image_post",
+            description="Fake image route",
+            execute=wait_forever,
+            category="specialist",
+        )
+    )
+    manager = AgentOSTaskManager(tool_registry=registry)
+
+    task = manager.start_task(
+        "execute_image_post",
+        AgentToolContext(run_id="run-1"),
+        params={"title": "面试穿搭"},
+    )
+    await started.wait()
+
+    cancelled = manager.cancel_task(task.task_id)
+    await manager.wait_for_all()
+
+    assert cancelled.task_id == task.task_id
+    assert manager.get_task(task.task_id).status == "cancelled"

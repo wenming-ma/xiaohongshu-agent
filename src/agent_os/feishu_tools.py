@@ -45,6 +45,35 @@ class AgentOSFeishuTools:
         )
         return reply
 
+    async def ask_multi_select(
+        self,
+        session: object,
+        *,
+        title: str,
+        options_spec: str,
+        phase: str,
+        input_name: str = "",
+        input_placeholder: str = "",
+        submit_label: str = "确认",
+        summary: str | None = None,
+    ) -> str:
+        await self.translator.ask_multi_select(
+            session,
+            title=title,
+            options=parse_delimited_options(options_spec),
+            phase=phase,
+            input_name=input_name,
+            input_placeholder=input_placeholder,
+            submit_label=submit_label,
+            summary=summary,
+        )
+        _, reply = await self.notifier.wait_for_session_image_or_text(
+            session,
+            phase=phase,
+            summary=summary,
+        )
+        return reply
+
     async def send_progress(
         self,
         session: object,

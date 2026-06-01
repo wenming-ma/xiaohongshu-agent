@@ -58,6 +58,7 @@ class AgentOSTaskManager:
         self.tool_registry = tool_registry
         self.notifier = notifier
         self._tasks: dict[str, AgentOSTaskRecord] = {}
+        self._resource_locks: dict[str, asyncio.Lock] = {}
 
     def start_task(
         self,
@@ -103,6 +104,17 @@ class AgentOSTaskManager:
             attempt_of=original.task_id,
         )
 
+    def cancel_task(self, task_id: str) -> AgentOSTaskRecord:
+        record = self.get_task(task_id)
+        if record.status != "running":
+            return record
+        if record._asyncio_task is not None and not record._asyncio_task.done():
+            record._asyncio_task.cancel()
+        else:
+            record.status = "cancelled"
+            record.finished_at = _utc_now()
+        return record
+
     async def wait_for_all(self) -> None:
         pending = [
             task._asyncio_task
@@ -113,6 +125,15 @@ class AgentOSTaskManager:
             await asyncio.gather(*pending, return_exceptions=True)
 
     async def _run_task(self, record: AgentOSTaskRecord) -> None:
+        tool = self.tool_registry.get(record.tool_name)
+        if tool.resource_group:
+            lock = self._resource_locks.setdefault(tool.resource_group, asyncio.Lock())
+            async with lock:
+                await self._execute_record(record)
+            return
+        await self._execute_record(record)
+
+    async def _execute_record(self, record: AgentOSTaskRecord) -> None:
         try:
             record.result = await self.tool_registry.execute(
                 record.tool_name,
@@ -131,7 +152,16 @@ class AgentOSTaskManager:
             return
 
         record.status = "succeeded"
+        if record.result.envelope.status != "success":
+            record.status = "failed"
+            record.error_message = (
+                record.result.envelope.error_message
+                or record.result.envelope.summary
+                or "background task returned an error envelope"
+            )
         record.finished_at = _utc_now()
+        if record.status == "failed":
+            await self._notify_failure(record)
 
     async def _notify_failure(self, record: AgentOSTaskRecord) -> None:
         if self.notifier is None:

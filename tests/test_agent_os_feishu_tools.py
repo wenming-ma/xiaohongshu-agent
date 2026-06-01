@@ -9,9 +9,13 @@ from src.orchestration.schemas import DeliveryPackage, ResultEnvelope
 class FakeTranslator:
     def __init__(self) -> None:
         self.single_choice_calls = []
+        self.multi_select_calls = []
 
     async def ask_single_choice(self, session, **kwargs):
         self.single_choice_calls.append({"session": session, **kwargs})
+
+    async def ask_multi_select(self, session, **kwargs):
+        self.multi_select_calls.append({"session": session, **kwargs})
 
 
 class FakeNotifier:
@@ -43,6 +47,29 @@ async def test_feishu_tools_ask_single_choice_uses_translator() -> None:
     assert reply == "__route__:image_post"
     assert translator.single_choice_calls[0]["title"] == "选路线"
     assert len(translator.single_choice_calls[0]["options"]) == 2
+
+
+@pytest.mark.anyio
+async def test_feishu_tools_ask_multi_select_uses_translator() -> None:
+    translator = FakeTranslator()
+    notifier = FakeNotifier()
+    notifier.replies = ["__FORM__:{\"style_pure_color\":true,\"style_no_people\":true}"]
+    tools = AgentOSFeishuTools(notifier=notifier, translator=translator)
+
+    reply = await tools.ask_multi_select(
+        object(),
+        title="选择图片约束",
+        options_spec="纯色背景::style_pure_color||不要人物::style_no_people",
+        phase="clarify_style",
+        input_name="extra_requirements",
+        input_placeholder="也可以补充其他要求",
+        submit_label="按这些要求生成",
+    )
+
+    assert reply.startswith("__FORM__:")
+    assert translator.multi_select_calls[0]["title"] == "选择图片约束"
+    assert translator.multi_select_calls[0]["input_name"] == "extra_requirements"
+    assert len(translator.multi_select_calls[0]["options"]) == 2
 
 
 @pytest.mark.anyio

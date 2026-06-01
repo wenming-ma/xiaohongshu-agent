@@ -10,8 +10,12 @@ from src.agent_os.tools import AgentToolRegistry
 
 def test_main_agent_prompt_defines_planner_not_worker_role() -> None:
     assert "任务规划和组织者" in MAIN_AGENT_SYSTEM_PROMPT
+    assert "长期运行" in MAIN_AGENT_SYSTEM_PROMPT
     assert "不要亲自执行专项任务" in MAIN_AGENT_SYSTEM_PROMPT
     assert "后台任务" in MAIN_AGENT_SYSTEM_PROMPT
+    assert "并发" in MAIN_AGENT_SYSTEM_PROMPT
+    assert "状态" in MAIN_AGENT_SYSTEM_PROMPT
+    assert "重启" in MAIN_AGENT_SYSTEM_PROMPT
     assert "多轮对话" in MAIN_AGENT_SYSTEM_PROMPT
     assert "TaskRunSpec" in MAIN_AGENT_SYSTEM_PROMPT
     assert "飞书" in MAIN_AGENT_SYSTEM_PROMPT

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import os
 import subprocess
@@ -9,6 +10,9 @@ from pathlib import Path
 import pytest
 
 from src.agent_os.main_agent import MainAgentDependencies
+from src.agent_os.schemas import AgentToolResult
+from src.agent_os.tools import AgentTool, AgentToolContext, AgentToolRegistry
+from src.orchestration.schemas import DeliveryPackage, ResultEnvelope
 
 
 class FakeRunResult:
@@ -38,10 +42,36 @@ class FakeAgent:
 class FakeNotifier:
     def __init__(self) -> None:
         self.messages = []
+        self.replies = ["__FORM__:{\"style_pure_color\":true}"]
+        self.form_cards = []
 
     async def send_message(self, text, *, chat_id=None):
         self.messages.append({"text": text, "chat_id": chat_id})
         return "msg-1"
+
+    async def send_session_form_card(self, session, title, checkers, **kwargs):
+        self.form_cards.append(
+            {
+                "session": session,
+                "title": title,
+                "checkers": checkers,
+                **kwargs,
+            }
+        )
+
+    async def wait_for_session_image_or_text(self, session, **kwargs):
+        return None, self.replies.pop(0)
+
+
+async def fake_specialist_tool(ctx: AgentToolContext, **params):
+    envelope = ResultEnvelope[DeliveryPackage].success(
+        agent_name="fake_specialist",
+        payload=DeliveryPackage(route="image_post", title=params["spec"]["objective"]),
+        summary="queued",
+        run_id=ctx.run_id,
+        step_id=ctx.step_id or "fake",
+    )
+    return AgentToolResult(envelope=envelope)
 
 
 def test_feishu_agent_os_serve_module_imports() -> None:
@@ -131,6 +161,189 @@ async def test_agent_os_main_session_reset_discards_conversation_history() -> No
     assert agent.calls[-1]["message_history"] == []
 
 
+@pytest.mark.anyio
+async def test_prompt_template_search_tool_tolerates_agent_filter_params() -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    registry = module.build_default_tool_registry(notifier=FakeNotifier())
+
+    result = await registry.execute(
+        "search_prompt_templates",
+        module.AgentToolContext(run_id="run-1"),
+        query="pure color outfit image prompt",
+        content_type="image_post",
+        style="pure_color_single_look",
+        limit=3,
+    )
+
+    assert result.envelope.status == "success"
+    assert isinstance(result.envelope.payload, list)
+
+
+@pytest.mark.anyio
+async def test_background_task_tool_accepts_task_type_alias() -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="execute_image_post",
+            description="Fake image specialist",
+            execute=fake_specialist_tool,
+            category="specialist",
+        )
+    )
+    task_manager = module.AgentOSTaskManager(tool_registry=registry)
+    module._register_task_tools(registry, task_manager=task_manager)
+
+    result = await registry.execute(
+        "start_background_agent_task",
+        AgentToolContext(run_id="run-1"),
+        task_type="image_post",
+        spec={"objective": "面试穿搭 5 图"},
+    )
+    await task_manager.wait_for_all()
+
+    task_summary = result.envelope.payload
+    assert result.envelope.status == "success"
+    assert task_summary["tool_name"] == "execute_image_post"
+    assert task_manager.get_task(task_summary["task_id"]).status == "succeeded"
+
+
+@pytest.mark.anyio
+async def test_background_task_tool_builds_spec_from_direct_agent_params() -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="execute_image_post",
+            description="Fake image specialist",
+            execute=fake_specialist_tool,
+            category="specialist",
+        )
+    )
+    task_manager = module.AgentOSTaskManager(tool_registry=registry)
+    module._register_task_tools(registry, task_manager=task_manager)
+
+    result = await registry.execute(
+        "start_background_agent_task",
+        AgentToolContext(run_id="run-1"),
+        task_type="image_post",
+        objective="做 5 张面试通勤穿搭图，最后只发飞书",
+        topic="面试通勤穿搭",
+        style_constraints=["纯色背景", "不要模特", "每张图只展示一套衣服"],
+        image_count=5,
+    )
+    await task_manager.wait_for_all()
+
+    task_summary = result.envelope.payload
+    started = task_manager.get_task(task_summary["task_id"])
+    spec = started.params["spec"]
+    assert result.envelope.status == "success"
+    assert spec["objective"] == "做 5 张面试通勤穿搭图，最后只发飞书"
+    assert spec["topic"] == "面试通勤穿搭"
+    assert spec["route"] == "image_post"
+    assert spec["style_constraints"] == ["纯色背景", "不要模特", "每张图只展示一套衣服"]
+    assert spec["run_options"]["image"]["count"] == 5
+    assert started.status == "succeeded"
+
+
+@pytest.mark.anyio
+async def test_background_task_tool_builds_research_budget_from_direct_agent_params() -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="execute_image_post",
+            description="Fake image specialist",
+            execute=fake_specialist_tool,
+            category="specialist",
+        )
+    )
+    task_manager = module.AgentOSTaskManager(tool_registry=registry)
+    module._register_task_tools(registry, task_manager=task_manager)
+
+    result = await registry.execute(
+        "start_background_agent_task",
+        AgentToolContext(run_id="run-1"),
+        task_type="image_post",
+        objective="快速测试 1 张图",
+        research_max_items=3,
+    )
+    await task_manager.wait_for_all()
+
+    task_summary = result.envelope.payload
+    spec = task_manager.get_task(task_summary["task_id"]).params["spec"]
+    assert result.envelope.status == "success"
+    assert spec["run_options"]["research"]["max_items"] == 3
+
+
+@pytest.mark.anyio
+async def test_background_task_tool_rejects_empty_route_request_without_starting_task() -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="execute_image_post",
+            description="Fake image specialist",
+            execute=fake_specialist_tool,
+            category="specialist",
+        )
+    )
+    task_manager = module.AgentOSTaskManager(tool_registry=registry)
+    module._register_task_tools(registry, task_manager=task_manager)
+
+    result = await registry.execute(
+        "start_background_agent_task",
+        AgentToolContext(run_id="run-1"),
+        task_type="image_post",
+    )
+
+    assert result.envelope.status == "error"
+    assert "TaskRunSpec" in (result.envelope.error_message or "")
+    assert task_manager.list_tasks() == []
+
+
+@pytest.mark.anyio
+async def test_cancel_background_task_tool_cancels_running_task() -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    started = asyncio.Event()
+    never_release = asyncio.Event()
+
+    async def wait_until_cancelled(ctx: AgentToolContext, **params):
+        started.set()
+        await never_release.wait()
+
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="execute_image_post",
+            description="Fake image specialist",
+            execute=wait_until_cancelled,
+            category="specialist",
+        )
+    )
+    task_manager = module.AgentOSTaskManager(tool_registry=registry)
+    module._register_task_tools(registry, task_manager=task_manager)
+
+    start_result = await registry.execute(
+        "start_background_agent_task",
+        AgentToolContext(run_id="run-1"),
+        task_type="image_post",
+        objective="取消测试",
+    )
+    task_id = start_result.envelope.payload["task_id"]
+    await started.wait()
+
+    cancel_result = await registry.execute(
+        "cancel_background_agent_task",
+        AgentToolContext(run_id="run-1"),
+        task_id=task_id,
+    )
+    await task_manager.wait_for_all()
+
+    assert cancel_result.envelope.status == "success"
+    assert task_manager.get_task(task_id).status == "cancelled"
+
+
 def test_default_agent_os_registry_exposes_routes_resources_and_feishu_tools() -> None:
     module = importlib.import_module("src.apps.feishu_agent_os.serve")
     registry = module.build_default_tool_registry(notifier=FakeNotifier())
@@ -142,6 +355,42 @@ def test_default_agent_os_registry_exposes_routes_resources_and_feishu_tools() -
     assert "list_skills" in tool_names
     assert "search_prompt_templates" in tool_names
     assert "ask_feishu_single_choice" in tool_names
+    assert "ask_feishu_multi_select" in tool_names
     assert "start_background_agent_task" in tool_names
     assert "list_background_agent_tasks" in tool_names
     assert "restart_background_agent_task" in tool_names
+    assert "cancel_background_agent_task" in tool_names
+
+
+@pytest.mark.anyio
+async def test_feishu_multi_select_tool_renders_form_and_returns_reply() -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    notifier = FakeNotifier()
+    registry = module.build_default_tool_registry(notifier=notifier)
+    session = object()
+
+    result = await registry.execute(
+        "ask_feishu_multi_select",
+        AgentToolContext(run_id="run-1", session=session),
+        title="选择图片约束",
+        options_spec="纯色背景::style_pure_color||不要人物::style_no_people",
+        phase="clarify_style",
+        input_name="extra_requirements",
+        input_placeholder="其他要求",
+        submit_label="确认",
+    )
+
+    assert result.envelope.status == "success"
+    assert result.envelope.payload["reply"].startswith("__FORM__:")
+    assert notifier.form_cards[0]["title"] == "选择图片约束"
+    assert notifier.form_cards[0]["checkers"][0]["name"] == "style_pure_color"
+
+
+def test_task_tool_description_includes_spec_contract_for_main_agent() -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    registry = module.build_default_tool_registry(notifier=FakeNotifier())
+    descriptions = {item["name"]: item["description"] for item in registry.describe_tools()}
+
+    assert "params.spec" in descriptions["start_background_agent_task"]
+    assert "objective" in descriptions["start_background_agent_task"]
+    assert "delimited" in descriptions["ask_feishu_multi_select"]

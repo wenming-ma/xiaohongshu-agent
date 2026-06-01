@@ -28,6 +28,7 @@ class AgentTool:
     description: str
     execute: AgentToolExecute
     category: str = "specialist"
+    resource_group: str | None = None
 
 
 @dataclass
