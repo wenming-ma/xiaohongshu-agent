@@ -87,6 +87,15 @@ def test_feishu_orchestrator_is_promoted_to_formal_app_module() -> None:
     assert not (REPO_ROOT / "workshop" / OUTFIT_MODULE).exists()
 
 
+def test_formal_feishu_entrypoint_delegates_to_agent_os() -> None:
+    serve_path = REPO_ROOT / "src" / "apps" / "feishu_orchestrator" / "serve.py"
+    text = serve_path.read_text(encoding="utf-8")
+
+    assert "src.apps.feishu_agent_os.serve" in text
+    assert "FeishuContentOrchestrator()" not in text
+    assert "FeishuWorkflowService(" not in text
+
+
 def test_design_system_first_class_citizens_are_documented_and_present() -> None:
     agents_doc = (REPO_ROOT / "src" / "agents" / "AGENTS.md").read_text(encoding="utf-8")
 

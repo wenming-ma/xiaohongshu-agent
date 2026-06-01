@@ -14,6 +14,7 @@ class AgentToolContext(BaseModel):
     task_id: str | None = None
     step_id: str | None = None
     chat_id: str | None = None
+    session: Any | None = None
     workspace_dir: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 

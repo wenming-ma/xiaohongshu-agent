@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 
 
@@ -21,9 +22,9 @@ def test_apply_feishu_interactive_defaults_preserves_explicit_env(monkeypatch) -
 
     module.apply_feishu_interactive_defaults()
 
-    assert module.os.environ["RESEARCH_MIN_POSTS_RESEARCHED"] == "3"
-    assert module.os.environ["RESEARCH_VALIDATION_MAX_RETRIES"] == "9"
-    assert module.os.environ["VERTEX_AI_VISION_MAX_CONCURRENCY"] == "3"
+    assert os.environ["RESEARCH_MIN_POSTS_RESEARCHED"] == "3"
+    assert os.environ["RESEARCH_VALIDATION_MAX_RETRIES"] == "9"
+    assert os.environ["VERTEX_AI_VISION_MAX_CONCURRENCY"] == "3"
 
 
 def test_apply_feishu_interactive_defaults_allow_formal_research_retry(monkeypatch) -> None:
@@ -33,4 +34,11 @@ def test_apply_feishu_interactive_defaults_allow_formal_research_retry(monkeypat
 
     module.apply_feishu_interactive_defaults()
 
-    assert module.os.environ["RESEARCH_VALIDATION_MAX_RETRIES"] == "3"
+    assert os.environ["RESEARCH_VALIDATION_MAX_RETRIES"] == "3"
+
+
+def test_feishu_orchestrator_serve_delegates_to_agent_os() -> None:
+    module = _load_serve_module()
+
+    assert module.create_service.__module__ == "src.apps.feishu_agent_os.serve"
+    assert module.main_async.__module__ == "src.apps.feishu_agent_os.serve"

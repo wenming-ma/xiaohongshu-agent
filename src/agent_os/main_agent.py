@@ -32,6 +32,7 @@ class MainAgentDependencies(BaseModel):
     tool_registry: AgentToolRegistry = Field(default_factory=AgentToolRegistry)
     session_id: str | None = None
     chat_id: str | None = None
+    session: Any | None = None
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -65,6 +66,7 @@ def create_main_agent() -> Agent[MainAgentDependencies, str]:
             task_id=task_id,
             step_id=step_id,
             chat_id=ctx.deps.chat_id,
+            session=ctx.deps.session,
         )
         return await ctx.deps.tool_registry.execute(tool_name, tool_ctx, **params)
 
