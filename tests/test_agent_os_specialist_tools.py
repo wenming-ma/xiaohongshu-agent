@@ -9,7 +9,7 @@ from src.agent_os.specialist_tools import (
 )
 from src.agent_os.tools import AgentToolContext
 from src.orchestration.conversation import ContentRoute, ConversationRequest
-from src.orchestration.run_options import ImagePostRunOptions
+from src.orchestration.run_options import ArticlePostRunOptions, ImagePostRunOptions
 from src.orchestration.schemas import DeliveryPackage, ResultEnvelope
 
 
@@ -146,3 +146,29 @@ async def test_route_tool_applies_research_max_items_as_fast_budget() -> None:
     assert route_options.research.min_key_infos == 2
     assert route_options.research.min_cases == 2
     assert route_options.research.max_new_posts_per_iteration == 2
+
+
+@pytest.mark.anyio
+async def test_route_tool_applies_research_max_items_to_article_route_options() -> None:
+    article_runner = FakeRouteRunner("article_post")
+    registry = build_route_tool_registry(article_runner=article_runner)
+    spec = TaskRunSpec(
+        objective="低预算文章实测",
+        route=ContentRoute.ARTICLE_POST,
+        topic="雨天通勤包必备清单",
+        run_options=RunOptions(research=ResearchRunOptionsSpec(max_items=1)),
+    )
+
+    result = await registry.execute(
+        "execute_article_post",
+        AgentToolContext(run_id="run-1", chat_id="chat-1"),
+        spec=spec.model_dump(mode="json"),
+    )
+
+    route_options = article_runner.calls[0]["kwargs"]["run_options"]
+    assert result.envelope.status == "success"
+    assert isinstance(route_options, ArticlePostRunOptions)
+    assert route_options.research.max_iterations == 1
+    assert route_options.research.max_source_pages == 1
+    assert route_options.research.min_source_pages == 1
+    assert route_options.research.min_unique_domains == 1

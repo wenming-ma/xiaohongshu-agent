@@ -75,6 +75,33 @@ class FakeNotifier:
         return None, self.replies.pop(0)
 
 
+class FakeRuntime:
+    def __init__(self) -> None:
+        self.events = []
+
+    def ingest_event(self, event) -> None:
+        self.events.append(event)
+
+    def attach_run(self, run) -> None:
+        self.run = run
+
+
+class FakeStore:
+    def __init__(self) -> None:
+        self.events = []
+
+    def append_event(self, event) -> None:
+        self.events.append(event)
+
+
+class FakeIdleSession:
+    def __init__(self, order: list[str]) -> None:
+        self.order = order
+
+    async def wait_for_idle(self) -> None:
+        self.order.append("idle")
+
+
 async def fake_specialist_tool(ctx: AgentToolContext, **params):
     envelope = ResultEnvelope[DeliveryPackage].success(
         agent_name="fake_specialist",
@@ -171,6 +198,30 @@ async def test_agent_os_main_session_reset_discards_conversation_history() -> No
 
     assert agent.calls[-1]["text"] == "新会话"
     assert agent.calls[-1]["message_history"] == []
+
+
+@pytest.mark.anyio
+async def test_service_waits_for_main_agent_idle_before_polling_next_feishu_event() -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    order: list[str] = []
+    service = module.FeishuAgentOSService(
+        notifier=FakeNotifier(),
+        runtime=FakeRuntime(),
+        tool_registry=AgentToolRegistry(),
+        store=FakeStore(),
+        main_agent=object(),
+        agent_session=FakeIdleSession(order),
+    )
+
+    async def fake_wait_for_next_event():
+        order.append("wait")
+        return None
+
+    service._wait_for_next_event = fake_wait_for_next_event
+
+    await service.process_next_event_once()
+
+    assert order == ["idle", "wait"]
 
 
 @pytest.mark.anyio

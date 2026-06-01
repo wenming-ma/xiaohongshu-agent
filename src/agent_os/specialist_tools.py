@@ -3,7 +3,13 @@ from __future__ import annotations
 from typing import Any
 
 from src.orchestration.conversation import ContentRoute, ConversationRequest
-from src.orchestration.run_options import ImagePostRunOptions, ImageRunOptions, ResearchRunOptions
+from src.orchestration.run_options import (
+    ArticlePostRunOptions,
+    ArticleResearchRunOptions,
+    ImagePostRunOptions,
+    ImageRunOptions,
+    ResearchRunOptions,
+)
 from src.orchestration.schemas import DeliveryPackage, ResultEnvelope
 
 from .schemas import AgentToolResult, TaskRunSpec
@@ -115,6 +121,25 @@ def _route_run_options_from_task_spec(task_spec: TaskRunSpec, route: ContentRout
             image=ImageRunOptions(**image_updates),
             **route_updates,
         )
+
+    if route == ContentRoute.ARTICLE_POST:
+        research_updates: dict[str, Any] = {}
+        if task_spec.run_options.research.max_items is not None:
+            research_budget = task_spec.run_options.research.max_items
+            research_updates.update(
+                {
+                    "min_source_pages": research_budget,
+                    "min_unique_domains": research_budget,
+                    "max_source_pages": research_budget,
+                    "max_iterations": research_budget,
+                    "max_tasks_per_iteration": research_budget,
+                    "max_curated_sources_per_task": research_budget,
+                    "max_curated_video_sources_per_task": research_budget,
+                    "min_curated_sources_for_note_compression": research_budget,
+                    "min_digests_for_full_synthesis": research_budget,
+                }
+            )
+        return ArticlePostRunOptions(research=ArticleResearchRunOptions(**research_updates))
 
     return None
 
