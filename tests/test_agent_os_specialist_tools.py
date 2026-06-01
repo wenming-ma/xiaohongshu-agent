@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.agent_os.schemas import ImageRunOptionsSpec, RunOptions, TaskRunSpec
+from src.agent_os.schemas import ImageRunOptionsSpec, ResearchRunOptionsSpec, RunOptions, TaskRunSpec
 from src.agent_os.specialist_tools import (
     build_route_tool_registry,
     conversation_request_from_task_spec,
@@ -120,3 +120,29 @@ async def test_route_tool_adapts_agent_os_run_options_to_image_route_options() -
     assert route_options.image_generation_concurrency == 2
     assert route_options.image.image_size == "2K"
     assert route_options.image.aspect_ratio == "3:4"
+
+
+@pytest.mark.anyio
+async def test_route_tool_applies_research_max_items_as_fast_budget() -> None:
+    image_runner = FakeRouteRunner("image_post")
+    registry = build_route_tool_registry(image_runner=image_runner)
+    spec = TaskRunSpec(
+        objective="低预算图片实测",
+        route=ContentRoute.IMAGE_POST,
+        topic="周末徒步轻量装备",
+        run_options=RunOptions(research=ResearchRunOptionsSpec(max_items=2)),
+    )
+
+    result = await registry.execute(
+        "execute_image_post",
+        AgentToolContext(run_id="run-1", chat_id="chat-1"),
+        spec=spec.model_dump(mode="json"),
+    )
+
+    route_options = image_runner.calls[0]["kwargs"]["run_options"]
+    assert result.envelope.status == "success"
+    assert route_options.research.min_posts_researched == 2
+    assert route_options.research.validation_max_retries == 2
+    assert route_options.research.min_key_infos == 2
+    assert route_options.research.min_cases == 2
+    assert route_options.research.max_new_posts_per_iteration == 2

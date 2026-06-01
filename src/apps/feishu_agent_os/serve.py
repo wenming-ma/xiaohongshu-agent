@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import os
+import re
 import sys
 from collections import deque
 from contextlib import suppress
@@ -144,6 +145,7 @@ class AgentOSMainAgentSession:
             self._idle.set()
 
     async def _run_once(self, text: str) -> None:
+        self.deps.current_user_text = text
         self._current_run_task = asyncio.create_task(
             self.agent.run(
                 text,
@@ -548,6 +550,10 @@ def _register_task_tools(
         resolved_params = dict(params or {})
         if extra_params:
             resolved_params.update(extra_params)
+        current_user_text = _coerce_text(ctx.metadata.get("current_user_text"))
+        if current_user_text:
+            for key, value in _extract_runtime_aliases_from_text(current_user_text).items():
+                resolved_params.setdefault(key, value)
         try:
             task_params = _normalize_background_task_params(
                 resolved_tool_name,
@@ -714,6 +720,7 @@ def _normalize_background_task_params(
             "direct task details such as objective/topic/message."
         )
 
+    spec_input = _lift_task_spec_aliases(spec_input, params)
     task_spec = TaskRunSpec.model_validate(spec_input)
     if task_spec.route is None:
         route = _route_from_background_tool_name(tool_name)
@@ -819,6 +826,82 @@ def _build_task_spec_from_direct_params(
     return spec
 
 
+def _lift_task_spec_aliases(spec_input: Any, outer_params: dict[str, Any]) -> Any:
+    if not isinstance(spec_input, dict):
+        return spec_input
+    spec = dict(spec_input)
+    for source in (spec_input, outer_params):
+        _lift_runtime_aliases_into_spec(spec, source)
+    return spec
+
+
+def _lift_runtime_aliases_into_spec(spec: dict[str, Any], source: dict[str, Any]) -> None:
+    run_options = spec.get("run_options")
+    if isinstance(run_options, dict):
+        normalized_run_options = dict(run_options)
+    elif run_options is None:
+        normalized_run_options = {}
+    else:
+        return
+
+    image_count = _first_present_value(source, "image_count", "count", "num_images")
+    if image_count is not None:
+        normalized_run_options.setdefault("image", {}).setdefault("count", image_count)
+
+    image_model = _first_present_value(source, "image_model", "model")
+    if image_model:
+        normalized_run_options.setdefault("image", {}).setdefault("model", image_model)
+
+    image_generation_concurrency = _first_present_value(
+        source,
+        "image_generation_concurrency",
+        "image_concurrency",
+        "concurrency",
+    )
+    if image_generation_concurrency is not None:
+        normalized_run_options.setdefault("image", {}).setdefault(
+            "concurrency",
+            image_generation_concurrency,
+        )
+
+    research_max_items = _first_present_value(
+        source,
+        "research_max_items",
+        "max_research_items",
+        "research_count",
+        "max_items",
+        "min_posts_researched",
+    )
+    if research_max_items is not None:
+        normalized_run_options.setdefault("research", {}).setdefault("max_items", research_max_items)
+
+    if normalized_run_options:
+        spec["run_options"] = normalized_run_options
+
+
+def _extract_runtime_aliases_from_text(text: str) -> dict[str, int]:
+    aliases: dict[str, int] = {}
+    patterns = {
+        "image_count": [
+            r"(?:图片数量|图片数|image_count|num_images|count)\s*[=:：]\s*(\d+)",
+            r"(\d+)\s*张图",
+        ],
+        "research_max_items": [
+            r"(?:research_max_items|max_research_items|research_count|max_items|min_posts_researched)\s*[=:：]\s*(\d+)",
+        ],
+        "image_generation_concurrency": [
+            r"(?:image_generation_concurrency|image_concurrency|concurrency)\s*[=:：]\s*(\d+)",
+        ],
+    }
+    for key, key_patterns in patterns.items():
+        for pattern in key_patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                aliases[key] = int(match.group(1))
+                break
+    return aliases
+
+
 def _route_from_background_tool_name(tool_name: str) -> str | None:
     route_by_tool = {
         "execute_image_post": "image_post",
@@ -834,6 +917,13 @@ def _first_present_text(params: dict[str, Any], *keys: str) -> str:
         if value:
             return value
     return ""
+
+
+def _first_present_value(params: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in params and params[key] is not None and params[key] != "":
+            return params[key]
+    return None
 
 
 def _coerce_text(value: Any) -> str:

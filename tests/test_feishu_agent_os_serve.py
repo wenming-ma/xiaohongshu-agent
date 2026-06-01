@@ -29,6 +29,7 @@ class FakeAgent:
         self.calls = []
 
     async def run(self, text, *, deps, message_history):
+        assert deps.current_user_text == text
         self.calls.append(
             {
                 "text": text,
@@ -285,6 +286,84 @@ async def test_background_task_tool_builds_research_budget_from_direct_agent_par
     spec = task_manager.get_task(task_summary["task_id"]).params["spec"]
     assert result.envelope.status == "success"
     assert spec["run_options"]["research"]["max_items"] == 3
+
+
+@pytest.mark.anyio
+async def test_background_task_tool_lifts_runtime_aliases_from_agent_spec() -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="execute_image_post",
+            description="Fake image specialist",
+            execute=fake_specialist_tool,
+            category="specialist",
+        )
+    )
+    task_manager = module.AgentOSTaskManager(tool_registry=registry)
+    module._register_task_tools(registry, task_manager=task_manager)
+
+    result = await registry.execute(
+        "start_background_agent_task",
+        AgentToolContext(run_id="run-1"),
+        task_type="image_post",
+        spec={
+            "objective": "低预算图片实测",
+            "route": "image_post",
+            "topic": "周末徒步轻量装备",
+            "image_count": 1,
+            "research_max_items": 2,
+            "image_generation_concurrency": 1,
+        },
+    )
+    await task_manager.wait_for_all()
+
+    task_summary = result.envelope.payload
+    spec = task_manager.get_task(task_summary["task_id"]).params["spec"]
+    assert result.envelope.status == "success"
+    assert spec["run_options"]["image"]["count"] == 1
+    assert spec["run_options"]["image"]["concurrency"] == 1
+    assert spec["run_options"]["research"]["max_items"] == 2
+
+
+@pytest.mark.anyio
+async def test_background_task_tool_uses_current_user_text_for_omitted_runtime_aliases() -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="execute_image_post",
+            description="Fake image specialist",
+            execute=fake_specialist_tool,
+            category="specialist",
+        )
+    )
+    task_manager = module.AgentOSTaskManager(tool_registry=registry)
+    module._register_task_tools(registry, task_manager=task_manager)
+
+    result = await registry.execute(
+        "start_background_agent_task",
+        AgentToolContext(
+            run_id="run-1",
+            metadata={
+                "current_user_text": (
+                    "图片数量=1；research_max_items=2；"
+                    "image_generation_concurrency=1；最终只发飞书。"
+                )
+            },
+        ),
+        task_type="image_post",
+        objective="创建雨天通勤包内物品图文",
+        topic="雨天通勤包内物品",
+    )
+    await task_manager.wait_for_all()
+
+    task_summary = result.envelope.payload
+    spec = task_manager.get_task(task_summary["task_id"]).params["spec"]
+    assert result.envelope.status == "success"
+    assert spec["run_options"]["image"]["count"] == 1
+    assert spec["run_options"]["image"]["concurrency"] == 1
+    assert spec["run_options"]["research"]["max_items"] == 2
 
 
 @pytest.mark.anyio

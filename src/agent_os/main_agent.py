@@ -39,6 +39,7 @@ class MainAgentDependencies(BaseModel):
     session_id: str | None = None
     chat_id: str | None = None
     session: Any | None = None
+    current_user_text: str = ""
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -73,6 +74,7 @@ def create_main_agent() -> Agent[MainAgentDependencies, str]:
             step_id=step_id,
             chat_id=ctx.deps.chat_id,
             session=ctx.deps.session,
+            metadata={"current_user_text": ctx.deps.current_user_text},
         )
         return await ctx.deps.tool_registry.execute(tool_name, tool_ctx, **params)
 

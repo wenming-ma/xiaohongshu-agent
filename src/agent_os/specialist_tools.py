@@ -87,7 +87,16 @@ def _route_run_options_from_task_spec(task_spec: TaskRunSpec, route: ContentRout
     if route == ContentRoute.IMAGE_POST:
         research_updates: dict[str, Any] = {}
         if task_spec.run_options.research.max_items is not None:
-            research_updates["min_posts_researched"] = task_spec.run_options.research.max_items
+            research_budget = task_spec.run_options.research.max_items
+            research_updates.update(
+                {
+                    "min_posts_researched": research_budget,
+                    "validation_max_retries": research_budget,
+                    "min_key_infos": research_budget,
+                    "min_cases": research_budget,
+                    "max_new_posts_per_iteration": research_budget,
+                }
+            )
 
         image_updates: dict[str, Any] = {}
         if task_spec.run_options.image.size:
