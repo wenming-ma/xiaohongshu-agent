@@ -1,0 +1,77 @@
+from __future__ import annotations
+
+import pytest
+
+from src.agent_os.schemas import ImageRunOptionsSpec, RunOptions, TaskRunSpec
+from src.agent_os.specialist_tools import (
+    build_route_tool_registry,
+    conversation_request_from_task_spec,
+)
+from src.agent_os.tools import AgentToolContext
+from src.orchestration.conversation import ContentRoute, ConversationRequest
+from src.orchestration.schemas import DeliveryPackage, ResultEnvelope
+
+
+class FakeRouteRunner:
+    def __init__(self, route: str) -> None:
+        self.route = route
+        self.calls = []
+
+    async def run(self, request, **kwargs):
+        self.calls.append({"request": request, "kwargs": kwargs})
+        return ResultEnvelope[DeliveryPackage].success(
+            agent_name=f"{self.route}_runner",
+            payload=DeliveryPackage(
+                route=self.route,
+                title=request.topic,
+                summary="done",
+            ),
+            summary="done",
+            run_id=kwargs["run_id"],
+            step_id="delivery",
+        )
+
+
+def test_conversation_request_from_task_spec_preserves_runtime_requirements() -> None:
+    spec = TaskRunSpec(
+        objective="做留学图文",
+        route=ContentRoute.IMAGE_POST,
+        topic="出国留学",
+        audience="准留学生",
+        style_constraints=["末日废土风格"],
+        run_options=RunOptions(image=ImageRunOptionsSpec(count=10, concurrency=2)),
+    )
+
+    request = conversation_request_from_task_spec(spec)
+
+    assert isinstance(request, ConversationRequest)
+    assert request.topic == "出国留学"
+    assert request.audience == "准留学生"
+    assert request.style_constraints == ["末日废土风格"]
+    assert request.image_count == 10
+
+
+@pytest.mark.anyio
+async def test_route_tool_registry_executes_image_route_with_spec_params() -> None:
+    image_runner = FakeRouteRunner("image_post")
+    registry = build_route_tool_registry(image_runner=image_runner)
+    spec = TaskRunSpec(
+        objective="做留学图文",
+        route=ContentRoute.IMAGE_POST,
+        topic="出国留学",
+        audience="准留学生",
+        style_constraints=["末日废土风格"],
+        run_options=RunOptions(image=ImageRunOptionsSpec(count=10, concurrency=2)),
+    )
+
+    result = await registry.execute(
+        "execute_image_post",
+        AgentToolContext(run_id="run-1", chat_id="chat-1"),
+        spec=spec.model_dump(mode="json"),
+    )
+
+    assert result.envelope.payload is not None
+    assert result.envelope.payload.route == "image_post"
+    assert image_runner.calls[0]["request"].image_count == 10
+    assert image_runner.calls[0]["kwargs"]["send_to_feishu"] is True
+    assert image_runner.calls[0]["kwargs"]["chat_id"] == "chat-1"
