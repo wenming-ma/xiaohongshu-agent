@@ -62,5 +62,9 @@ def test_registry_lists_tools_without_exposing_callables() -> None:
     )
 
     assert registry.describe_tools() == [
-        {"name": "fake_delivery", "description": "Fake delivery tool"}
+        {
+            "name": "fake_delivery",
+            "description": "Fake delivery tool",
+            "category": "specialist",
+        }
     ]

@@ -9,6 +9,7 @@ from src.utils.providers import get_text_model
 
 from .schemas import AgentToolResult
 from .tools import AgentToolContext, AgentToolRegistry
+from src.orchestration.schemas import ResultEnvelope
 
 
 MAIN_AGENT_SYSTEM_PROMPT = """你是飞书内容系统的主 Agent，是一个长期运行的任务规划和组织者。
@@ -29,8 +30,10 @@ MAIN_AGENT_SYSTEM_PROMPT = """你是飞书内容系统的主 Agent，是一个�
 - 用户指定的数量、风格、模型、参考图、研究深度、并发、审核严格度必须变成工具参数。
 - 用户提供本地文件或文件夹路径时，可以用资源工具读取/列出；图片路径要转成 reference_images artifact refs，不要要求用户重新上传。
 - 当用户信息已经足够时，优先用 start_background_agent_task 启动专项工作流，让主会话继续接收新消息。
+- 用户表达订阅、定时、每天/每周、持续观察、循环执行等周期任务时，用 schedule_background_agent_task；查询周期任务时用 list_scheduled_agent_tasks。
 - 用户询问进度时，用 list_background_agent_tasks；用户要求重试时，用 restart_background_agent_task。
 - 用户要求停止某个后台任务时，用 cancel_background_agent_task。
+- `category=specialist` 的工具不能直接执行；必须通过 start_background_agent_task 或 schedule_background_agent_task 包装启动。
 - 最终内容只交付到飞书。
 """
 
@@ -43,6 +46,47 @@ class MainAgentDependencies(BaseModel):
     current_user_text: str = ""
 
     model_config = {"arbitrary_types_allowed": True}
+
+
+async def execute_main_agent_registry_tool(
+    deps: MainAgentDependencies,
+    *,
+    tool_name: str,
+    params: dict[str, Any],
+    run_id: str,
+    task_id: str | None = None,
+    step_id: str | None = None,
+) -> AgentToolResult:
+    tool = deps.tool_registry.get(tool_name)
+    if tool.category == "specialist":
+        message = (
+            f"Specialist tool `{tool_name}` cannot run inside the main chat loop. "
+            "Use `start_background_agent_task` for immediate workflows or "
+            "`schedule_background_agent_task` for delayed/recurring workflows."
+        )
+        return AgentToolResult(
+            envelope=ResultEnvelope[Any].error(
+                agent_name="main_agent",
+                summary=message,
+                error_message=message,
+                run_id=run_id,
+                step_id=step_id or "specialist_direct_execution_blocked",
+            ),
+            next_suggestions=[
+                "Call start_background_agent_task with params.spec for immediate specialist workflows.",
+                "Call schedule_background_agent_task for delayed or recurring specialist workflows.",
+            ],
+        )
+
+    tool_ctx = AgentToolContext(
+        run_id=run_id,
+        task_id=task_id,
+        step_id=step_id,
+        chat_id=deps.chat_id,
+        session=deps.session,
+        metadata={"current_user_text": deps.current_user_text},
+    )
+    return await deps.tool_registry.execute(tool_name, tool_ctx, **params)
 
 
 def create_main_agent() -> Agent[MainAgentDependencies, str]:
@@ -69,14 +113,13 @@ def create_main_agent() -> Agent[MainAgentDependencies, str]:
         task_id: str | None = None,
         step_id: str | None = None,
     ) -> AgentToolResult:
-        tool_ctx = AgentToolContext(
+        return await execute_main_agent_registry_tool(
+            ctx.deps,
+            tool_name=tool_name,
+            params=params,
             run_id=run_id,
             task_id=task_id,
             step_id=step_id,
-            chat_id=ctx.deps.chat_id,
-            session=ctx.deps.session,
-            metadata={"current_user_text": ctx.deps.current_user_text},
         )
-        return await ctx.deps.tool_registry.execute(tool_name, tool_ctx, **params)
 
     return agent

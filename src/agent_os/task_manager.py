@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from uuid import uuid4
+
+from src.config.settings import ImageConfig
 
 from .schemas import AgentToolResult
 from .tools import AgentToolContext, AgentToolRegistry
 
 TaskStatus = Literal["running", "succeeded", "failed", "cancelled"]
+ScheduleStatus = Literal["scheduled", "running", "completed", "cancelled", "failed"]
 
 
 def _utc_now() -> datetime:
@@ -39,10 +42,48 @@ class AgentOSTaskRecord:
             "params": self.params,
             "error_message": self.error_message,
             "attempt_of": self.attempt_of,
+            "human_summary": build_human_task_summary(self.tool_name, self.params),
             "created_at": self.created_at.isoformat(),
             "started_at": self.started_at.isoformat(),
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
             "result_summary": self.result.envelope.summary if self.result else "",
+        }
+
+
+@dataclass
+class AgentOSScheduleRecord:
+    schedule_id: str
+    tool_name: str
+    params: dict[str, Any]
+    context: AgentToolContext
+    delay_seconds: float = 0.0
+    interval_seconds: float | None = None
+    max_runs: int | None = 1
+    status: ScheduleStatus = "scheduled"
+    run_count: int = 0
+    task_ids: list[str] = field(default_factory=list)
+    error_message: str | None = None
+    created_at: datetime = field(default_factory=_utc_now)
+    next_run_at: datetime | None = None
+    finished_at: datetime | None = None
+    _asyncio_task: asyncio.Task[None] | None = field(default=None, repr=False)
+
+    def to_summary(self) -> dict[str, Any]:
+        return {
+            "schedule_id": self.schedule_id,
+            "tool_name": self.tool_name,
+            "status": self.status,
+            "params": self.params,
+            "delay_seconds": self.delay_seconds,
+            "interval_seconds": self.interval_seconds,
+            "max_runs": self.max_runs,
+            "run_count": self.run_count,
+            "task_ids": list(self.task_ids),
+            "error_message": self.error_message,
+            "human_summary": build_human_task_summary(self.tool_name, self.params),
+            "created_at": self.created_at.isoformat(),
+            "next_run_at": self.next_run_at.isoformat() if self.next_run_at else None,
+            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
         }
 
 
@@ -58,6 +99,7 @@ class AgentOSTaskManager:
         self.tool_registry = tool_registry
         self.notifier = notifier
         self._tasks: dict[str, AgentOSTaskRecord] = {}
+        self._schedules: dict[str, AgentOSScheduleRecord] = {}
         self._resource_locks: dict[str, asyncio.Lock] = {}
 
     def start_task(
@@ -86,6 +128,41 @@ class AgentOSTaskManager:
         record._asyncio_task = asyncio.create_task(self._run_task(record))
         return record
 
+    def schedule_task(
+        self,
+        tool_name: str,
+        ctx: AgentToolContext,
+        *,
+        params: dict[str, Any] | None = None,
+        schedule_id: str | None = None,
+        delay_seconds: float = 0.0,
+        interval_seconds: float | None = None,
+        max_runs: int | None = 1,
+    ) -> AgentOSScheduleRecord:
+        tool = self.tool_registry.get(tool_name)
+        if tool.category != "specialist":
+            raise ValueError(f"Scheduled task target must be a specialist tool: {tool_name}")
+        if delay_seconds < 0:
+            raise ValueError("delay_seconds must be >= 0")
+        if interval_seconds is not None and interval_seconds <= 0:
+            raise ValueError("interval_seconds must be > 0")
+        if max_runs is not None and max_runs < 1:
+            raise ValueError("max_runs must be >= 1")
+
+        record = AgentOSScheduleRecord(
+            schedule_id=schedule_id or uuid4().hex,
+            tool_name=tool_name,
+            params=dict(params or {}),
+            context=ctx,
+            delay_seconds=delay_seconds,
+            interval_seconds=interval_seconds,
+            max_runs=max_runs,
+            next_run_at=_utc_now() + timedelta(seconds=delay_seconds),
+        )
+        self._schedules[record.schedule_id] = record
+        record._asyncio_task = asyncio.create_task(self._run_schedule(record))
+        return record
+
     def get_task(self, task_id: str) -> AgentOSTaskRecord:
         try:
             return self._tasks[task_id]
@@ -94,6 +171,15 @@ class AgentOSTaskManager:
 
     def list_tasks(self) -> list[AgentOSTaskRecord]:
         return sorted(self._tasks.values(), key=lambda task: task.created_at)
+
+    def get_schedule(self, schedule_id: str) -> AgentOSScheduleRecord:
+        try:
+            return self._schedules[schedule_id]
+        except KeyError as exc:
+            raise KeyError(f"Unknown Agent OS schedule: {schedule_id}") from exc
+
+    def list_schedules(self) -> list[AgentOSScheduleRecord]:
+        return sorted(self._schedules.values(), key=lambda schedule: schedule.created_at)
 
     def restart_task(self, task_id: str) -> AgentOSTaskRecord:
         original = self.get_task(task_id)
@@ -115,6 +201,16 @@ class AgentOSTaskManager:
             record.finished_at = _utc_now()
         return record
 
+    def cancel_schedule(self, schedule_id: str) -> AgentOSScheduleRecord:
+        record = self.get_schedule(schedule_id)
+        if record.status in ("completed", "cancelled", "failed"):
+            return record
+        record.status = "cancelled"
+        record.finished_at = _utc_now()
+        if record._asyncio_task is not None and not record._asyncio_task.done():
+            record._asyncio_task.cancel()
+        return record
+
     async def wait_for_all(self) -> None:
         pending = [
             task._asyncio_task
@@ -123,6 +219,50 @@ class AgentOSTaskManager:
         ]
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
+
+    async def wait_for_schedules(self) -> None:
+        pending = [
+            schedule._asyncio_task
+            for schedule in self._schedules.values()
+            if schedule._asyncio_task is not None and not schedule._asyncio_task.done()
+        ]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    async def _run_schedule(self, record: AgentOSScheduleRecord) -> None:
+        try:
+            if record.delay_seconds > 0:
+                await asyncio.sleep(record.delay_seconds)
+            record.status = "running"
+            while record.status == "running":
+                task = self.start_task(
+                    record.tool_name,
+                    record.context,
+                    params=record.params,
+                )
+                record.task_ids.append(task.task_id)
+                record.run_count += 1
+                if task._asyncio_task is not None:
+                    await task._asyncio_task
+
+                if record.max_runs is not None and record.run_count >= record.max_runs:
+                    record.status = "completed"
+                    record.finished_at = _utc_now()
+                    return
+                if record.interval_seconds is None:
+                    record.status = "completed"
+                    record.finished_at = _utc_now()
+                    return
+                record.next_run_at = _utc_now() + timedelta(seconds=record.interval_seconds)
+                await asyncio.sleep(record.interval_seconds)
+        except asyncio.CancelledError:
+            record.status = "cancelled"
+            record.finished_at = _utc_now()
+            raise
+        except Exception as exc:
+            record.status = "failed"
+            record.error_message = str(exc)
+            record.finished_at = _utc_now()
 
     async def _run_task(self, record: AgentOSTaskRecord) -> None:
         tool = self.tool_registry.get(record.tool_name)
@@ -175,3 +315,36 @@ class AgentOSTaskManager:
         send_message = getattr(self.notifier, "send_message", None)
         if callable(send_message):
             await send_message(message, chat_id=record.context.chat_id)
+
+
+def build_human_task_summary(tool_name: str, params: dict[str, Any]) -> str:
+    spec = params.get("spec") if isinstance(params, dict) else None
+    if not isinstance(spec, dict):
+        title = str(params.get("title") or params.get("objective") or tool_name)
+        return f"{tool_name}｜{title}"
+
+    route = str(spec.get("route") or _route_from_tool_name(tool_name) or tool_name)
+    topic = str(spec.get("topic") or spec.get("objective") or "未命名任务")
+    style_constraints = [
+        str(item)
+        for item in (spec.get("style_constraints") or [])
+        if str(item).strip()
+    ]
+    run_options = spec.get("run_options") if isinstance(spec.get("run_options"), dict) else {}
+    image_options = run_options.get("image") if isinstance(run_options.get("image"), dict) else {}
+    research_options = run_options.get("research") if isinstance(run_options.get("research"), dict) else {}
+
+    image_count = image_options.get("count")
+    image_text = f"{image_count}张" if image_count else f"自动上限{ImageConfig.MAX_AUTO_IMAGES}"
+    research_max_items = research_options.get("max_items")
+    research_text = f"最多{research_max_items}项" if research_max_items else "默认"
+    style_text = "、".join(style_constraints) if style_constraints else "默认"
+    return f"{route}｜{topic}｜图片：{image_text}｜研究：{research_text}｜风格：{style_text}"
+
+
+def _route_from_tool_name(tool_name: str) -> str | None:
+    return {
+        "execute_image_post": "image_post",
+        "execute_article_post": "article_post",
+        "execute_video_post": "video_post",
+    }.get(tool_name)

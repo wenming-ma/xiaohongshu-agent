@@ -294,3 +294,99 @@ async def test_task_manager_cancels_running_background_task() -> None:
 
     assert cancelled.task_id == task.task_id
     assert manager.get_task(task.task_id).status == "cancelled"
+
+
+@pytest.mark.anyio
+async def test_task_manager_schedules_one_shot_specialist_task() -> None:
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="execute_image_post",
+            description="Fake image route",
+            execute=slow_success,
+            category="specialist",
+        )
+    )
+    manager = AgentOSTaskManager(tool_registry=registry)
+
+    schedule = manager.schedule_task(
+        "execute_image_post",
+        AgentToolContext(run_id="run-schedule-1"),
+        params={"title": "每日热点穿搭"},
+        delay_seconds=0.01,
+    )
+    await manager.wait_for_schedules()
+    await manager.wait_for_all()
+
+    assert schedule.status == "completed"
+    assert schedule.run_count == 1
+    assert len(schedule.task_ids) == 1
+    assert manager.get_task(schedule.task_ids[0]).status == "succeeded"
+
+
+@pytest.mark.anyio
+async def test_task_manager_runs_recurring_specialist_task_until_max_runs() -> None:
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="execute_image_post",
+            description="Fake image route",
+            execute=slow_success,
+            category="specialist",
+        )
+    )
+    manager = AgentOSTaskManager(tool_registry=registry)
+
+    schedule = manager.schedule_task(
+        "execute_image_post",
+        AgentToolContext(run_id="run-loop"),
+        params={"title": "循环热点扫描"},
+        delay_seconds=0,
+        interval_seconds=0.01,
+        max_runs=3,
+    )
+    await manager.wait_for_schedules()
+    await manager.wait_for_all()
+
+    assert schedule.status == "completed"
+    assert schedule.run_count == 3
+    assert len(schedule.task_ids) == 3
+    assert [manager.get_task(task_id).status for task_id in schedule.task_ids] == [
+        "succeeded",
+        "succeeded",
+        "succeeded",
+    ]
+
+
+@pytest.mark.anyio
+async def test_task_summary_exposes_human_readable_runtime_plan() -> None:
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="execute_image_post",
+            description="Fake image route",
+            execute=slow_success,
+            category="specialist",
+        )
+    )
+    manager = AgentOSTaskManager(tool_registry=registry)
+    task = manager.start_task(
+        "execute_image_post",
+        AgentToolContext(run_id="run-brief"),
+        params={
+            "spec": {
+                "objective": "做一篇默认配置图文",
+                "route": "image_post",
+                "topic": "雨天通勤包",
+                "style_constraints": ["纯色背景", "平铺"],
+                "run_options": {
+                    "research": {"max_items": None},
+                    "image": {"count": None},
+                },
+            }
+        },
+    )
+
+    summary = task.to_summary()
+
+    assert summary["human_summary"] == "image_post｜雨天通勤包｜图片：自动上限9｜研究：默认｜风格：纯色背景、平铺"

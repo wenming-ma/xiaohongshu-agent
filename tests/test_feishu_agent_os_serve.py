@@ -340,6 +340,81 @@ async def test_background_task_tool_builds_research_budget_from_direct_agent_par
 
 
 @pytest.mark.anyio
+async def test_schedule_background_task_tool_normalizes_direct_agent_params() -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="execute_image_post",
+            description="Fake image specialist",
+            execute=fake_specialist_tool,
+            category="specialist",
+        )
+    )
+    task_manager = module.AgentOSTaskManager(tool_registry=registry)
+    module._register_task_tools(registry, task_manager=task_manager)
+
+    result = await registry.execute(
+        "schedule_background_agent_task",
+        AgentToolContext(run_id="run-schedule-tool"),
+        task_type="image_post",
+        objective="每天找热点并产出图文",
+        topic="通勤热点",
+        image_count=2,
+        delay_seconds=0.01,
+        interval_seconds=0.01,
+        max_runs=1,
+    )
+    await task_manager.wait_for_schedules()
+    await task_manager.wait_for_all()
+
+    schedule_summary = result.envelope.payload
+    schedule = task_manager.get_schedule(schedule_summary["schedule_id"])
+    task = task_manager.get_task(schedule.task_ids[0])
+    assert result.envelope.status == "success"
+    assert schedule.status == "completed"
+    assert task.params["spec"]["run_options"]["image"]["count"] == 2
+    assert "通勤热点" in schedule.to_summary()["human_summary"]
+
+
+@pytest.mark.anyio
+async def test_cancel_scheduled_task_tool_cancels_pending_schedule() -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="execute_image_post",
+            description="Fake image specialist",
+            execute=fake_specialist_tool,
+            category="specialist",
+        )
+    )
+    task_manager = module.AgentOSTaskManager(tool_registry=registry)
+    module._register_task_tools(registry, task_manager=task_manager)
+
+    scheduled = await registry.execute(
+        "schedule_background_agent_task",
+        AgentToolContext(run_id="run-schedule-cancel"),
+        task_type="image_post",
+        objective="每天找热点",
+        delay_seconds=60,
+        max_runs=1,
+    )
+    schedule_id = scheduled.envelope.payload["schedule_id"]
+
+    cancelled = await registry.execute(
+        "cancel_scheduled_agent_task",
+        AgentToolContext(run_id="run-schedule-cancel"),
+        schedule_id=schedule_id,
+    )
+    await task_manager.wait_for_schedules()
+
+    assert cancelled.envelope.status == "success"
+    assert task_manager.get_schedule(schedule_id).status == "cancelled"
+    assert task_manager.get_schedule(schedule_id).task_ids == []
+
+
+@pytest.mark.anyio
 async def test_background_task_tool_lifts_runtime_aliases_from_agent_spec() -> None:
     module = importlib.import_module("src.apps.feishu_agent_os.serve")
     registry = AgentToolRegistry()
@@ -551,7 +626,10 @@ def test_default_agent_os_registry_exposes_routes_resources_and_feishu_tools() -
     assert "ask_feishu_multi_select" not in tool_names
     assert "send_feishu_progress" not in tool_names
     assert "start_background_agent_task" in tool_names
+    assert "schedule_background_agent_task" in tool_names
     assert "list_background_agent_tasks" in tool_names
+    assert "list_scheduled_agent_tasks" in tool_names
+    assert "cancel_scheduled_agent_task" in tool_names
     assert "restart_background_agent_task" in tool_names
     assert "cancel_background_agent_task" in tool_names
 
@@ -633,4 +711,6 @@ def test_task_tool_description_includes_spec_contract_for_main_agent() -> None:
 
     assert "params.spec" in descriptions["start_background_agent_task"]
     assert "objective" in descriptions["start_background_agent_task"]
+    assert "delay_seconds" in descriptions["schedule_background_agent_task"]
+    assert "interval_seconds" in descriptions["schedule_background_agent_task"]
     assert "delimited" in descriptions["feishu_ask_multi_select"]

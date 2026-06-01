@@ -48,7 +48,11 @@ class AgentToolRegistry:
 
     def describe_tools(self) -> list[dict[str, str]]:
         return [
-            {"name": tool.name, "description": tool.description}
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "category": tool.category,
+            }
             for tool in self._tools.values()
         ]
 

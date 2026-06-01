@@ -11,6 +11,7 @@ from src.agent_os.tools import AgentToolContext
 from src.orchestration.conversation import ContentRoute, ConversationRequest
 from src.orchestration.run_options import ArticlePostRunOptions, ImagePostRunOptions, VideoPostRunOptions
 from src.orchestration.schemas import DeliveryPackage, ResultEnvelope
+from src.config.settings import ArticleResearchConfig, ImageConfig, ResearchConfig
 
 
 class FakeRouteRunner:
@@ -196,3 +197,49 @@ async def test_route_tool_applies_research_max_items_to_video_route_options() ->
     assert isinstance(route_options, VideoPostRunOptions)
     assert route_options.research.max_iterations == 1
     assert route_options.research.max_videos == 1
+
+
+@pytest.mark.anyio
+async def test_route_tool_preserves_default_runtime_options_when_unspecified() -> None:
+    image_runner = FakeRouteRunner("image_post")
+    article_runner = FakeRouteRunner("article_post")
+    video_runner = FakeRouteRunner("video_post")
+    registry = build_route_tool_registry(
+        image_runner=image_runner,
+        article_runner=article_runner,
+        video_runner=video_runner,
+    )
+
+    await registry.execute(
+        "execute_image_post",
+        AgentToolContext(run_id="run-image-default"),
+        spec={"objective": "默认图文调研", "route": "image_post"},
+    )
+    await registry.execute(
+        "execute_article_post",
+        AgentToolContext(run_id="run-article-default"),
+        spec={"objective": "默认文章调研", "route": "article_post"},
+    )
+    await registry.execute(
+        "execute_video_post",
+        AgentToolContext(run_id="run-video-default"),
+        spec={"objective": "默认视频调研", "route": "video_post"},
+    )
+
+    image_options = image_runner.calls[0]["kwargs"]["run_options"]
+    assert image_runner.calls[0]["request"].image_count is None
+    assert image_options.max_auto_images == ImageConfig.MAX_AUTO_IMAGES == 9
+    assert image_options.research.min_posts_researched == ResearchConfig.MIN_POSTS_RESEARCHED
+    assert image_options.research.validation_max_retries == ResearchConfig.VALIDATION_MAX_RETRIES
+    assert image_options.research.min_key_infos == ResearchConfig.MIN_KEY_INFOS
+    assert image_options.research.min_cases == ResearchConfig.MIN_CASES
+
+    article_options = article_runner.calls[0]["kwargs"]["run_options"]
+    assert article_options.research.max_iterations == ArticleResearchConfig.MAX_ITERATIONS
+    assert article_options.research.max_source_pages == ArticleResearchConfig.MAX_SOURCE_PAGES
+    assert article_options.research.min_source_pages == ArticleResearchConfig.MIN_SOURCE_PAGES
+
+    video_options = video_runner.calls[0]["kwargs"]["run_options"]
+    assert video_options.research.max_iterations == 10
+    assert video_options.research.max_videos == 5
+    assert video_options.research.min_quality_videos == 10

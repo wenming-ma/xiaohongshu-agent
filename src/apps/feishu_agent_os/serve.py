@@ -619,12 +619,65 @@ def _register_task_tools(
             task.to_summary(),
         )
 
+    async def schedule_background_agent_task(
+        ctx: AgentToolContext,
+        *,
+        tool_name: str = "",
+        params: dict[str, Any] | None = None,
+        delay_seconds: float = 0.0,
+        interval_seconds: float | None = None,
+        max_runs: int | None = 1,
+        **extra_params: Any,
+    ) -> AgentToolResult:
+        resolved_tool_name = _resolve_background_tool_name(
+            tool_name
+            or str(extra_params.pop("task_type", "") or "")
+            or str(extra_params.pop("route", "") or "")
+            or str(extra_params.pop("content_type", "") or "")
+        )
+        resolved_params = dict(params or {})
+        if extra_params:
+            resolved_params.update(extra_params)
+        current_user_text = _coerce_text(ctx.metadata.get("current_user_text"))
+        if current_user_text:
+            for key, value in _extract_runtime_aliases_from_text(current_user_text).items():
+                resolved_params.setdefault(key, value)
+        try:
+            task_params = _normalize_background_task_params(
+                resolved_tool_name,
+                resolved_params,
+            )
+            schedule = task_manager.schedule_task(
+                resolved_tool_name,
+                ctx,
+                params=task_params,
+                delay_seconds=delay_seconds,
+                interval_seconds=interval_seconds,
+                max_runs=max_runs,
+            )
+        except Exception as exc:
+            return _tool_error(ctx, "agent_os_task_manager", str(exc))
+        return _tool_success(
+            ctx,
+            "agent_os_task_manager",
+            "schedule_background_agent_task",
+            schedule.to_summary(),
+        )
+
     async def list_background_agent_tasks(ctx: AgentToolContext) -> AgentToolResult:
         return _tool_success(
             ctx,
             "agent_os_task_manager",
             "list_background_agent_tasks",
             [task.to_summary() for task in task_manager.list_tasks()],
+        )
+
+    async def list_scheduled_agent_tasks(ctx: AgentToolContext) -> AgentToolResult:
+        return _tool_success(
+            ctx,
+            "agent_os_task_manager",
+            "list_scheduled_agent_tasks",
+            [schedule.to_summary() for schedule in task_manager.list_schedules()],
         )
 
     async def restart_background_agent_task(
@@ -659,6 +712,22 @@ def _register_task_tools(
             task.to_summary(),
         )
 
+    async def cancel_scheduled_agent_task(
+        ctx: AgentToolContext,
+        *,
+        schedule_id: str,
+    ) -> AgentToolResult:
+        try:
+            schedule = task_manager.cancel_schedule(schedule_id)
+        except Exception as exc:
+            return _tool_error(ctx, "agent_os_task_manager", str(exc))
+        return _tool_success(
+            ctx,
+            "agent_os_task_manager",
+            "cancel_scheduled_agent_task",
+            schedule.to_summary(),
+        )
+
     registry.register(
         AgentTool(
             name="start_background_agent_task",
@@ -686,9 +755,38 @@ def _register_task_tools(
     )
     registry.register(
         AgentTool(
+            name="cancel_scheduled_agent_task",
+            description="Cancel a scheduled or recurring Agent workflow by schedule_id.",
+            execute=cancel_scheduled_agent_task,
+            category="task",
+        )
+    )
+    registry.register(
+        AgentTool(
+            name="schedule_background_agent_task",
+            description=(
+                "Schedule a specialist Agent workflow for later or recurring execution. "
+                "Required params match start_background_agent_task; use delay_seconds for "
+                "one-shot delay, interval_seconds for recurring loops, and max_runs to cap "
+                "the number of runs. params.spec is normalized as TaskRunSpec."
+            ),
+            execute=schedule_background_agent_task,
+            category="task",
+        )
+    )
+    registry.register(
+        AgentTool(
             name="list_background_agent_tasks",
             description="List background Agent workflow status for the current runtime.",
             execute=list_background_agent_tasks,
+            category="task",
+        )
+    )
+    registry.register(
+        AgentTool(
+            name="list_scheduled_agent_tasks",
+            description="List scheduled or recurring Agent workflow status for the current runtime.",
+            execute=list_scheduled_agent_tasks,
             category="task",
         )
     )
