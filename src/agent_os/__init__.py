@@ -18,6 +18,11 @@ from .store import AgentOSStore
 from .specialist_tools import build_route_tool_registry, conversation_request_from_task_spec
 from .resource_tools import AgentOSResourceTools
 from .feishu_tools import AgentOSFeishuTools
+from .main_agent import (
+    MAIN_AGENT_SYSTEM_PROMPT,
+    MainAgentDependencies,
+    create_main_agent,
+)
 
 __all__ = [
     "AgentOSEvent",
@@ -39,4 +44,7 @@ __all__ = [
     "conversation_request_from_task_spec",
     "AgentOSResourceTools",
     "AgentOSFeishuTools",
+    "MAIN_AGENT_SYSTEM_PROMPT",
+    "MainAgentDependencies",
+    "create_main_agent",
 ]
