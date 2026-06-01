@@ -19,6 +19,7 @@ def test_main_agent_prompt_defines_planner_not_worker_role() -> None:
     assert "多轮对话" in MAIN_AGENT_SYSTEM_PROMPT
     assert "TaskRunSpec" in MAIN_AGENT_SYSTEM_PROMPT
     assert "飞书" in MAIN_AGENT_SYSTEM_PROMPT
+    assert "feishu_" in MAIN_AGENT_SYSTEM_PROMPT
 
 
 def test_main_agent_dependencies_hold_tool_registry() -> None:

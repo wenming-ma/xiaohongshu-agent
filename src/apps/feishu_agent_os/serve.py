@@ -413,18 +413,27 @@ def _register_feishu_tools(registry: AgentToolRegistry, *, notifier: Any | None)
     async def ask_single_choice(
         ctx: AgentToolContext,
         *,
-        title: str,
-        options_spec: str,
+        options_spec: str = "",
+        title: str = "",
+        question: str = "",
+        options: Any | None = None,
         phase: str = "clarify",
         value_prefix: str = "",
         summary: str | None = None,
+        **_extra_params: Any,
     ) -> AgentToolResult:
         if ctx.session is None:
             return _tool_error(ctx, "feishu_tools", "缺少 Feishu 会话，无法渲染点选卡片")
+        resolved_title = _resolve_choice_title(title=title, question=question)
+        resolved_options = _resolve_options_spec(options_spec=options_spec, options=options)
+        if not resolved_title:
+            return _tool_error(ctx, "feishu_tools", "缺少问题标题，无法渲染点选卡片")
+        if not resolved_options:
+            return _tool_error(ctx, "feishu_tools", "缺少选项，无法渲染点选卡片")
         reply = await feishu.ask_single_choice(
             ctx.session,
-            title=title,
-            options_spec=options_spec,
+            title=resolved_title,
+            options_spec=resolved_options,
             phase=phase,
             value_prefix=value_prefix,
             summary=summary,
@@ -434,23 +443,43 @@ def _register_feishu_tools(registry: AgentToolRegistry, *, notifier: Any | None)
     async def ask_multi_select(
         ctx: AgentToolContext,
         *,
-        title: str,
-        options_spec: str,
+        options_spec: str = "",
+        title: str = "",
+        question: str = "",
+        options: Any | None = None,
         phase: str = "clarify",
         input_name: str = "",
         input_placeholder: str = "",
         submit_label: str = "确认",
         summary: str | None = None,
+        allow_custom_text: bool = False,
+        custom_text_placeholder: str = "",
+        **_extra_params: Any,
     ) -> AgentToolResult:
         if ctx.session is None:
             return _tool_error(ctx, "feishu_tools", "缺少 Feishu 会话，无法渲染多选卡片")
+        resolved_title = _resolve_choice_title(title=title, question=question)
+        resolved_options = _resolve_options_spec(options_spec=options_spec, options=options)
+        if not resolved_title:
+            return _tool_error(ctx, "feishu_tools", "缺少问题标题，无法渲染多选卡片")
+        if not resolved_options:
+            return _tool_error(ctx, "feishu_tools", "缺少选项，无法渲染多选卡片")
+        resolved_input_name = input_name
+        resolved_input_placeholder = input_placeholder
+        if allow_custom_text:
+            resolved_input_name = resolved_input_name or "custom_text"
+            resolved_input_placeholder = (
+                resolved_input_placeholder
+                or custom_text_placeholder
+                or "也可以补充其他要求"
+            )
         reply = await feishu.ask_multi_select(
             ctx.session,
-            title=title,
-            options_spec=options_spec,
+            title=resolved_title,
+            options_spec=resolved_options,
             phase=phase,
-            input_name=input_name,
-            input_placeholder=input_placeholder,
+            input_name=resolved_input_name,
+            input_placeholder=resolved_input_placeholder,
             submit_label=submit_label,
             summary=summary,
         )
@@ -470,7 +499,7 @@ def _register_feishu_tools(registry: AgentToolRegistry, *, notifier: Any | None)
 
     registry.register(
         AgentTool(
-            name="ask_feishu_single_choice",
+            name="feishu_ask_single_choice",
             description="Ask the user to pick one option in Feishu using delimited options.",
             execute=ask_single_choice,
             category="feishu",
@@ -478,7 +507,7 @@ def _register_feishu_tools(registry: AgentToolRegistry, *, notifier: Any | None)
     )
     registry.register(
         AgentTool(
-            name="ask_feishu_multi_select",
+            name="feishu_ask_multi_select",
             description=(
                 "Ask the user to select one or more options in Feishu using "
                 "delimited options formatted as label::value||label::value. "
@@ -490,7 +519,7 @@ def _register_feishu_tools(registry: AgentToolRegistry, *, notifier: Any | None)
     )
     registry.register(
         AgentTool(
-            name="send_feishu_progress",
+            name="feishu_send_progress",
             description="Send a short progress update to the current Feishu session.",
             execute=send_progress,
             category="feishu",
@@ -628,6 +657,44 @@ def _resolve_background_tool_name(value: str) -> str:
         "video_post": "execute_video_post",
     }
     return route_aliases.get(normalized, normalized)
+
+
+def _resolve_choice_title(*, title: str = "", question: str = "") -> str:
+    return (title or question or "").strip()
+
+
+def _resolve_options_spec(*, options_spec: str = "", options: Any | None = None) -> str:
+    if options_spec.strip():
+        return options_spec.strip()
+    if options is None:
+        return ""
+    if isinstance(options, str):
+        return options.strip()
+    if isinstance(options, list | tuple | set):
+        parts: list[str] = []
+        for item in options:
+            if isinstance(item, str):
+                label = value = item.strip()
+            elif isinstance(item, dict):
+                label = _coerce_text(
+                    item.get("label")
+                    or item.get("text")
+                    or item.get("name")
+                    or item.get("title")
+                    or item.get("value")
+                )
+                value = _coerce_text(
+                    item.get("value")
+                    or item.get("key")
+                    or item.get("id")
+                    or label
+                )
+            else:
+                label = value = _coerce_text(item)
+            if label and value:
+                parts.append(f"{label}::{value}")
+        return "||".join(parts)
+    return ""
 
 
 def _normalize_background_task_params(

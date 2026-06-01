@@ -43,11 +43,22 @@ class FakeNotifier:
     def __init__(self) -> None:
         self.messages = []
         self.replies = ["__FORM__:{\"style_pure_color\":true}"]
+        self.card_messages = []
         self.form_cards = []
 
     async def send_message(self, text, *, chat_id=None):
         self.messages.append({"text": text, "chat_id": chat_id})
         return "msg-1"
+
+    async def send_session_card_message(self, session, title, buttons, **kwargs):
+        self.card_messages.append(
+            {
+                "session": session,
+                "title": title,
+                "buttons": buttons,
+                **kwargs,
+            }
+        )
 
     async def send_session_form_card(self, session, title, checkers, **kwargs):
         self.form_cards.append(
@@ -354,8 +365,12 @@ def test_default_agent_os_registry_exposes_routes_resources_and_feishu_tools() -
     assert "execute_video_post" in tool_names
     assert "list_skills" in tool_names
     assert "search_prompt_templates" in tool_names
-    assert "ask_feishu_single_choice" in tool_names
-    assert "ask_feishu_multi_select" in tool_names
+    assert "feishu_ask_single_choice" in tool_names
+    assert "feishu_ask_multi_select" in tool_names
+    assert "feishu_send_progress" in tool_names
+    assert "ask_feishu_single_choice" not in tool_names
+    assert "ask_feishu_multi_select" not in tool_names
+    assert "send_feishu_progress" not in tool_names
     assert "start_background_agent_task" in tool_names
     assert "list_background_agent_tasks" in tool_names
     assert "restart_background_agent_task" in tool_names
@@ -370,7 +385,7 @@ async def test_feishu_multi_select_tool_renders_form_and_returns_reply() -> None
     session = object()
 
     result = await registry.execute(
-        "ask_feishu_multi_select",
+        "feishu_ask_multi_select",
         AgentToolContext(run_id="run-1", session=session),
         title="选择图片约束",
         options_spec="纯色背景::style_pure_color||不要人物::style_no_people",
@@ -386,6 +401,44 @@ async def test_feishu_multi_select_tool_renders_form_and_returns_reply() -> None
     assert notifier.form_cards[0]["checkers"][0]["name"] == "style_pure_color"
 
 
+@pytest.mark.anyio
+async def test_feishu_multi_select_tool_accepts_question_alias_from_main_agent() -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    notifier = FakeNotifier()
+    registry = module.build_default_tool_registry(notifier=notifier)
+
+    result = await registry.execute(
+        "feishu_ask_multi_select",
+        AgentToolContext(run_id="run-1", session=object()),
+        question="请选择图片风格约束",
+        options_spec="纯色背景::style_pure_color||不要人物::style_no_people",
+        allow_custom_text=True,
+    )
+
+    assert result.envelope.status == "success"
+    assert notifier.form_cards[0]["title"] == "请选择图片风格约束"
+    assert notifier.form_cards[0]["input_name"] == "custom_text"
+
+
+@pytest.mark.anyio
+async def test_feishu_single_choice_tool_accepts_question_alias_from_main_agent() -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    notifier = FakeNotifier()
+    notifier.replies = ["image_post"]
+    registry = module.build_default_tool_registry(notifier=notifier)
+
+    result = await registry.execute(
+        "feishu_ask_single_choice",
+        AgentToolContext(run_id="run-1", session=object()),
+        question="请选择内容路线",
+        options_spec="图文::image_post||文章::article_post",
+        allow_custom_text=False,
+    )
+
+    assert result.envelope.status == "success"
+    assert notifier.card_messages[0]["title"] == "请选择内容路线"
+
+
 def test_task_tool_description_includes_spec_contract_for_main_agent() -> None:
     module = importlib.import_module("src.apps.feishu_agent_os.serve")
     registry = module.build_default_tool_registry(notifier=FakeNotifier())
@@ -393,4 +446,4 @@ def test_task_tool_description_includes_spec_contract_for_main_agent() -> None:
 
     assert "params.spec" in descriptions["start_background_agent_task"]
     assert "objective" in descriptions["start_background_agent_task"]
-    assert "delimited" in descriptions["ask_feishu_multi_select"]
+    assert "delimited" in descriptions["feishu_ask_multi_select"]
