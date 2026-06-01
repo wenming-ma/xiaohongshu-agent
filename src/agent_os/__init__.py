@@ -14,6 +14,7 @@ from .schemas import (
 )
 from .runtime import MainAgentRuntime
 from .tools import AgentTool, AgentToolContext, AgentToolRegistry
+from .store import AgentOSStore
 
 __all__ = [
     "AgentOSEvent",
@@ -30,4 +31,5 @@ __all__ = [
     "AgentTool",
     "AgentToolContext",
     "AgentToolRegistry",
+    "AgentOSStore",
 ]
