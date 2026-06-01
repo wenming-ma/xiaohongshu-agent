@@ -316,6 +316,122 @@ async def test_image_workflow_uses_first_group_as_cover_for_single_look_requests
 
 
 @pytest.mark.anyio
+async def test_image_workflow_pads_explicit_single_look_count_when_grouping_is_short(tmp_path: Path) -> None:
+    seen_groups: list[dict[str, object]] = []
+
+    async def run_research(**kwargs) -> ResultEnvelope[ResearchResult]:
+        return ResultEnvelope[ResearchResult].success(
+            agent_name="research_agent",
+            payload=ResearchResult(
+                summary="降级研究只保留了用户约束和受众",
+                items=[
+                    ResearchItem(title="用户约束", content="用户明确要 3 张单套平铺穿搭图"),
+                    ResearchItem(title="受众", content="泛人群"),
+                ],
+                keywords=[],
+                sources=[],
+            ),
+            summary="research ok",
+            run_id=kwargs["run_id"],
+            step_id="research",
+        )
+
+    async def run_grouping(**kwargs) -> ResultEnvelope[GroupingResult]:
+        return ResultEnvelope[GroupingResult].success(
+            agent_name="grouping_agent",
+            payload=GroupingResult(
+                groups=[
+                    GroupingItem(title="第一套", indices=[0]),
+                    GroupingItem(title="第二套", indices=[1]),
+                ]
+            ),
+            summary="grouping short",
+            run_id=kwargs["run_id"],
+            step_id="grouping",
+        )
+
+    async def run_content(**kwargs) -> ResultEnvelope[XHSContent]:
+        return ResultEnvelope[XHSContent].success(
+            agent_name="content_agent",
+            payload=XHSContent(
+                title="3张夏季通勤平铺拍摄灵感",
+                body=(
+                    "图1是浅蓝背景通勤衬衫套装，图2是奶油白背景针织套装，"
+                    "图3是鼠尾草绿背景轻户外通勤套装。每张图只展示一套穿搭。"
+                    "不要人物、模特或人台，所有图片都应是真实摄影平铺。"
+                    "整体保持小红书图文帖的节奏：封面先给出明确主题，后续图片各自承担一套完整造型，"
+                    "并通过不同纯色背景形成区分，避免把研究限制、登录提示或系统诊断文字放进画面。"
+                ),
+                hashtags=["通勤穿搭"],
+                call_to_action="保存参考。",
+            ),
+            summary="content ok",
+            run_id=kwargs["run_id"],
+            step_id="content",
+        )
+
+    async def run_image_group(**kwargs) -> ResultEnvelope[ImageResult]:
+        seen_groups.append(dict(kwargs["group"]))
+        image_path = tmp_path / f"{kwargs['group']['image_type']}.png"
+        image_path.write_bytes(b"fake-image")
+        return ResultEnvelope[ImageResult].success(
+            agent_name="image_generation_agent",
+            payload=ImageResult(
+                images=[
+                    GeneratedImage(
+                        image_path=str(image_path),
+                        prompt_used="prompt",
+                        image_type=str(kwargs["group"]["image_type"]),
+                    )
+                ],
+                total_count=1,
+                generated_at="2026-05-30T00:00:00+00:00",
+            ),
+            summary="image ok",
+            run_id=kwargs["run_id"],
+            step_id=f"image-{kwargs['group_index']}",
+        )
+
+    async def run_delivery(**kwargs) -> ResultEnvelope[DeliveryPackage]:
+        return ResultEnvelope[DeliveryPackage].success(
+            agent_name="delivery_agent",
+            payload=DeliveryPackage(route="image_post", title="3张夏季通勤平铺拍摄灵感", summary="交付完成"),
+            summary="delivery ok",
+            run_id=kwargs["run_id"],
+            step_id="delivery",
+        )
+
+    runner = ImageWorkflowRunner(
+        deps=ImageWorkflowDeps(
+            run_research=run_research,
+            run_grouping=run_grouping,
+            run_content=run_content,
+            run_image_group=run_image_group,
+            run_delivery=run_delivery,
+        )
+    )
+
+    await runner.run(
+        topic="夏季城市通勤穿搭灵感",
+        audience="泛人群",
+        run_id="run-single-look-padding",
+        workspace_dir=tmp_path,
+        execution_text=(
+            "图片数量：3 张\n"
+            "单图单内容：每张图只展示一个主体/一套穿搭\n"
+            "用户原始要求：3 张图，浅蓝、奶油白、鼠尾草绿三种纯色背景。"
+        ),
+        image_count=3,
+        single_item_per_image=True,
+    )
+
+    assert [group["image_type"] for group in seen_groups] == ["cover", "detail_1", "detail_2"]
+    assert [group["indices"] for group in seen_groups] == [[0], [1], []]
+    assert "第3张" in str(seen_groups[2]["title"])
+    assert "用户明确要求的第3张单套展示图" in str(seen_groups[2]["desc"])
+
+
+@pytest.mark.anyio
 async def test_image_workflow_does_not_fabricate_images_when_requested_count_exceeds_groups(tmp_path: Path) -> None:
     seen_groups: list[dict[str, object]] = []
 

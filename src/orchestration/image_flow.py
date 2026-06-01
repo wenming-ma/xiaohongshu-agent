@@ -133,6 +133,23 @@ class ImagesNode(BaseNode[ImageWorkflowState, ImageWorkflowDeps]):
             ]
         if ctx.state.image_count is not None:
             target_count = max(1, min(ctx.state.image_count, 20))
+            if ctx.state.single_item_per_image:
+                while len(group_specs) < target_count:
+                    image_number = len(group_specs) + 1
+                    image_type = "cover" if not group_specs else f"detail_{len(group_specs)}"
+                    group_specs.append(
+                        {
+                            "title": f"第{image_number}张单套穿搭",
+                            "indices": [],
+                            "image_type": image_type,
+                            "desc": (
+                                f"{'封面图' if image_number == 1 else '详情图'} - "
+                                f"用户明确要求的第{image_number}张单套展示图；"
+                                "请根据用户原始要求、正文中的对应图号和风格约束生成，"
+                                "不要复用前面图片。"
+                            ),
+                        }
+                    )
             group_specs = group_specs[:target_count]
         elif ctx.state.max_auto_images is not None:
             target_count = max(1, min(ctx.state.max_auto_images, 20))

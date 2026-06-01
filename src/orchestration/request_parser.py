@@ -11,6 +11,9 @@ _REFERENCE_IMAGE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _INSERTED_IMAGE_PATH_PATTERN = re.compile(r"^\s*path\s*[:=：]\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+_NATURAL_STYLE_PATTERN = re.compile(r"风格\s*(?:是|为|要|需要|希望|偏向|走)\s*([^；;\n。]+)")
+_BACKGROUND_CONSTRAINT_PATTERN = re.compile(r"((?:背景|底色)[^；;\n。]*(?:纯色|颜色|色彩|浅蓝|奶油白|鼠尾草绿)[^；;\n。]*)")
+_NEGATIVE_CONSTRAINT_PATTERN = re.compile(r"((?:不要|不需要|避免|禁止)[^；;\n。]+)")
 
 _CHINESE_NUMBERS = {
     "一": 1,
@@ -140,14 +143,31 @@ def _extract_topic(text: str, *, audience: str | None) -> str:
     return "飞书内容探索"
 
 
+def _clean_style_constraint(value: str) -> str:
+    return re.sub(r"[。.!！]+.*$", "", value.strip()).strip()
+
+
+def _append_unique(items: list[str], value: str) -> None:
+    cleaned = _clean_style_constraint(value)
+    if cleaned and cleaned not in items:
+        items.append(cleaned)
+
+
 def _extract_style_constraints(text: str, explicit: str | None) -> list[str]:
-    if not explicit:
+    style_source = explicit
+    natural_style_match = None if explicit else _NATURAL_STYLE_PATTERN.search(text)
+    if natural_style_match:
+        style_source = natural_style_match.group(1)
+    if not style_source:
         return []
+
     items = []
-    for item in re.split(r"[,，、]", explicit):
-        cleaned = re.sub(r"[。.!！]+.*$", "", item.strip()).strip()
-        if cleaned:
-            items.append(cleaned)
+    for item in re.split(r"[,，、]", style_source):
+        _append_unique(items, item)
+    for match in _BACKGROUND_CONSTRAINT_PATTERN.finditer(text):
+        _append_unique(items, match.group(1))
+    for match in _NEGATIVE_CONSTRAINT_PATTERN.finditer(text):
+        _append_unique(items, match.group(1))
     return items
 
 

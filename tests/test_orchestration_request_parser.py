@@ -33,6 +33,22 @@ def test_parse_free_text_does_not_keyword_extract_style_constraints() -> None:
     assert request.style_constraints == []
 
 
+def test_parse_natural_language_style_clause_as_user_constraints() -> None:
+    request = parse_conversation_request(
+        "做 3 张图，背景都用纯色但每张颜色不同（浅蓝、奶油白、鼠尾草绿）；"
+        "风格是真实摄影、干净高级、无文字；不要人物/模特/人台。"
+    )
+
+    assert request.image_count == 3
+    assert request.style_constraints == [
+        "真实摄影",
+        "干净高级",
+        "无文字",
+        "背景都用纯色但每张颜色不同（浅蓝、奶油白、鼠尾草绿）",
+        "不要人物/模特/人台",
+    ]
+
+
 def test_parse_image_count_from_explicit_bare_number_field() -> None:
     request = parse_conversation_request(
         "主题：纯色背景通勤面试穿搭；受众：通勤女性；图片数：3；风格：纯色背景、无人物。"

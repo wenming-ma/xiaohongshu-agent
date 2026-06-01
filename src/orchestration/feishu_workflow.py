@@ -128,13 +128,15 @@ class FeishuWorkflowService:
             phase = f"running_{route_label}"
             await self._update_session_phase(session, phase, summary=request.topic)
 
+            run_kwargs = {
+                "chat_id": session.chat_id,
+                "run_id": self._build_run_id(route_label),
+                "send_to_feishu": True,
+            }
+            if plan is not None:
+                run_kwargs["plan"] = plan
             run_task = asyncio.create_task(
-                self.orchestrator.run_request(
-                    request,
-                    chat_id=session.chat_id,
-                    run_id=self._build_run_id(route_label),
-                    send_to_feishu=True,
-                )
+                self.orchestrator.run_request(request, **run_kwargs)
             )
             event_task = asyncio.create_task(
                 self._wait_for_session_event(

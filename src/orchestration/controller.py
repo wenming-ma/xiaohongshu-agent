@@ -72,9 +72,11 @@ class FeishuContentOrchestrator:
         run_id: str | None = None,
         send_to_feishu: bool = False,
         run_options: object | None = None,
+        plan: WorkflowPlan | None = None,
     ):
         request = self.prepare_request(request)
-        plan = await self.planner.plan(request)
+        if plan is None:
+            plan = await self.planner.plan(request)
         runner = self._get_runner(plan.route)
         return await runner.run(
             request,

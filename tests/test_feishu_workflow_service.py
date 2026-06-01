@@ -5,7 +5,7 @@ import pytest
 from pathlib import Path
 
 from src.orchestration.conversation import ConversationRequest
-from src.orchestration.conversation import ContentRoute
+from src.orchestration.conversation import ContentRoute, WorkflowPlan
 from src.orchestration.feishu_interactions import FeishuInteractionTools, InteractionDecision
 from src.orchestration.feishu_workflow import FeishuWorkflowService
 from src.orchestration.schemas import DeliveryPackage, ResultEnvelope
@@ -160,6 +160,45 @@ class FakeOrchestrator:
 
     async def plan(self, request: ConversationRequest):
         return type("_Plan", (), {"route": request.route_hint or ContentRoute.IMAGE_POST})()
+
+
+class OneShotPlanner:
+    def __init__(self, plan: WorkflowPlan) -> None:
+        self.selected_plan = plan
+        self.calls = 0
+
+    async def plan(self, request: ConversationRequest) -> WorkflowPlan:
+        self.calls += 1
+        return self.selected_plan
+
+
+class PlannedOrchestrator(FakeOrchestrator):
+    def __init__(self, plan: WorkflowPlan) -> None:
+        super().__init__()
+        self.planner = OneShotPlanner(plan)
+        self.received_plan: WorkflowPlan | None = None
+        self.run_ids: list[str | None] = []
+
+    async def run_request(
+        self,
+        request: ConversationRequest,
+        *,
+        chat_id: str | None = None,
+        run_id: str | None = None,
+        send_to_feishu: bool = False,
+        plan: WorkflowPlan | None = None,
+    ) -> ResultEnvelope[DeliveryPackage]:
+        self.calls.append((request, chat_id))
+        self.received_plan = plan
+        self.run_ids.append(run_id)
+        route = plan.route.value if plan is not None else "missing_plan"
+        return ResultEnvelope[DeliveryPackage].success(
+            agent_name="delivery",
+            payload=DeliveryPackage(route=route, title=request.topic, summary="done"),
+            summary="done",
+            run_id=run_id or "run-demo",
+            step_id="delivery",
+        )
 
 
 class CancellableOrchestrator(FakeOrchestrator):
@@ -449,6 +488,33 @@ async def test_workflow_service_autonomous_request_does_not_force_choices() -> N
     assert request.topic == "近期小红书高互动生活方式内容趋势"
     assert notifier.sent_cards == []
     assert notifier.sent_forms == []
+
+
+@pytest.mark.anyio
+async def test_workflow_service_passes_single_planned_route_to_execution() -> None:
+    session = FakeSession()
+    notifier = FakeNotifier()
+    plan = WorkflowPlan(route=ContentRoute.ARTICLE_POST, rationale="planned once")
+    orchestrator = PlannedOrchestrator(plan)
+    interactions = RecordingInteractionTools()
+
+    async def fake_acquire(*, workflow: str, summary: str):
+        return session, None
+
+    service = FeishuWorkflowService(
+        notifier=notifier,
+        orchestrator=orchestrator,
+        acquire_session=fake_acquire,
+        interaction_tools=interactions,
+    )
+
+    await service.handle_text("不指定路线，你自己决定，最后发飞书。")
+
+    assert orchestrator.planner.calls == 1
+    assert orchestrator.received_plan is plan
+    assert orchestrator.run_ids[0].endswith("-article_post")
+    assert interactions.calls == ["clarify", "started:article_post", "delivered:success"]
+    assert "running_article_post" in session.phases
 
 
 @pytest.mark.anyio

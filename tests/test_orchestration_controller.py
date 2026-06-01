@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.orchestration.controller import FeishuContentOrchestrator, FeishuContentPlanner
-from src.orchestration.conversation import ContentRoute, ConversationRequest
+from src.orchestration.conversation import ContentRoute, ConversationRequest, WorkflowPlan
 from src.orchestration.run_options import ImagePostRunOptions, ImageRunOptions, ResearchRunOptions
 from src.orchestration.schemas import DeliveryPackage, ResultEnvelope
 from src.orchestration.skills import ProjectSkillRegistry
@@ -207,6 +207,39 @@ async def test_orchestrator_dispatches_to_selected_route_runner(tmp_path: Path) 
     assert video_runner.calls[0]["send_to_feishu"] is True
     assert not image_runner.calls
     assert not article_runner.calls
+
+
+@pytest.mark.anyio
+async def test_orchestrator_uses_precomputed_plan_without_replanning(tmp_path: Path) -> None:
+    planning_agent = FakePlanningAgent(route=ContentRoute.IMAGE_POST)
+    planner = FeishuContentPlanner(
+        skill_registry=ProjectSkillRegistry(skills_root=tmp_path),
+        planning_agent=planning_agent,
+    )
+    image_runner = FakeRunner("image_post")
+    article_runner = FakeRunner("article_post")
+    orchestrator = FeishuContentOrchestrator(
+        planner=planner,
+        image_runner=image_runner,
+        article_runner=article_runner,
+    )
+
+    result = await orchestrator.run_request(
+        ConversationRequest(
+            topic="小红书趋势观察",
+            audience="内容运营",
+            message="你自己决定路线，最后发飞书。",
+        ),
+        run_id="run-preplanned",
+        plan=WorkflowPlan(route=ContentRoute.ARTICLE_POST, rationale="planned once by workflow service"),
+    )
+
+    assert result.payload is not None
+    assert result.payload.route == "article_post"
+    assert len(article_runner.calls) == 1
+    assert article_runner.calls[0]["run_id"] == "run-preplanned"
+    assert not image_runner.calls
+    assert planning_agent.calls == []
 
 
 @pytest.mark.anyio
