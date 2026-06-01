@@ -74,7 +74,7 @@ def test_formal_content_routes_exclude_outfit_and_styled_image_modules() -> None
     assert not (REPO_ROOT / "src" / "agents" / STYLED_MODULE).exists()
 
 
-def test_feishu_orchestrator_is_promoted_to_formal_app_module() -> None:
+def test_feishu_orchestrator_compatibility_app_module_remains() -> None:
     app_root = REPO_ROOT / "src" / "apps" / "feishu_orchestrator"
     assert app_root.is_dir()
     assert (app_root / "run.py").is_file()
@@ -108,6 +108,16 @@ def test_design_system_first_class_citizens_are_documented_and_present() -> None
     assert "Skill Protocol" in agents_doc
     assert "Prompt Templates" in agents_doc
     assert "Agent chooses" in agents_doc
+
+
+def test_agent_docs_identify_agent_os_as_formal_feishu_runtime() -> None:
+    agents_doc = (REPO_ROOT / "src" / "agents" / "AGENTS.md").read_text(encoding="utf-8")
+
+    assert "Feishu Agent OS Runtime" in agents_doc
+    assert "src/apps/feishu_agent_os/" in agents_doc
+    assert "compatibility shim" in agents_doc
+    assert "runtime parameters" in agents_doc
+    assert "keeps the main conversation context" in agents_doc
 
 
 def test_skill_protocol_is_not_branded_as_claude_style() -> None:
