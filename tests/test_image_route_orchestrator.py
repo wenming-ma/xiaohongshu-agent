@@ -165,6 +165,12 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
+def test_image_post_default_auto_image_cap_is_cover_plus_eight_details() -> None:
+    run_options = ImagePostRunOptions()
+
+    assert run_options.max_auto_images == 9
+
+
 @pytest.mark.anyio
 async def test_image_post_orchestrator_runs_real_flow_with_unified_envelopes(tmp_path: Path) -> None:
     sender = FakeSender()
