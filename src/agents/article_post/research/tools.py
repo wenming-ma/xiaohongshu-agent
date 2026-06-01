@@ -367,10 +367,16 @@ class ArticlePageReader:
 
 
 class GenericVideoTranscriber:
-    def __init__(self):
+    def __init__(self, *, max_filesize_mb: int = 30):
         self._transcriber = AudioTranscriber()
+        self.max_filesize_mb = max(1, max_filesize_mb)
 
     async def transcribe(self, url: str) -> TranscriptResult:
+        if not self._media_tools_available():
+            return TranscriptResult(
+                error_message="ffmpeg/ffprobe 不可用，跳过视频转录",
+            )
+
         temp_dir = Path(tempfile.mkdtemp(prefix="article-video-", dir=PathConfig.DOWNLOADS_DIR))
         try:
             video_path = await self._download(url, temp_dir)
@@ -387,6 +393,10 @@ class GenericVideoTranscriber:
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
+    @staticmethod
+    def _media_tools_available() -> bool:
+        return bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
+
     async def _download(self, url: str, temp_dir: Path) -> Path:
         import yt_dlp
 
@@ -394,13 +404,15 @@ class GenericVideoTranscriber:
 
         def _sync_download() -> Path:
             opts = {
-                "format": "best[ext=mp4]/best",
+                "format": "bestaudio[ext=m4a]/bestaudio/best[height<=360]/best",
                 "outtmpl": output_template,
                 "quiet": True,
+                "noprogress": True,
                 "no_warnings": True,
                 "merge_output_format": "mp4",
                 "socket_timeout": 30,
                 "retries": 2,
+                "max_filesize": self.max_filesize_mb * 1024 * 1024,
             }
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)

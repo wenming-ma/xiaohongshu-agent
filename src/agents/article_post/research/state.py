@@ -90,6 +90,7 @@ class IterationExecution:
     notes: list[CompressedResearchNote] = field(default_factory=list)
     collected: list[CollectedSource] = field(default_factory=list)
     digests: list[SourceDigest] = field(default_factory=list)
+    video_transcript_attempts: int = 0
     synthesized: bool = True
     skip_reason: str = ""
 

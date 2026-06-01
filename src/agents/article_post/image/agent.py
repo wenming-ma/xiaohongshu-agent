@@ -50,8 +50,9 @@ class ImageAgent(BaseAgent):
         topic: str,
         target_audience: str,
         output_dir: Path,
+        max_images: int | None = None,
     ) -> ArticleImageResult:
-        specs = self._build_specs(content, research)
+        specs = self._build_specs(content, research, max_images=max_images)
         generated: list[GeneratedArticleImage] = []
         for spec in specs:
             generated.append(
@@ -120,6 +121,7 @@ class ImageAgent(BaseAgent):
     def _build_specs(
         content: XHSArticleContent,
         research: ArticleResearchResult,
+        max_images: int | None = None,
     ) -> list[ArticleImageSpec]:
         article_outline = [
             f"第{idx}章：{section.heading.strip()}"
@@ -168,6 +170,8 @@ class ImageAgent(BaseAgent):
                 continue
             seen_keys.add(spec.image_key)
             deduped.append(spec)
+            if max_images is not None and len(deduped) >= max(1, max_images):
+                break
         return deduped
 
     @classmethod

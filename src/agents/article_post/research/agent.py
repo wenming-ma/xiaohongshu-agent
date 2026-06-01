@@ -14,8 +14,9 @@ import logfire
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
-from ....config.settings import PathConfig, RetryConfig
+from ....config.settings import ArticleResearchConfig, PathConfig, RetryConfig
 from ....core.base_agent import BaseAgent, ValidationResult
+from ....orchestration.run_options import ArticleResearchRunOptions
 from ....utils.logger import get_logger
 from ....utils.providers import get_text_model
 from ..schemas import ArticleResearchResult, ArticleSource, ArticleSourceType, ArticleStrategy, SourceDigest, VideoTranscript
@@ -244,11 +245,15 @@ class CollectorCurator:
         max_curated_sources_per_task: int = 3,
         max_curated_video_sources_per_task: int = 2,
         min_curated_sources_for_note_compression: int = 2,
+        include_mixed_video_queries: bool = False,
+        video_max_filesize_mb: int = 30,
     ):
         self.model = model or get_text_model()
         self.search_client = search_client or DomainSearchClient()
         self.page_reader = page_reader or ArticlePageReader()
-        self.video_transcriber = video_transcriber or GenericVideoTranscriber()
+        self.video_transcriber = video_transcriber or GenericVideoTranscriber(
+            max_filesize_mb=video_max_filesize_mb,
+        )
         self.chunker = chunker or SourceChunker()
         self.note_compressor = note_compressor or Agent(
             model=self.model,
@@ -266,6 +271,7 @@ class CollectorCurator:
         self.MAX_CURATED_SOURCES_PER_TASK = max_curated_sources_per_task
         self.MAX_CURATED_VIDEO_SOURCES_PER_TASK = max_curated_video_sources_per_task
         self.MIN_CURATED_SOURCES_FOR_NOTE_COMPRESSION = min_curated_sources_for_note_compression
+        self.INCLUDE_MIXED_VIDEO_QUERIES = include_mixed_video_queries
 
     async def execute_iteration(self, state: ResearchState, tasks: list[ResearchTask]) -> IterationExecution:
         candidate_pool, task_candidates = await self.search_candidates(tasks, state)
@@ -406,7 +412,7 @@ class CollectorCurator:
     ) -> list[CollectedSourceCandidate]:
         collected: list[CollectedSourceCandidate] = []
         current_execution = execution or state.current_execution or IterationExecution()
-        videos_used = sum(1 for source in state.collected_sources if source.transcript)
+        videos_used = current_execution.video_transcript_attempts
         wants_video = self._task_wants_video(task, state.strategy)
         remaining_slots = self.MAX_SOURCE_PAGES - len(current_execution.collected)
         if remaining_slots <= 0 or not candidates:
@@ -447,6 +453,8 @@ class CollectorCurator:
             ):
                 video_url = select_best_video_url(read_result, result.url)
                 if video_url:
+                    videos_used += 1
+                    current_execution.video_transcript_attempts = videos_used
                     transcript_result = await self.video_transcriber.transcribe(video_url)
                     if transcript_result.success:
                         source_type = (
@@ -456,7 +464,8 @@ class CollectorCurator:
                         )
                         transcript_text = transcript_result.transcript
                         duration_seconds = transcript_result.duration_seconds
-                        videos_used += 1
+                    else:
+                        logger.info("跳过视频转录(失败): %s error=%s", video_url, transcript_result.error_message[:160])
                 else:
                     logger.info("跳过视频转录(缺少可用视频地址): %s", result.url)
 
@@ -830,8 +839,7 @@ class CollectorCurator:
     def compile_task_queries(self, task: ResearchTask) -> list[str]:
         return self._compile_task_queries(task)
 
-    @staticmethod
-    def _compile_task_queries(task: ResearchTask) -> list[str]:
+    def _compile_task_queries(self, task: ResearchTask) -> list[str]:
         article_seed = [item.strip() for item in task.article_queries if item.strip()]
         video_seed = [item.strip() for item in task.video_queries if item.strip()]
         goal_seed = task.goal.strip() if task.goal.strip() else "women lifestyle trend"
@@ -843,8 +851,10 @@ class CollectorCurator:
         video_queries = build_site_queries(video_seed[:2], VIDEO_MEDIA_DOMAINS, max_domains_per_query=2, max_total_queries=4)
         article_open_queries = [q for q in article_seed[:2] if q]
         video_open_queries = [q for q in video_seed[:1] if q]
-        if "video" in task.source_focus.lower():
+        if self._is_video_focused_task(task):
             return unique_keep_order(video_queries + video_open_queries + article_queries + article_open_queries[:1])
+        if not self.INCLUDE_MIXED_VIDEO_QUERIES:
+            return unique_keep_order(article_queries + article_open_queries)
         return unique_keep_order(article_queries + article_open_queries + video_queries + video_open_queries)
 
 class SynthesizerValidator:
@@ -1173,50 +1183,61 @@ class ResearchAgent(BaseAgent):
     role = "跨站深度研究员"
     goal = "从海外高质量女性向媒体中提取高价值文章和视频信息"
 
-    MIN_SOURCE_PAGES = 8
-    MIN_UNIQUE_DOMAINS = 6
-    MAX_SOURCE_PAGES = 10
-    MAX_VIDEO_TRANSCRIPTS = 2
-    MAX_ITERATIONS = 3
-    SEARCH_CONCURRENCY = 3
-    PAGE_VISIT_CONCURRENCY = 3
-    MAX_TASKS_PER_ITERATION = 4
-    MIN_CURATION_QUALITY_SCORE = 72.0
-    MAX_CURATED_SOURCES_PER_TASK = 3
-    MAX_CURATED_VIDEO_SOURCES_PER_TASK = 2
-    MIN_CURATED_SOURCES_FOR_NOTE_COMPRESSION = 2
-    MIN_DIGESTS_FOR_FULL_SYNTHESIS = 2
+    MIN_SOURCE_PAGES = ArticleResearchConfig.MIN_SOURCE_PAGES
+    MIN_UNIQUE_DOMAINS = ArticleResearchConfig.MIN_UNIQUE_DOMAINS
+    MAX_SOURCE_PAGES = ArticleResearchConfig.MAX_SOURCE_PAGES
+    MAX_VIDEO_TRANSCRIPTS = ArticleResearchConfig.MAX_VIDEO_TRANSCRIPTS
+    MAX_ITERATIONS = ArticleResearchConfig.MAX_ITERATIONS
+    SEARCH_CONCURRENCY = ArticleResearchConfig.SEARCH_CONCURRENCY
+    PAGE_VISIT_CONCURRENCY = ArticleResearchConfig.PAGE_VISIT_CONCURRENCY
+    MAX_TASKS_PER_ITERATION = ArticleResearchConfig.MAX_TASKS_PER_ITERATION
+    MIN_CURATION_QUALITY_SCORE = ArticleResearchConfig.MIN_CURATION_QUALITY_SCORE
+    MAX_CURATED_SOURCES_PER_TASK = ArticleResearchConfig.MAX_CURATED_SOURCES_PER_TASK
+    MAX_CURATED_VIDEO_SOURCES_PER_TASK = ArticleResearchConfig.MAX_CURATED_VIDEO_SOURCES_PER_TASK
+    MIN_CURATED_SOURCES_FOR_NOTE_COMPRESSION = ArticleResearchConfig.MIN_CURATED_SOURCES_FOR_NOTE_COMPRESSION
+    MIN_DIGESTS_FOR_FULL_SYNTHESIS = ArticleResearchConfig.MIN_DIGESTS_FOR_FULL_SYNTHESIS
 
-    def __init__(self):
+    def __init__(self, run_options: ArticleResearchRunOptions | None = None):
+        self.run_options = run_options or ArticleResearchRunOptions()
         self._current_state: ResearchState | None = None
         super().__init__()
+
+    def _run_options(self) -> ArticleResearchRunOptions:
+        options = getattr(self, "run_options", None)
+        if options is None:
+            options = ArticleResearchRunOptions()
+            self.run_options = options
+        return options
 
     def init_tools(self) -> None:
         self.model = get_text_model()
 
     def init_agent(self) -> None:
+        options = self._run_options()
         self.planner = IterationPlanner(
-            max_tasks_per_iteration=self.MAX_TASKS_PER_ITERATION,
+            max_tasks_per_iteration=options.max_tasks_per_iteration,
         )
         self.collector = CollectorCurator(
             model=self.model,
-            search_concurrency=self.SEARCH_CONCURRENCY,
-            page_visit_concurrency=self.PAGE_VISIT_CONCURRENCY,
-            max_source_pages=self.MAX_SOURCE_PAGES,
-            max_video_transcripts=self.MAX_VIDEO_TRANSCRIPTS,
-            min_curation_quality_score=self.MIN_CURATION_QUALITY_SCORE,
-            max_curated_sources_per_task=self.MAX_CURATED_SOURCES_PER_TASK,
-            max_curated_video_sources_per_task=self.MAX_CURATED_VIDEO_SOURCES_PER_TASK,
-            min_curated_sources_for_note_compression=self.MIN_CURATED_SOURCES_FOR_NOTE_COMPRESSION,
+            search_concurrency=options.search_concurrency,
+            page_visit_concurrency=options.page_visit_concurrency,
+            max_source_pages=options.max_source_pages,
+            max_video_transcripts=options.max_video_transcripts,
+            min_curation_quality_score=options.min_curation_quality_score,
+            max_curated_sources_per_task=options.max_curated_sources_per_task,
+            max_curated_video_sources_per_task=options.max_curated_video_sources_per_task,
+            min_curated_sources_for_note_compression=options.min_curated_sources_for_note_compression,
+            include_mixed_video_queries=options.include_mixed_video_queries,
+            video_max_filesize_mb=options.video_max_filesize_mb,
         )
         self.synthesizer = SynthesizerValidator(
             model=self.model,
             chunker=self.collector.chunker,
             digestor=self.collector.digestor,
-            min_source_pages=self.MIN_SOURCE_PAGES,
-            min_unique_domains=self.MIN_UNIQUE_DOMAINS,
-            max_iterations=self.MAX_ITERATIONS,
-            min_digests_for_full_synthesis=self.MIN_DIGESTS_FOR_FULL_SYNTHESIS,
+            min_source_pages=options.min_source_pages,
+            min_unique_domains=options.min_unique_domains,
+            max_iterations=options.max_iterations,
+            min_digests_for_full_synthesis=options.min_digests_for_full_synthesis,
         )
         self.rules_validator = self.synthesizer.rules_validator
         self.review_validator = self.synthesizer.review_validator
@@ -1230,7 +1251,7 @@ class ResearchAgent(BaseAgent):
     ) -> ArticleResearchResult:
         state = self.create_state(topic, target_audience, strategy, output_dir)
         with logfire.span("article_research:workflow", topic=topic, strategy=strategy.value):
-            for iteration in range(self.MAX_ITERATIONS):
+            for iteration in range(self._run_options().max_iterations):
                 with logfire.span("article_research:iteration", iteration=iteration + 1):
                     await self.step(state, iteration)
                     execution = state.current_execution
@@ -1247,8 +1268,8 @@ class ResearchAgent(BaseAgent):
                         return state.current_result
                     self.on_validation_failed(state, iteration, validation.feedback)
 
-            logger.warning("研究审核 %d 轮全部未通过，降级使用最后一轮结果继续后续阶段", self.MAX_ITERATIONS)
-            self.finalize(state, self.MAX_ITERATIONS)
+            logger.warning("研究审核 %d 轮全部未通过，降级使用最后一轮结果继续后续阶段", self._run_options().max_iterations)
+            self.finalize(state, self._run_options().max_iterations)
             return state.current_result
 
     def create_state(
@@ -1273,7 +1294,7 @@ class ResearchAgent(BaseAgent):
         state: ResearchState,
         iteration: int,
     ) -> None:
-        logger.info("第 %d/%d 轮长文研究", iteration + 1, self.MAX_ITERATIONS)
+        logger.info("第 %d/%d 轮长文研究", iteration + 1, self._run_options().max_iterations)
         state.begin_iteration(iteration + 1)
         state.current_iteration_plan = await self.planner.plan_iteration(
             state,

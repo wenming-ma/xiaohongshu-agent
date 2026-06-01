@@ -56,6 +56,7 @@ from src.agents.article_post.research.tools import (
     CollectedSource,
     CollectedSourceCandidate,
     DomainSearchClient,
+    GenericVideoTranscriber,
     LocalEvidenceStore,
     ReadPageResult,
     SearchResult,
@@ -66,6 +67,7 @@ from src.agents.article_post.utils.research import (
     save_iteration_result,
     save_latest_snapshot,
 )
+from src.orchestration.run_options import ArticlePostRunOptions, ArticleResearchRunOptions
 
 
 def _build_valid_article_research_result(
@@ -134,6 +136,42 @@ def test_article_build_site_queries_caps_total_queries() -> None:
     assert scoped[0] == 'site:allure.com "capsule wardrobe"'
     assert scoped[1] == 'site:byrdie.com "capsule wardrobe"'
     assert scoped[2] == 'site:elle.com "spring outfits"'
+
+
+def test_article_image_specs_honor_max_images() -> None:
+    research = _build_valid_article_research_result()
+    content = XHSArticleContent(
+        title="轻断网生活",
+        lead="这是一段足够长的导语，用来说明为什么下班后轻断网值得被收藏和实践。",
+        sections=[
+            ArticleSection(
+                heading="先从睡前开始",
+                summary="睡前半小时减少手机刺激。",
+                blocks=[
+                    ArticleBlock(
+                        block_type=ArticleBlockType.IMAGE_SLOT,
+                        image_key="section_1",
+                    )
+                ],
+            ),
+            ArticleSection(
+                heading="再整理通知",
+                summary="把不必要的信息入口关掉。",
+                blocks=[
+                    ArticleBlock(
+                        block_type=ArticleBlockType.IMAGE_SLOT,
+                        image_key="section_2",
+                    )
+                ],
+            ),
+        ],
+        closing="先挑一条做起来就好。",
+        rendered_body="正文",
+    )
+
+    specs = ImageAgent._build_specs(content, research, max_images=1)
+
+    assert [spec.image_key for spec in specs] == ["cover"]
 
 
 def test_article_research_iteration_result_is_saved(tmp_path) -> None:
@@ -955,6 +993,40 @@ def test_article_compile_task_queries_uses_video_domains_for_video_focus() -> No
     assert "French girl style interview" in queries
 
 
+def test_article_compile_task_queries_skips_video_domains_for_mixed_tasks_by_default() -> None:
+    agent = ResearchAgent()
+    task = ResearchTask(
+        task_id="task_mixed",
+        goal="Find lifestyle trend sources",
+        source_focus="mixed",
+        article_queries=["lifestyle trends 2026"],
+        video_queries=["lifestyle trend interview"],
+    )
+
+    queries = agent._compile_task_queries(task)
+
+    assert queries
+    assert all("youtube.com" not in query and "vimeo.com" not in query for query in queries)
+    assert "lifestyle trend interview" not in queries
+
+
+def test_article_run_options_can_enable_mixed_video_queries() -> None:
+    agent = ResearchAgent(
+        run_options=ArticleResearchRunOptions(include_mixed_video_queries=True)
+    )
+    task = ResearchTask(
+        task_id="task_mixed",
+        goal="Find lifestyle trend sources",
+        source_focus="mixed",
+        article_queries=["lifestyle trends 2026"],
+        video_queries=["lifestyle trend interview"],
+    )
+
+    queries = agent._compile_task_queries(task)
+
+    assert 'site:youtube.com "lifestyle trend interview"' in queries
+
+
 def test_article_visit_and_collect_sources_reads_pages_concurrently() -> None:
     class FakePageReader:
         def __init__(self) -> None:
@@ -1078,6 +1150,81 @@ def test_article_visit_and_collect_sources_uses_video_result_url_when_page_has_n
 
     assert collected == []
     assert agent.collector.video_transcriber.calls == ["https://www.youtube.com/watch?v=abc123"]
+
+
+def test_article_video_transcript_failures_consume_attempt_budget() -> None:
+    class FakePageReader:
+        async def read_page(self, url: str) -> ReadPageResult:
+            return ReadPageResult(
+                ok=True,
+                url=url,
+                final_url=url,
+                title="Video Source",
+                author="Creator",
+                published_at="2026-03-15",
+                text="x" * 1600,
+                headings=["Heading"],
+                paragraphs=["Paragraph"],
+            )
+
+    class FakeVideoTranscriber:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def transcribe(self, url: str) -> TranscriptResult:
+            self.calls.append(url)
+            return TranscriptResult(error_message="ffmpeg unavailable")
+
+    agent = ResearchAgent(
+        run_options=ArticleResearchRunOptions(max_video_transcripts=1)
+    )
+    agent.collector.page_reader = FakePageReader()
+    agent.collector.video_transcriber = FakeVideoTranscriber()
+    state = ResearchState(
+        topic="video backed trend",
+        target_audience="readers",
+        strategy=ArticleStrategy.REPURPOSE_VIDEO,
+        output_dir=None,
+    )
+    state.begin_iteration(1)
+    task = ResearchTask(
+        task_id="task_video",
+        goal="Collect video evidence",
+        source_focus="video",
+        video_queries=["trend interview"],
+    )
+    candidates = [
+        (
+            "video_query",
+            SearchResult(
+                title=f"Interview {idx}",
+                url=f"https://www.youtube.com/watch?v=abc12{idx}",
+                snippet="Video snippet",
+                domain="www.youtube.com",
+                rank=idx,
+            ),
+        )
+        for idx in range(1, 3)
+    ]
+
+    collected = asyncio.run(agent._visit_and_collect_sources(task, candidates, state))
+
+    assert collected == []
+    assert agent.collector.video_transcriber.calls == ["https://www.youtube.com/watch?v=abc121"]
+    assert state.current_execution is not None
+    assert state.current_execution.video_transcript_attempts == 1
+
+
+def test_generic_video_transcriber_skips_download_when_media_tools_are_missing(monkeypatch) -> None:
+    transcriber = GenericVideoTranscriber()
+    transcriber._download = AsyncMock(side_effect=AssertionError("download should not run"))
+    monkeypatch.setattr("src.agents.article_post.research.tools.shutil.which", lambda _name: None)
+
+    result = asyncio.run(transcriber.transcribe("https://www.youtube.com/watch?v=abc123"))
+
+    assert not result.success
+    assert "ffmpeg/ffprobe" in result.error_message
+    transcriber._download.assert_not_called()
 
 
 def test_article_researcher_prioritizes_topical_candidates_before_collection() -> None:

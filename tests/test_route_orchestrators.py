@@ -28,6 +28,12 @@ from src.agents.video_post.schemas import (
 )
 from src.orchestration.article_route import ArticlePostOrchestrator
 from src.orchestration.conversation import ConversationRequest
+from src.orchestration.run_options import (
+    ArticleContentRunOptions,
+    ArticleImageRunOptions,
+    ArticlePostRunOptions,
+    ArticleResearchRunOptions,
+)
 from src.orchestration.video_route import VideoPostOrchestrator
 
 
@@ -53,6 +59,13 @@ class FakeArticleResearchAgent:
             claims=[ArticleClaim(claim="关键论点", source_refs=["src-1"])],
             keywords=["知识点"],
         )
+
+
+class OptionsRecordingArticleResearchAgent(FakeArticleResearchAgent):
+    seen_run_options = None
+
+    def __init__(self, run_options=None) -> None:
+        type(self).seen_run_options = run_options
 
 
 class FakeArticleContentAgent:
@@ -96,7 +109,16 @@ class FakeArticleContentAgent:
         )
 
 
+class OptionsRecordingArticleContentAgent(FakeArticleContentAgent):
+    seen_run_options = None
+
+    def __init__(self, run_options=None) -> None:
+        type(self).seen_run_options = run_options
+
+
 class FakeArticleImageAgent:
+    seen_max_images = None
+
     async def forward(
         self,
         content: XHSArticleContent,
@@ -104,7 +126,9 @@ class FakeArticleImageAgent:
         topic: str,
         target_audience: str,
         output_dir: Path,
+        max_images: int | None = None,
     ):
+        type(self).seen_max_images = max_images
         image_path = output_dir / "cover.png"
         image_path.write_bytes(b"fake-image")
         return ArticleImageResult(
@@ -230,6 +254,38 @@ async def test_article_post_orchestrator_runs_specialist_agents_into_delivery_en
     assert len(result.payload.artifacts) == 1
     assert result.payload.artifacts[0].artifact_type == "image"
     assert sender.sent[0][1] == "chat-article"
+
+
+@pytest.mark.anyio
+async def test_article_post_orchestrator_passes_run_options_to_research_agent(tmp_path: Path) -> None:
+    OptionsRecordingArticleResearchAgent.seen_run_options = None
+    OptionsRecordingArticleContentAgent.seen_run_options = None
+    FakeArticleImageAgent.seen_max_images = None
+    run_options = ArticlePostRunOptions(
+        research=ArticleResearchRunOptions(max_iterations=1, max_source_pages=2),
+        content=ArticleContentRunOptions(max_iterations=2),
+        image=ArticleImageRunOptions(max_images=1),
+    )
+    orchestrator = ArticlePostOrchestrator(
+        workspace_root=tmp_path,
+        research_agent_factory=OptionsRecordingArticleResearchAgent,
+        content_agent_factory=OptionsRecordingArticleContentAgent,
+        image_agent_factory=FakeArticleImageAgent,
+        run_options=run_options,
+    )
+
+    result = await orchestrator.run(
+        ConversationRequest(topic="长文整理", audience="职场新人"),
+        run_id="run-article-options",
+    )
+
+    assert OptionsRecordingArticleResearchAgent.seen_run_options is run_options.research
+    assert OptionsRecordingArticleContentAgent.seen_run_options is run_options.content
+    assert FakeArticleImageAgent.seen_max_images == 1
+    assert result.payload is not None
+    assert result.payload.metadata["run_options"]["research"]["max_iterations"] == 1
+    assert result.payload.metadata["run_options"]["content"]["max_iterations"] == 2
+    assert result.payload.metadata["run_options"]["image"]["max_images"] == 1
 
 
 @pytest.mark.anyio

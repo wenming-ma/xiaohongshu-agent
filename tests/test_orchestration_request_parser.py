@@ -79,3 +79,25 @@ def test_parse_asset_collection_request_preserves_intent_in_message() -> None:
 
     assert "搜集并生成图片" in request.message
     assert request.style_constraints == ["纯色背景"]
+
+
+def test_parse_reference_image_path_from_feishu_text() -> None:
+    request = parse_conversation_request(
+        r"参考图: C:\tmp\look.png；做 1 张图，主题=通勤配饰平铺；风格=纯色背景,无人物。"
+    )
+
+    assert request.reference_images == [r"C:\tmp\look.png"]
+    assert request.topic == "通勤配饰平铺"
+    assert request.image_count == 1
+    assert request.style_constraints == ["纯色背景", "无人物"]
+
+
+def test_parse_inserted_image_message_path_as_reference_image() -> None:
+    request = parse_conversation_request(
+        "[用户发送图片]\n"
+        r"path: C:\tmp\reference-outfit.png"
+        "\ncaption: 参考里面的蓝色外套和金色耳环，做 1 张纯色背景穿搭图。"
+    )
+
+    assert request.reference_images == [r"C:\tmp\reference-outfit.png"]
+    assert "蓝色外套" in request.message

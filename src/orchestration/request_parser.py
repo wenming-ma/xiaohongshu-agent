@@ -6,6 +6,11 @@ from .conversation import ContentRoute, ConversationRequest
 
 
 _KEY_VALUE_PATTERN = re.compile(r"(主题|受众|路线|风格|数量|图片数)\s*[:=：]\s*([^；;\n]+)")
+_REFERENCE_IMAGE_PATTERN = re.compile(
+    r"(?:参考图(?:片)?(?:路径)?|reference(?:_image)?|reference image)\s*[:=：]\s*([^；;\n]+)",
+    re.IGNORECASE,
+)
+_INSERTED_IMAGE_PATH_PATTERN = re.compile(r"^\s*path\s*[:=：]\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 
 _CHINESE_NUMBERS = {
     "一": 1,
@@ -59,6 +64,25 @@ def _extract_key_values(text: str) -> dict[str, str]:
     return values
 
 
+def _split_reference_paths(value: str) -> list[str]:
+    refs: list[str] = []
+    for item in re.split(r"[,，、]", value):
+        cleaned = item.strip().strip("\"'“”‘’")
+        if cleaned:
+            refs.append(cleaned)
+    return refs
+
+
+def _extract_reference_images(text: str) -> list[str]:
+    refs: list[str] = []
+    for match in _REFERENCE_IMAGE_PATTERN.finditer(text):
+        refs.extend(_split_reference_paths(match.group(1)))
+    if "[用户发送图片]" in text or "[用户补充参考图]" in text:
+        for match in _INSERTED_IMAGE_PATH_PATTERN.finditer(text):
+            refs.extend(_split_reference_paths(match.group(1)))
+    return list(dict.fromkeys(refs))
+
+
 def _normalize_route(value: str | None) -> ContentRoute | None:
     if not value:
         return None
@@ -98,7 +122,7 @@ def _extract_topic(text: str, *, audience: str | None) -> str:
             return f"适合{audience}的内容探索"
         return "飞书内容探索"
 
-    without_structured = _KEY_VALUE_PATTERN.sub("", text)
+    without_structured = _REFERENCE_IMAGE_PATTERN.sub("", _KEY_VALUE_PATTERN.sub("", text))
     cleaned = _strip_command_noise(without_structured)
     cleaned = re.sub(r"(最后)?发到飞书.*$", "", cleaned)
     cleaned = re.sub(r"(请)?执行.*$", "", cleaned)
@@ -163,6 +187,7 @@ def parse_conversation_request(text: str) -> ConversationRequest:
         topic = f"适合{audience}的内容探索"
     styles = _extract_style_constraints(raw, values.get("风格"))
     image_count = _extract_image_count(values.get("数量", "") or values.get("图片数", "") or raw)
+    reference_images = _extract_reference_images(raw)
 
     return ConversationRequest(
         topic=topic,
@@ -171,4 +196,5 @@ def parse_conversation_request(text: str) -> ConversationRequest:
         route_hint=route_hint,
         style_constraints=styles,
         image_count=image_count,
+        reference_images=reference_images,
     )

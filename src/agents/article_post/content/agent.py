@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic_ai import Agent
 
-from ....config.settings import ReviewConfig, RetryConfig
+from ....config.settings import ArticleContentConfig, RetryConfig
 from ....core.base_agent import BaseAgent, ValidationResult
 from ....utils.logger import get_logger
 from ....utils.providers import get_text_model
@@ -36,8 +36,9 @@ class ContentAgent(BaseAgent):
     goal = "基于深度研究创作可发布的小红书长文"
     MAX_HISTORY_ROUNDS = 1
 
-    def __init__(self, max_iterations: int | None = None):
-        self.max_iterations = max_iterations or min(ReviewConfig.MAX_ITERATIONS, 13)
+    def __init__(self, max_iterations: int | None = None, run_options: Any | None = None):
+        configured_iterations = getattr(run_options, "max_iterations", None)
+        self.max_iterations = max_iterations or configured_iterations or ArticleContentConfig.MAX_ITERATIONS
         super().__init__()
         self.init_validators()
 

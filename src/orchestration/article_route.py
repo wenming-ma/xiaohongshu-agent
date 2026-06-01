@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import inspect
 from pathlib import Path
 import mimetypes
 import re
@@ -20,6 +21,7 @@ from src.config.settings import PathConfig
 
 from .conversation import ConversationRequest
 from .request_brief import RequestBrief, build_request_brief
+from .run_options import ArticlePostRunOptions
 from .schemas import ArtifactRef, DeliveryPackage, DeliveryTextBlock, ResultEnvelope
 from .style_context import StyleContext
 from .workspace import WorkflowWorkspace
@@ -55,6 +57,7 @@ def _build_article_delivery_package(
     content: XHSArticleContent,
     images: ArticleImageResult,
     style_context: StyleContext,
+    run_options: ArticlePostRunOptions | None = None,
 ) -> DeliveryPackage:
     hashtags = " ".join(f"#{tag}" for tag in content.hashtags)
     artifacts = [
@@ -82,6 +85,7 @@ def _build_article_delivery_package(
             "style_context": style_context.metadata(),
             "source_count": research.sources_count,
             "image_count": len(artifacts),
+            "run_options": run_options.model_dump(mode="json") if run_options is not None else {},
         },
     )
 
@@ -95,12 +99,30 @@ class ArticlePostOrchestrator:
         research_agent_factory: type[ResearchAgent] = ResearchAgent,
         content_agent_factory: type[ContentAgent] = ContentAgent,
         image_agent_factory: type[ImageAgent] = ImageAgent,
+        run_options: ArticlePostRunOptions | None = None,
     ) -> None:
         self.workspace_root = workspace_root or PathConfig.ORCHESTRATION_RUN_DIR
         self.delivery_sender = delivery_sender
         self.research_agent_factory = research_agent_factory
         self.content_agent_factory = content_agent_factory
         self.image_agent_factory = image_agent_factory
+        self.run_options = run_options or ArticlePostRunOptions()
+
+    @staticmethod
+    def _instantiate_agent(factory: Any, *, run_options: Any | None = None) -> Any:
+        if run_options is None:
+            return factory()
+        try:
+            signature = inspect.signature(factory)
+        except (TypeError, ValueError):
+            return factory(run_options=run_options)
+        accepts_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        )
+        if "run_options" in signature.parameters or accepts_kwargs:
+            return factory(run_options=run_options)
+        return factory()
 
     async def run(
         self,
@@ -110,10 +132,15 @@ class ArticlePostOrchestrator:
         chat_id: str | None = None,
         send_to_feishu: bool = False,
         style_context: StyleContext | None = None,
-        run_options: Any | None = None,
+        run_options: ArticlePostRunOptions | None = None,
     ) -> ResultEnvelope[DeliveryPackage]:
         brief = build_request_brief(request)
         style_context = style_context or StyleContext.from_request(request)
+        resolved_run_options = (
+            run_options
+            if isinstance(run_options, ArticlePostRunOptions)
+            else self.run_options or ArticlePostRunOptions()
+        )
         resolved_run_id = run_id or f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{_safe_slug(brief.topic)}"
         workspace = WorkflowWorkspace.create(
             root_dir=self.workspace_root,
@@ -123,7 +150,17 @@ class ArticlePostOrchestrator:
             audience=brief.audience,
         )
 
-        research = await self.research_agent_factory().forward(
+        research_agent = self._instantiate_agent(
+            self.research_agent_factory,
+            run_options=resolved_run_options.research,
+        )
+        content_agent = self._instantiate_agent(
+            self.content_agent_factory,
+            run_options=resolved_run_options.content,
+        )
+        image_agent = self.image_agent_factory()
+
+        research = await research_agent.forward(
             topic=brief.execution_text,
             target_audience=brief.audience,
             strategy=ArticleStrategy.AUTO,
@@ -138,7 +175,7 @@ class ArticlePostOrchestrator:
         )
         workspace.save_envelope(research_envelope, label="research")
 
-        content = await self.content_agent_factory().forward(
+        content = await content_agent.forward(
             research=research,
             topic=brief.execution_text,
             target_audience=brief.audience,
@@ -155,12 +192,13 @@ class ArticlePostOrchestrator:
         )
         workspace.save_envelope(content_envelope, label="content")
 
-        images = await self.image_agent_factory().forward(
+        images = await image_agent.forward(
             content=content,
             research=research,
             topic=brief.execution_text,
             target_audience=brief.audience,
             output_dir=workspace.run_dir,
+            max_images=brief.image_count or resolved_run_options.image.max_images,
         )
         image_artifacts = [
             _image_artifact(image, style_context=style_context)
@@ -182,6 +220,7 @@ class ArticlePostOrchestrator:
             content=content,
             images=images,
             style_context=style_context,
+            run_options=resolved_run_options,
         )
         envelope = ResultEnvelope[DeliveryPackage].success(
             agent_name="review_delivery_agent",
