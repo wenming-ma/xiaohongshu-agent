@@ -13,6 +13,7 @@ from .schemas import (
     TaskStepSpec,
 )
 from .runtime import MainAgentRuntime
+from .tools import AgentTool, AgentToolContext, AgentToolRegistry
 
 __all__ = [
     "AgentOSEvent",
@@ -26,4 +27,7 @@ __all__ = [
     "TaskRunSpec",
     "TaskStepSpec",
     "MainAgentRuntime",
+    "AgentTool",
+    "AgentToolContext",
+    "AgentToolRegistry",
 ]
