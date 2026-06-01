@@ -17,6 +17,7 @@ from .tools import AgentTool, AgentToolContext, AgentToolRegistry
 from .store import AgentOSStore
 from .specialist_tools import build_route_tool_registry, conversation_request_from_task_spec
 from .resource_tools import AgentOSResourceTools
+from .feishu_tools import AgentOSFeishuTools
 
 __all__ = [
     "AgentOSEvent",
@@ -37,4 +38,5 @@ __all__ = [
     "build_route_tool_registry",
     "conversation_request_from_task_spec",
     "AgentOSResourceTools",
+    "AgentOSFeishuTools",
 ]
