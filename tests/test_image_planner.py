@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from src.orchestration.image_flow import (
     ImageTaskSubgraph,
     ImageWorkflowDeps,
     ImageWorkflowRunner,
+    ImageWorkflowState,
     image_workflow_module_graph,
 )
 from src.orchestration.schemas import (
@@ -28,6 +30,7 @@ from src.orchestration.schemas import (
     ResultEnvelope,
     WorkflowInvocation,
 )
+from src.config.settings import ImageConfig
 
 
 @pytest.fixture
@@ -104,6 +107,22 @@ def test_image_workflow_exposes_fixed_module_graph_contract() -> None:
 def test_image_graph_has_explicit_planner_node_and_task_subgraph() -> None:
     assert ImagePlannerNode.__name__ == "ImagePlannerNode"
     assert ImageTaskSubgraph.__name__ == "ImageTaskSubgraph"
+
+
+def test_image_workflow_default_auto_cap_is_cover_plus_eight_details(tmp_path: Path) -> None:
+    run_signature = inspect.signature(ImageWorkflowRunner.run)
+
+    assert run_signature.parameters["max_auto_images"].default == ImageConfig.MAX_AUTO_IMAGES == 9
+    assert (
+        ImageWorkflowState(
+            topic="默认 8+1 测试",
+            audience="内容团队",
+            run_id="run-default-cap",
+            workspace_dir=tmp_path,
+        ).max_auto_images
+        == ImageConfig.MAX_AUTO_IMAGES
+        == 9
+    )
 
 
 @pytest.mark.anyio

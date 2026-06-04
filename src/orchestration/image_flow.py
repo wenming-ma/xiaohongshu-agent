@@ -9,6 +9,7 @@ from typing import Awaitable, Callable
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 
 from src.agents.image_post.schemas import GroupSpec, ImageResult, ResearchResult, XHSContent
+from src.config.settings import ImageConfig
 
 from .schemas import DeliveryPackage, GroupingItem, GroupingResult, ImageTaskPlan, ResultEnvelope, WorkflowInvocation
 from .workflow_graph import ModuleGraphSpec, ModuleNodeSpec
@@ -40,7 +41,7 @@ class ImageWorkflowState:
     invocation: WorkflowInvocation | None = None
     image_count: int | None = None
     single_item_per_image: bool = False
-    max_auto_images: int | None = 5
+    max_auto_images: int | None = ImageConfig.MAX_AUTO_IMAGES
     image_generation_concurrency: int = 3
     research: ResultEnvelope[ResearchResult] | None = None
     groups: ResultEnvelope[GroupingResult] | None = None
@@ -289,7 +290,7 @@ class ImageWorkflowRunner:
         invocation: WorkflowInvocation | None = None,
         image_count: int | None = None,
         single_item_per_image: bool = False,
-        max_auto_images: int | None = 5,
+        max_auto_images: int | None = ImageConfig.MAX_AUTO_IMAGES,
         image_generation_concurrency: int = 3,
     ) -> ResultEnvelope[DeliveryPackage]:
         state = ImageWorkflowState(
