@@ -59,13 +59,38 @@ def test_formal_agents_do_not_include_publish_phase_or_direct_publish_url() -> N
         "Base" + "Pipeline",
     ]
     offenders: list[str] = []
-    for path in _tracked_text_files("src", "tests", "workshop"):
+    for path in _tracked_text_files("src", "tests", "scripts", "workshop"):
         if path.name == "test_feishu_first_architecture_boundaries.py":
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         for needle in forbidden:
             if needle in text:
                 offenders.append(f"{path.relative_to(REPO_ROOT).as_posix()} contains {needle}")
+    assert offenders == []
+
+
+def test_public_docs_do_not_describe_xhs_direct_publish_as_formal_flow() -> None:
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+
+    forbidden = [
+        "PublisherAgent",
+        "发布阶段",
+        "发布结果",
+        "XHS_PUBLISH_URL",
+        "自动发布",
+    ]
+    offenders = [needle for needle in forbidden if needle in readme]
+    assert offenders == []
+
+
+def test_scripts_do_not_import_direct_publish_agents() -> None:
+    offenders: list[str] = []
+    for path in _tracked_text_files("scripts"):
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for needle in ["PublisherAgent", ".publish import", "PublishConfig.XHS_PUBLISH_URL"]:
+            if needle in text:
+                offenders.append(f"{path.relative_to(REPO_ROOT).as_posix()} contains {needle}")
+
     assert offenders == []
 
 

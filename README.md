@@ -1,139 +1,100 @@
-# 小红书内容创作工具（Pydantic-AI）
+# 小红书风格内容 Agent OS
 
-基于 Pydantic-AI 和 Playwright MCP Server 的小红书内容自动创作工具。
+这是一个 Feishu-first 的内容创作系统。用户通过飞书和常驻主 Agent 对话，主 Agent 负责理解目标、追问缺失信息、选择 Skill 和 Prompt 模板，并把任务启动为后台专项工作流。最终交付统一回到飞书，不直接向小红书发布。
 
-## 核心功能
+## 核心能力
 
-- **智能研究**：支持站内研究、跨站深搜、文章精读和视频转录
-- **内容创作**：基于研究数据生成图文、视频文案和小红书长文
-
-## 技术栈
-
-- **pydantic-ai**: AI Agent 框架
-- **Playwright MCP Server**: 浏览器自动化
-- **Anthropic + MiniMax + OpenRouter**: 文本生成、审核与路由
-- **Gemini**: 图像生成
+- **常驻主 Agent**：持续接收飞书文本、图片、按钮和快捷操作，负责对话、任务规划和后台任务管理。
+- **原子专项 Agent**：Research、Grouping、Content、Image、Video、Article、Login、ReviewDelivery 等能力保持专项职责，通过模块节点或子图组合。
+- **统一数据协议**：跨 Agent 信息使用 `WorkflowInvocation`、`WorkflowState` 和 `ResultEnvelope`；文件与图片只作为 envelope artifacts 暴露。
+- **Skill 与 Prompt 模板**：`.agents/skills/` 保存经验、流程和检查清单；`.agents/prompt/` 保存版本化提示词模板。选择过程由 Agent 根据语义完成，不靠关键词表。
+- **飞书交付**：所有正式内容都生成 `DeliveryPackage` 并发送到飞书，供用户审核、下载或继续反馈。
 
 ## 项目结构
 
-```
+```text
 xiaohongshu-agent/
+├── .agents/
+│   ├── skills/                 # Skill Protocol 文档
+│   └── prompt/                 # 版本化 Prompt 模板库
 ├── src/
-│   ├── main.py                  # CLI 入口
-│   ├── orchestrator/            # 顶层路由（MasterAgent）
-│   ├── core/                    # BaseAgent、BasePlatformTool、ToolRegistry
-│   ├── config/                  # 配置定义
-│   ├── utils/                   # 共享工具和 provider 封装
-│   └── tools/                   # 平台工具，按 平台/内容类型 组织
-│       └── xiaohongshu/
-│           ├── image_post/      # 小红书图文工具
-│           │   ├── tool.py
-│           │   ├── schemas.py
-│           │   ├── research/
-│           │   ├── content/
-│           │   ├── image/
-│           │   ├── publish/
-│           │   └── login/
-│           ├── video_post/      # 小红书视频工具
-│           └── article_post/    # 小红书长文工具
-├── scripts/                     # 辅助脚本
-├── tests/                       # 测试与集成脚本
-├── workshop/                    # 选题与实验资料
-├── submodules/
-│   ├── pydantic-ai/             # Pydantic-AI 子模块
-│   ├── playwright-mcp/          # Playwright MCP 子模块
-│   ├── autogen/                 # AutoGen 参考实现子模块
-│   ├── crewai/                  # crewAI 参考实现子模块
-│   ├── deepagents/              # DeepAgents 参考实现子模块
-│   ├── langgraph/               # LangGraph 参考实现子模块
-│   ├── playwright/              # Playwright 源码子模块
-│   └── reference/               # 仅供参考的独立仓库
-│       ├── gemini-watermark-remover/
-│       └── external-reference-agent/
-├── pyproject.toml
-├── uv.lock
-└── setup.py
+│   ├── apps/feishu_agent_os/   # 正式 Feishu 常驻入口
+│   ├── agent_os/               # 主 Agent、工具注册、任务管理、会话运行时
+│   ├── agents/                 # 原子专项 Agent
+│   ├── orchestration/          # WorkflowInvocation、模块图、路线编排
+│   ├── config/                 # 默认配置与密钥读取
+│   └── utils/                  # Provider、飞书通知、浏览器和文件工具
+├── scripts/                    # 登录预热、服务辅助和开发脚本
+├── tests/                      # 单元、契约和集成测试
+├── output/                     # 运行日志、会话缓存、临时产物
+└── posts/                      # 工作流生成的本地产物
 ```
 
-## 子模块约定
+## 运行方式
 
-- `submodules/` 顶层只保留长期维护的正式子模块。
-- `submodules/reference/` 只放参考仓库，不作为主仓运行时依赖。
-- `external-reference-agent` 与 `gemini-watermark-remover` 保留独立仓库边界，本仓只引用其实现思路或历史结构，不直接复用运行时代码。
-
-## 快速开始
-
-### 1. 安装依赖
+安装依赖：
 
 ```bash
 uv sync
 ```
 
-### 2. 配置 API 密钥
+配置 `.env`，至少提供飞书和模型相关密钥。图片生成默认走 Vertex/Gemini 配置，飞书服务通过 `FEISHU_CHAT_ID` 指定目标会话。
 
-编辑 `.env` 文件。当前工作流至少需要以下环境变量：
-
-```env
-ANTHROPIC_API_KEY=your-api-key-here
-MINIMAX_API_KEY=your-api-key-here
-GEMINI_API_KEY=your-api-key-here
-# 可选：控制默认文本模型提供方（视频工作流会使用）
-MODEL_PROVIDER=minimax
-```
-
-如果你使用自建或代理 Anthropic 端点，也可以额外配置：
-
-```env
-ANTHROPIC_BASE_URL=https://your-primary-endpoint
-ANTHROPIC_FALLBACK_BASE_URL=https://your-fallback-endpoint
-ANTHROPIC_FALLBACK_API_KEY=your-fallback-key
-```
-
-### 3. 预热浏览器登录态（可选但推荐）
+预热研究访问或外部站点登录态：
 
 ```bash
 uv run python scripts/open_browser_for_login.py
 ```
 
-可通过 `ARTICLE_LOGIN_URLS` 追加需要预登录的站点，例如 `Medium` 或其它有会员登录要求的媒体站。
-
-### 4. 运行工作流
+启动正式常驻服务：
 
 ```bash
-uv run python -m src.main --topic "西安公司避坑指南" --audience "求职者"
+uv run python -m src.apps.feishu_agent_os.serve
 ```
 
-### 5. 查看输出
+主 Agent 会通过飞书接收用户输入。用户可以随意描述主题、风格、图片数量、参考图片、元素迁移、订阅主题或自主探索需求；缺少关键信息时，主 Agent 使用飞书工具发送点选或多选交互。
 
-生成的内容保存在 `posts/` 目录下，包括：
-- `research.json`: 研究结果
-- `content.json`: 创作的内容
-- `image.json`: 配图结果（可选）
-- `publish.json`: 发布结果（可选）
+## 工作流模型
 
-## 工作流程
-
-```
-1. 研究阶段 (ResearchAgent)
-   └─> 小红书站内研究 / 海外女性向媒体深搜 / 视频转录
-
-2. 创作阶段 (ContentAgent)
-   └─> 分析研究数据 → 生成标题和正文 → 输出结构化内容
-
-3. 配图阶段 (ImageAgent)
-   └─> 基于内容结构生成头图和章节配图
-
-4. 发布阶段 (PublisherAgent)
-   └─> 自动登录 / 复用缓存会话 → 填写内容 → 发布
+```text
+飞书事件
+  -> Feishu 翻译层
+  -> 常驻主 Agent 会话
+  -> WorkflowInvocation
+  -> 后台任务管理器
+  -> 专项模块图
+  -> ResultEnvelope[DeliveryPackage]
+  -> 飞书交付
 ```
 
-## 优势
+图片路线的标准模块图为：
 
-✅ **工具隔离**: 按 `平台/内容类型` 组织代码  
-✅ **阶段清晰**: 每个工具内部按研究、创作、生成、发布拆分  
-✅ **类型安全**: Pydantic 强制类型验证  
-✅ **易维护**: 逻辑分层明确、职责更聚焦  
+```text
+ResearchModule
+  -> GroupingModule
+  -> ContentModule
+  -> ImageModule
+  -> ReviewDeliveryModule
+```
 
-## 许可证
+其中 ImageModule 内部包含 ReferenceAnalysis、ImagePlanner、并发 ImageTaskSubgraph、ImageJoin 和 ImageSetReview。每个单图任务再包含 Prompt、Generation、Review 和 Retry 边界。
 
-MIT License
+## 设计原则
+
+- 主 Agent 是调度中心，不做 Graph。
+- 专项 Agent 做通用能力，不做一次性产品线。
+- 用户要求进入 `WorkflowInvocation.run_options`、`constraints`、`preferences` 或 artifacts。
+- 配置文件只提供默认值，用户在飞书里指定的参数优先。
+- 文件路径不是独立协议，只能作为 `ArtifactRef` 进入 envelope。
+- 登录能力只服务研究和访问，不服务平台发布。
+- 小红书风格表示内容形态，不表示自动提交到小红书。
+
+## 测试
+
+运行全量测试：
+
+```bash
+uv run pytest
+```
+
+关键测试覆盖 Feishu Agent OS、ResultEnvelope、模块图契约、Prompt 模板库、Skill 发现、图片规划、参考图角色、后台任务并发与恢复，以及 Feishu-first 架构边界。

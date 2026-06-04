@@ -26,7 +26,7 @@ CHROME_PATHS = [
 ]
 
 SITES = [
-    ("小红书创作者平台", "https://creator.xiaohongshu.com/publish/publish"),
+    ("Rednote 研究访问", "https://www.rednote.com/explore"),
     ("Google 账号", "https://accounts.google.com"),
     ("Medium", "https://medium.com"),
     ("Allure", "https://www.allure.com"),

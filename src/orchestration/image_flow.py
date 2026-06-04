@@ -43,6 +43,7 @@ class ImageWorkflowState:
     single_item_per_image: bool = False
     max_auto_images: int | None = ImageConfig.MAX_AUTO_IMAGES
     image_generation_concurrency: int = 3
+    image_task_max_retries: int = 1
     research: ResultEnvelope[ResearchResult] | None = None
     groups: ResultEnvelope[GroupingResult] | None = None
     content: ResultEnvelope[XHSContent] | None = None
@@ -129,10 +130,96 @@ class ImagePlannerNode(BaseNode[ImageWorkflowState, ImageWorkflowDeps]):
 
 
 @dataclass
+class ImageTaskSubgraphState:
+    """Execution trace for one image task subgraph run."""
+
+    executed_nodes: list[str] = field(default_factory=list)
+    attempt: int = 0
+    last_result: ResultEnvelope[ImageResult] | None = None
+
+
+@dataclass
+class ImagePromptNode:
+    """Builds the generation call payload for one planned image task."""
+
+    def run(
+        self,
+        *,
+        subgraph_state: ImageTaskSubgraphState,
+        workflow_state: ImageWorkflowState,
+        research: ResultEnvelope[ResearchResult],
+        content: ResultEnvelope[XHSContent],
+        image_task: object,
+        index: int,
+        image_runner: ImageGroupRunner,
+    ) -> dict[str, object]:
+        subgraph_state.executed_nodes.append("prompt")
+        params: dict[str, object] = {
+            "topic": workflow_state.topic,
+            "execution_text": workflow_state.execution_text or workflow_state.topic,
+            "group": image_task.to_group_payload(),
+            "group_index": index,
+            "research": research,
+            "content": content,
+            "run_id": workflow_state.run_id,
+            "workspace_dir": workflow_state.workspace_dir,
+        }
+        if _callable_accepts_param(image_runner, "image_task"):
+            params["image_task"] = image_task
+        return params
+
+
+@dataclass
+class ImageGenerationNode:
+    """Calls the image generation specialist for one planned image task."""
+
+    async def run(
+        self,
+        *,
+        subgraph_state: ImageTaskSubgraphState,
+        image_runner: ImageGroupRunner,
+        params: dict[str, object],
+    ) -> ResultEnvelope[ImageResult]:
+        subgraph_state.executed_nodes.append("image_generation")
+        result = await image_runner(**params)
+        subgraph_state.last_result = result
+        return result
+
+
+@dataclass
+class ImageReviewNode:
+    """Reviews the image task result envelope before join."""
+
+    def run(
+        self,
+        *,
+        subgraph_state: ImageTaskSubgraphState,
+        result: ResultEnvelope[ImageResult],
+    ) -> bool:
+        subgraph_state.executed_nodes.append("image_review")
+        if result.status != "success" or result.payload is None:
+            return False
+        return bool(result.payload.images)
+
+
+@dataclass
+class ImageRepairRetryNode:
+    """Records a repair/retry transition after image review rejection."""
+
+    def run(
+        self,
+        *,
+        subgraph_state: ImageTaskSubgraphState,
+    ) -> None:
+        subgraph_state.executed_nodes.append("repair_retry")
+
+
+@dataclass
 class ImageTaskSubgraph:
-    """Executable subgraph boundary for one image task plan."""
+    """Executable prompt -> generation -> review -> retry boundary for one image."""
 
     deps: ImageWorkflowDeps
+    last_state: ImageTaskSubgraphState | None = None
 
     async def run(
         self,
@@ -143,19 +230,46 @@ class ImageTaskSubgraph:
         image_task: object,
         index: int,
     ) -> ResultEnvelope[ImageResult]:
-        params = {
-            "topic": state.topic,
-            "execution_text": state.execution_text or state.topic,
-            "group": image_task.to_group_payload(),
-            "group_index": index,
-            "research": research,
-            "content": content,
-            "run_id": state.run_id,
-            "workspace_dir": state.workspace_dir,
-        }
-        if _callable_accepts_param(self.deps.run_image_group, "image_task"):
-            params["image_task"] = image_task
-        return await self.deps.run_image_group(**params)
+        subgraph_state = ImageTaskSubgraphState()
+        self.last_state = subgraph_state
+        prompt_node = ImagePromptNode()
+        generation_node = ImageGenerationNode()
+        review_node = ImageReviewNode()
+        repair_retry_node = ImageRepairRetryNode()
+        max_retries = max(0, state.image_task_max_retries)
+        last_result: ResultEnvelope[ImageResult] | None = None
+
+        for attempt in range(max_retries + 1):
+            subgraph_state.attempt = attempt + 1
+            params = prompt_node.run(
+                subgraph_state=subgraph_state,
+                workflow_state=state,
+                research=research,
+                content=content,
+                image_task=image_task,
+                index=index,
+                image_runner=self.deps.run_image_group,
+            )
+            result = await generation_node.run(
+                subgraph_state=subgraph_state,
+                image_runner=self.deps.run_image_group,
+                params=params,
+            )
+            last_result = result
+            if review_node.run(subgraph_state=subgraph_state, result=result):
+                return result
+            if attempt < max_retries:
+                repair_retry_node.run(subgraph_state=subgraph_state)
+
+        if last_result is not None:
+            return last_result
+        return ResultEnvelope[ImageResult].error(
+            agent_name="image_task_subgraph",
+            summary="image task did not produce a result",
+            error_message="image task did not produce a result",
+            run_id=state.run_id,
+            step_id=f"image-{index}",
+        )
 
 
 @dataclass
@@ -262,6 +376,14 @@ image_workflow_module_graph = ModuleGraphSpec(
                 "image_join",
                 "image_set_review",
             ],
+            subgraphs={
+                "image_task_subgraph": [
+                    "prompt",
+                    "image_generation",
+                    "image_review",
+                    "repair_retry",
+                ],
+            },
             supports_parallel=True,
         ),
         ModuleNodeSpec(
@@ -292,6 +414,7 @@ class ImageWorkflowRunner:
         single_item_per_image: bool = False,
         max_auto_images: int | None = ImageConfig.MAX_AUTO_IMAGES,
         image_generation_concurrency: int = 3,
+        image_task_max_retries: int = 1,
     ) -> ResultEnvelope[DeliveryPackage]:
         state = ImageWorkflowState(
             topic=topic,
@@ -304,6 +427,7 @@ class ImageWorkflowRunner:
             single_item_per_image=single_item_per_image,
             max_auto_images=max_auto_images,
             image_generation_concurrency=image_generation_concurrency,
+            image_task_max_retries=image_task_max_retries,
         )
         result = await self.graph.run(
             ResearchNode(),

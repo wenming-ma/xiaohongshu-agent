@@ -131,6 +131,26 @@ def test_article_video_module_specs_expose_internal_review_boundaries() -> None:
     ]
 
 
+def test_image_task_subgraph_exposes_internal_node_sequence() -> None:
+    image_module = image_workflow_module_graph.get("image")
+
+    assert image_module.subgraphs["image_task_subgraph"] == [
+        "prompt",
+        "image_generation",
+        "image_review",
+        "repair_retry",
+    ]
+    described = image_module.describe()
+    assert described["subgraphs"] == {
+        "image_task_subgraph": [
+            "prompt",
+            "image_generation",
+            "image_review",
+            "repair_retry",
+        ]
+    }
+
+
 def test_route_module_graphs_are_public_orchestration_api() -> None:
     assert exported_image_graph is image_workflow_module_graph
     assert exported_article_graph is article_workflow_module_graph

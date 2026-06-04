@@ -10,16 +10,23 @@ class ModuleNodeSpec(BaseModel):
     input_refs: list[str] = Field(default_factory=list)
     output_ref: str
     subnodes: list[str] = Field(default_factory=list)
+    subgraphs: dict[str, list[str]] = Field(default_factory=dict)
     supports_parallel: bool = False
 
     def describe(self) -> dict[str, object]:
-        return {
+        description: dict[str, object] = {
             "name": self.name,
             "input_refs": list(self.input_refs),
             "output_ref": self.output_ref,
             "subnodes": list(self.subnodes),
             "supports_parallel": self.supports_parallel,
         }
+        if self.subgraphs:
+            description["subgraphs"] = {
+                name: list(nodes)
+                for name, nodes in self.subgraphs.items()
+            }
+        return description
 
 
 class ModuleGraphSpec(BaseModel):

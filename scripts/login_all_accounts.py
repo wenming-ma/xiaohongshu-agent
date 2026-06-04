@@ -1,10 +1,10 @@
 """
-一键登录所有账号（共享浏览器缓存目录）
+一键登录研究和素材访问账号（共享浏览器缓存目录）
 
 用途：
 - 在同一个浏览器 profile 中手动登录所有站点
 - 登录状态统一缓存到 PathConfig.BROWSER_SESSION_SHARED
-- 后续 image_post / video_post / 发布流程全部复用同一份 session
+- 后续研究、素材访问和外部资料读取复用同一份 session
 
 使用方法：
     uv run python scripts/login_all_accounts.py
@@ -34,7 +34,7 @@ CHROME_PATHS = [
 ]
 
 SITE_MAP = {
-    "xhs": ("小红书创作者平台", "https://creator.xiaohongshu.com/publish/publish"),
+    "xhs": ("Rednote 研究访问", "https://www.rednote.com/explore"),
     "google": ("Google 账号", "https://accounts.google.com"),
     "gemini": ("Gemini", "https://gemini.google.com/app"),
     "x": ("X (Twitter)", "https://x.com/home"),

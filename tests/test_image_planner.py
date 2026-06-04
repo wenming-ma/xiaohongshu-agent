@@ -12,7 +12,11 @@ from src.agents.image_post.schemas import (
     XHSContent,
 )
 from src.orchestration.image_flow import (
+    ImageGenerationNode,
     ImagePlannerNode,
+    ImagePromptNode,
+    ImageRepairRetryNode,
+    ImageReviewNode,
     ImageTaskSubgraph,
     ImageWorkflowDeps,
     ImageWorkflowRunner,
@@ -107,6 +111,10 @@ def test_image_workflow_exposes_fixed_module_graph_contract() -> None:
 def test_image_graph_has_explicit_planner_node_and_task_subgraph() -> None:
     assert ImagePlannerNode.__name__ == "ImagePlannerNode"
     assert ImageTaskSubgraph.__name__ == "ImageTaskSubgraph"
+    assert ImagePromptNode.__name__ == "ImagePromptNode"
+    assert ImageGenerationNode.__name__ == "ImageGenerationNode"
+    assert ImageReviewNode.__name__ == "ImageReviewNode"
+    assert ImageRepairRetryNode.__name__ == "ImageRepairRetryNode"
 
 
 def test_image_workflow_default_auto_cap_is_cover_plus_eight_details(tmp_path: Path) -> None:
@@ -229,3 +237,117 @@ async def test_image_workflow_uses_image_planner_tasks_for_fan_out(tmp_path: Pat
     assert [task.image_type for task in seen_tasks] == ["cover", "detail_1"]
     assert all(task.generation_mode == "object_transfer" for task in seen_tasks)
     assert seen_tasks[0].reference_images[0].role == ImageReferenceRole.OBJECT_TRANSFER
+
+
+@pytest.mark.anyio
+async def test_image_task_subgraph_runs_prompt_generation_review_and_retry(tmp_path: Path) -> None:
+    attempts = 0
+
+    async def run_image_group(**kwargs) -> ResultEnvelope[ImageResult]:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return ResultEnvelope[ImageResult].error(
+                agent_name="image_generation_agent",
+                summary="review rejected unrelated image",
+                error_message="image did not match current group",
+                run_id=kwargs["run_id"],
+                step_id="image-0",
+            )
+
+        image_path = tmp_path / "cover.png"
+        image_path.write_bytes(b"fake-image")
+        return ResultEnvelope[ImageResult].success(
+            agent_name="image_generation_agent",
+            payload=ImageResult(
+                images=[
+                    GeneratedImage(
+                        image_path=str(image_path),
+                        prompt_used="prompt",
+                        image_type="cover",
+                    )
+                ],
+                total_count=1,
+                generated_at="2026-06-05T00:00:00+00:00",
+            ),
+            summary="image ok after retry",
+            run_id=kwargs["run_id"],
+            step_id="image-0",
+        )
+
+    async def unused(**kwargs):
+        raise AssertionError("not used by this subgraph test")
+
+    subgraph = ImageTaskSubgraph(
+        deps=ImageWorkflowDeps(
+            run_research=unused,
+            run_grouping=unused,
+            run_content=unused,
+            run_image_group=run_image_group,
+            run_delivery=unused,
+        )
+    )
+    workflow_state = ImageWorkflowState(
+        topic="通勤穿搭",
+        audience="上班族",
+        run_id="run-image-task-subgraph",
+        workspace_dir=tmp_path,
+        image_task_max_retries=1,
+    )
+    research = ResultEnvelope[ResearchResult].success(
+        agent_name="research_agent",
+        payload=ResearchResult(summary="ok", items=[], keywords=[], sources=[]),
+        summary="research ok",
+        run_id=workflow_state.run_id,
+        step_id="research",
+    )
+    content = ResultEnvelope[XHSContent].success(
+        agent_name="content_agent",
+        payload=XHSContent(
+            title="通勤穿搭封面图片生成子图测试",
+            body=(
+                "每张图必须匹配当前分组，不要生成无关 UI、登录提示、流程说明或系统诊断图。"
+                "如果第一次生成结果被审核拒绝，单图任务子图应该进入修复重试节点，"
+                "重新调用图片生成能力，并且把 Prompt、Generation、Review、Retry 的执行轨迹记录下来，"
+                "方便后续任务恢复和质量审计。"
+            ),
+            hashtags=[],
+            call_to_action="保存。",
+        ),
+        summary="content ok",
+        run_id=workflow_state.run_id,
+        step_id="content",
+    )
+    image_plan = ImageTaskPlan.plan_from_groups(
+        invocation=WorkflowInvocation(
+            objective="生成通勤穿搭封面",
+            route="image_post",
+            topic="通勤穿搭",
+            constraints=["no_unrelated_ui"],
+        ),
+        groups=GroupingResult(groups=[GroupingItem(title="封面", indices=[0])]),
+        requested_image_count=1,
+        single_item_per_image=False,
+        max_auto_images=9,
+    )
+
+    result = await subgraph.run(
+        state=workflow_state,
+        research=research,
+        content=content,
+        image_task=image_plan.tasks[0],
+        index=0,
+    )
+
+    assert result.status == "success"
+    assert attempts == 2
+    assert subgraph.last_state is not None
+    assert subgraph.last_state.executed_nodes == [
+        "prompt",
+        "image_generation",
+        "image_review",
+        "repair_retry",
+        "prompt",
+        "image_generation",
+        "image_review",
+    ]

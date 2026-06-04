@@ -23,7 +23,7 @@ from src.config.settings import PathConfig
 
 SITES = [
     ("Google 账号", "https://accounts.google.com"),
-    ("小红书创作者平台", "https://creator.xiaohongshu.com/publish/publish"),
+    ("Rednote 研究访问", "https://www.rednote.com/explore"),
     ("Medium", "https://medium.com"),
     ("Allure", "https://www.allure.com"),
     ("Byrdie", "https://www.byrdie.com"),

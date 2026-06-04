@@ -22,15 +22,17 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from pydantic_ai.mcp import MCPServerStdio
 from src.agents.shared.login import create_login_tool
-from src.config.settings import PathConfig, PublishConfig, APIConfig
+from src.config.settings import PathConfig, APIConfig
 from src.utils.logger import get_logger
 from src.utils.playwright_artifacts import install_playwright_artifact_guard
 
 logger = get_logger(__name__)
 
+REDNOTE_RESEARCH_URL = "https://www.rednote.com/explore"
+
 
 async def login_xiaohongshu():
-    """登录小红书并缓存 session"""
+    """登录 Rednote 研究访问页并缓存 session"""
     print("=" * 60)
     print("小红书登录")
     print("=" * 60)
@@ -56,9 +58,9 @@ async def login_xiaohongshu():
     try:
         async with playwright_server:
             result = await do_login(
-                url=PublishConfig.XHS_PUBLISH_URL,
+                url=REDNOTE_RESEARCH_URL,
                 action="login",
-                hint="小红书创作者平台，用于后续自动发布帖子",
+                hint="Rednote 研究访问，用于后续资料检索和登录态复用",
             )
 
         print()
