@@ -26,7 +26,7 @@ from src.agents.video_post.schemas import (
     VideoSource,
     XHSVideoContent,
 )
-from src.orchestration.article_route import ArticlePostOrchestrator
+from src.orchestration.article_route import ArticlePostOrchestrator, ArticleWorkflowRunner
 from src.orchestration.conversation import ConversationRequest
 from src.orchestration.run_options import (
     ArticleContentRunOptions,
@@ -36,7 +36,7 @@ from src.orchestration.run_options import (
     VideoPostRunOptions,
     VideoResearchRunOptions,
 )
-from src.orchestration.video_route import VideoPostOrchestrator
+from src.orchestration.video_route import VideoPostOrchestrator, VideoWorkflowRunner
 
 
 class FakeArticleResearchAgent:
@@ -292,6 +292,7 @@ async def test_article_post_orchestrator_runs_specialist_agents_into_delivery_en
     manifest_text = (tmp_path / "run-article-1" / "manifest.json").read_text(encoding="utf-8")
     assert '"step_id": "workflow_invocation"' in manifest_text
     assert sender.sent[0][1] == "chat-article"
+    assert result.payload.metadata["workflow_runner"] == "ArticleWorkflowRunner"
 
 
 @pytest.mark.anyio
@@ -360,6 +361,12 @@ async def test_video_post_orchestrator_runs_specialist_agents_into_delivery_enve
     manifest_text = (tmp_path / "run-video-1" / "manifest.json").read_text(encoding="utf-8")
     assert '"step_id": "workflow_invocation"' in manifest_text
     assert sender.sent[0][1] == "chat-video"
+    assert result.payload.metadata["workflow_runner"] == "VideoWorkflowRunner"
+
+
+def test_article_and_video_routes_expose_executable_workflow_runners() -> None:
+    assert ArticleWorkflowRunner.__name__ == "ArticleWorkflowRunner"
+    assert VideoWorkflowRunner.__name__ == "VideoWorkflowRunner"
 
 
 @pytest.mark.anyio

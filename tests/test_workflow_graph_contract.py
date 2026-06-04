@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from src.orchestration import (
     article_workflow_module_graph as exported_article_graph,
+    ArticleWorkflowRunner as exported_article_runner,
     image_workflow_module_graph as exported_image_graph,
     video_workflow_module_graph as exported_video_graph,
+    VideoWorkflowRunner as exported_video_runner,
 )
-from src.orchestration.article_route import article_workflow_module_graph
+from src.orchestration.article_route import ArticleWorkflowRunner, article_workflow_module_graph
 from src.orchestration.image_flow import image_workflow_module_graph
-from src.orchestration.video_route import video_workflow_module_graph
+from src.orchestration.video_route import VideoWorkflowRunner, video_workflow_module_graph
 from src.orchestration.workflow_graph import ModuleGraphSpec, ModuleNodeSpec
 
 
@@ -155,3 +157,5 @@ def test_route_module_graphs_are_public_orchestration_api() -> None:
     assert exported_image_graph is image_workflow_module_graph
     assert exported_article_graph is article_workflow_module_graph
     assert exported_video_graph is video_workflow_module_graph
+    assert exported_article_runner is ArticleWorkflowRunner
+    assert exported_video_runner is VideoWorkflowRunner

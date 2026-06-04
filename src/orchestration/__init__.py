@@ -8,6 +8,7 @@ from typing import Any
 _EXPORTS = {
     "ArtifactRef": ".schemas",
     "ArticlePostOrchestrator": ".article_route",
+    "ArticleWorkflowRunner": ".article_route",
     "ContentRoute": ".conversation",
     "ConversationInputTranslator": ".session_input",
     "ConversationRequest": ".conversation",
@@ -51,6 +52,7 @@ _EXPORTS = {
     "StyleContext": ".style_context",
     "StylePromptRef": ".style_context",
     "VideoPostOrchestrator": ".video_route",
+    "VideoWorkflowRunner": ".video_route",
     "video_workflow_module_graph": ".video_route",
     "WorkflowInvocation": ".schemas",
     "WorkflowRunContext": ".schemas",
