@@ -22,9 +22,47 @@ from src.config.settings import PathConfig
 from .conversation import ConversationRequest
 from .request_brief import RequestBrief, build_request_brief
 from .run_options import VideoPostRunOptions
-from .schemas import ArtifactRef, DeliveryPackage, DeliveryTextBlock, ResultEnvelope
+from .schemas import ArtifactRef, DeliveryPackage, DeliveryTextBlock, ResultEnvelope, WorkflowInvocation
 from .style_context import StyleContext
+from .workflow_graph import ModuleGraphSpec, ModuleNodeSpec
 from .workspace import WorkflowWorkspace
+
+
+video_workflow_module_graph = ModuleGraphSpec(
+    name="video_post_workflow",
+    modules=[
+        ModuleNodeSpec(
+            name="research",
+            input_refs=["workflow_invocation"],
+            output_ref="research",
+            subnodes=["search", "selection", "review"],
+        ),
+        ModuleNodeSpec(
+            name="download",
+            input_refs=["workflow_invocation", "research"],
+            output_ref="download",
+            subnodes=["source_selection", "download", "transcription"],
+        ),
+        ModuleNodeSpec(
+            name="content",
+            input_refs=["workflow_invocation", "research", "download"],
+            output_ref="content",
+            subnodes=["generate", "review"],
+        ),
+        ModuleNodeSpec(
+            name="cover",
+            input_refs=["workflow_invocation", "download", "content"],
+            output_ref="cover",
+            subnodes=["frame_selection", "cover_generation", "review"],
+        ),
+        ModuleNodeSpec(
+            name="delivery",
+            input_refs=["workflow_invocation", "research", "download", "content", "cover"],
+            output_ref="delivery",
+            subnodes=["package", "review", "feishu_delivery"],
+        ),
+    ],
+)
 
 
 def _safe_slug(value: str, *, max_length: int = 24) -> str:
@@ -104,6 +142,10 @@ def _build_video_delivery_package(
             "source_count": research.sources_count,
             "video_path": download.local_path,
             "cover_path": cover.cover_path if cover is not None else "",
+            "workflow_graph": {
+                "name": video_workflow_module_graph.name,
+                "modules": video_workflow_module_graph.describe(),
+            },
         },
     )
 
@@ -153,6 +195,32 @@ class VideoPostOrchestrator:
             topic=brief.topic,
             audience=brief.audience,
         )
+        workflow_invocation = WorkflowInvocation(
+            objective=brief.execution_text,
+            route="video_post",
+            topic=brief.topic,
+            audience=brief.audience,
+            selected_skills=list(style_context.matched_skills),
+            selected_prompt_templates=[ref.source for ref in style_context.prompt_refs],
+            user_requirements=[brief.requirements_text] if brief.requirements_text else [],
+            constraints=[
+                *brief.style_constraints,
+                *style_context.hard_constraints,
+                *style_context.negative_constraints,
+            ],
+            artifacts=[
+                ArtifactRef(
+                    artifact_type="image",
+                    label=ref.label,
+                    path=ref.path,
+                    mime_type=ref.mime_type,
+                )
+                for ref in style_context.reference_images
+            ],
+            run_options=resolved_run_options.model_dump(mode="json"),
+            delivery={"target": "feishu", "chat_id": chat_id},
+        )
+        workspace.save_invocation(workflow_invocation)
 
         research = await self.research_agent_factory(
             run_options=resolved_run_options.research

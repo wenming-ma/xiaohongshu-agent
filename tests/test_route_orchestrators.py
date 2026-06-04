@@ -282,6 +282,15 @@ async def test_article_post_orchestrator_runs_specialist_agents_into_delivery_en
     assert result.payload.title == "长文整理范式"
     assert len(result.payload.artifacts) == 1
     assert result.payload.artifacts[0].artifact_type == "image"
+    assert result.payload.metadata["workflow_graph"]["name"] == "article_post_workflow"
+    assert [module["name"] for module in result.payload.metadata["workflow_graph"]["modules"]] == [
+        "research",
+        "content",
+        "image",
+        "delivery",
+    ]
+    manifest_text = (tmp_path / "run-article-1" / "manifest.json").read_text(encoding="utf-8")
+    assert '"step_id": "workflow_invocation"' in manifest_text
     assert sender.sent[0][1] == "chat-article"
 
 
@@ -340,6 +349,16 @@ async def test_video_post_orchestrator_runs_specialist_agents_into_delivery_enve
     assert result.payload.route == "video_post"
     assert result.payload.title == "视频混剪灵感整理方案"
     assert [artifact.artifact_type for artifact in result.payload.artifacts] == ["video", "image"]
+    assert result.payload.metadata["workflow_graph"]["name"] == "video_post_workflow"
+    assert [module["name"] for module in result.payload.metadata["workflow_graph"]["modules"]] == [
+        "research",
+        "download",
+        "content",
+        "cover",
+        "delivery",
+    ]
+    manifest_text = (tmp_path / "run-video-1" / "manifest.json").read_text(encoding="utf-8")
+    assert '"step_id": "workflow_invocation"' in manifest_text
     assert sender.sent[0][1] == "chat-video"
 
 

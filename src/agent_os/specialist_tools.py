@@ -12,7 +12,7 @@ from src.orchestration.run_options import (
     VideoPostRunOptions,
     VideoResearchRunOptions,
 )
-from src.orchestration.schemas import DeliveryPackage, ResultEnvelope
+from src.orchestration.schemas import DeliveryPackage, ResultEnvelope, WorkflowInvocation
 
 from .schemas import AgentToolResult, TaskRunSpec
 from .tools import AgentTool, AgentToolContext, AgentToolRegistry
@@ -29,6 +29,12 @@ def conversation_request_from_task_spec(spec: TaskRunSpec) -> ConversationReques
         image_count=spec.run_options.image.count,
         reference_images=reference_images,
     )
+
+
+def workflow_invocation_from_task_spec(spec: TaskRunSpec) -> WorkflowInvocation:
+    """Normalize an Agent OS task spec into the graph-level invocation contract."""
+
+    return WorkflowInvocation.from_task_spec(spec)
 
 
 def build_route_tool_registry(

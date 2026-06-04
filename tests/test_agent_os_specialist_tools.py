@@ -6,11 +6,12 @@ from src.agent_os.schemas import ImageRunOptionsSpec, ResearchRunOptionsSpec, Ru
 from src.agent_os.specialist_tools import (
     build_route_tool_registry,
     conversation_request_from_task_spec,
+    workflow_invocation_from_task_spec,
 )
 from src.agent_os.tools import AgentToolContext
 from src.orchestration.conversation import ContentRoute, ConversationRequest
 from src.orchestration.run_options import ArticlePostRunOptions, ImagePostRunOptions, VideoPostRunOptions
-from src.orchestration.schemas import DeliveryPackage, ResultEnvelope
+from src.orchestration.schemas import ArtifactRef, DeliveryPackage, ResultEnvelope
 from src.config.settings import ArticleResearchConfig, ImageConfig, ResearchConfig
 
 
@@ -51,6 +52,31 @@ def test_conversation_request_from_task_spec_preserves_runtime_requirements() ->
     assert request.audience == "准留学生"
     assert request.style_constraints == ["末日废土风格"]
     assert request.image_count == 10
+
+
+def test_workflow_invocation_from_task_spec_carries_dynamic_context() -> None:
+    spec = TaskRunSpec(
+        objective="把参考图里的帽子和衣服迁移到通勤场景",
+        route=ContentRoute.IMAGE_POST,
+        topic="通勤穿搭",
+        audience="上班族",
+        constraints=["strict_object_transfer"],
+        style_constraints=["真实摄影"],
+        selected_skills=["reference-image-product-alignment"],
+        selected_prompt_templates=["image/reference/object-transfer"],
+        reference_images=[
+            ArtifactRef(artifact_type="image", label="hat", path="C:/tmp/hat.png"),
+        ],
+    )
+
+    invocation = workflow_invocation_from_task_spec(spec)
+
+    assert invocation.route == "image_post"
+    assert invocation.objective == "把参考图里的帽子和衣服迁移到通勤场景"
+    assert invocation.constraints == ["strict_object_transfer", "真实摄影"]
+    assert invocation.selected_skills == ["reference-image-product-alignment"]
+    assert invocation.selected_prompt_templates == ["image/reference/object-transfer"]
+    assert invocation.artifacts[0].path == "C:/tmp/hat.png"
 
 
 @pytest.mark.anyio

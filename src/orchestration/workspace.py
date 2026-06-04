@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from src.utils.file_ops import load_json, save_json
 
-from .schemas import ArtifactRef, ResultEnvelope
+from .schemas import ArtifactRef, ResultEnvelope, WorkflowInvocation
 
 
 def _utcnow() -> datetime:
@@ -99,6 +99,16 @@ class WorkflowWorkspace:
         )
         self._upsert_step(step)
         return artifact
+
+    def save_invocation(self, invocation: WorkflowInvocation) -> ArtifactRef:
+        envelope = ResultEnvelope[WorkflowInvocation].success(
+            agent_name="main_agent",
+            payload=invocation,
+            summary=invocation.objective,
+            run_id=self._manifest.run_id,
+            step_id="workflow_invocation",
+        )
+        return self.save_envelope(envelope, label="workflow_invocation")
 
     def attach_artifacts(self, *, step_id: str, artifacts: list[ArtifactRef]) -> None:
         manifest = self.load_manifest()

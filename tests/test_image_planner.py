@@ -1,0 +1,212 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from src.agents.image_post.schemas import (
+    GeneratedImage,
+    ImageResult,
+    ResearchResult,
+    XHSContent,
+)
+from src.orchestration.image_flow import (
+    ImagePlannerNode,
+    ImageTaskSubgraph,
+    ImageWorkflowDeps,
+    ImageWorkflowRunner,
+    image_workflow_module_graph,
+)
+from src.orchestration.schemas import (
+    ArtifactRef,
+    DeliveryPackage,
+    GroupingItem,
+    GroupingResult,
+    ImageReferenceRole,
+    ImageTaskPlan,
+    ReferenceImagePlan,
+    ResultEnvelope,
+    WorkflowInvocation,
+)
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+def test_image_planner_builds_task_plans_with_reference_roles() -> None:
+    invocation = WorkflowInvocation(
+        objective="做一组通勤图，保留帽子和衣服",
+        route="image_post",
+        topic="通勤穿搭",
+        artifacts=[
+            ArtifactRef(artifact_type="image", label="hat", path="C:/tmp/hat.png"),
+            ArtifactRef(artifact_type="image", label="coat", path="C:/tmp/coat.png"),
+        ],
+        constraints=["strict_object_transfer", "no_people"],
+        selected_skills=["reference-image-product-alignment"],
+        selected_prompt_templates=["image/reference/object-transfer"],
+    )
+    groups = GroupingResult(
+        groups=[
+            GroupingItem(title="帽子和外套组合", indices=[0, 1]),
+            GroupingItem(title="细节特写", indices=[2]),
+        ]
+    )
+
+    plan = ImageTaskPlan.plan_from_groups(
+        invocation=invocation,
+        groups=groups,
+        requested_image_count=2,
+        single_item_per_image=False,
+        max_auto_images=9,
+    )
+
+    assert [task.image_type for task in plan.tasks] == ["cover", "detail_1"]
+    assert plan.tasks[0].group_title == "帽子和外套组合"
+    assert plan.tasks[0].generation_mode == "object_transfer"
+    assert [
+        (reference.label, reference.path, reference.role)
+        for reference in plan.tasks[0].reference_images
+    ] == [
+        ("hat", "C:/tmp/hat.png", ImageReferenceRole.OBJECT_TRANSFER),
+        ("coat", "C:/tmp/coat.png", ImageReferenceRole.OBJECT_TRANSFER),
+    ]
+    assert plan.tasks[0].reference_images[0].artifact is not None
+    assert plan.tasks[0].reference_images[0].artifact.path == "C:/tmp/hat.png"
+    assert "must_preserve_reference_subjects" in plan.tasks[0].qa_rules
+    assert "no_people" in plan.tasks[0].hard_constraints
+
+
+def test_image_workflow_exposes_fixed_module_graph_contract() -> None:
+    assert image_workflow_module_graph.module_names == [
+        "research",
+        "grouping",
+        "content",
+        "image",
+        "delivery",
+    ]
+    assert image_workflow_module_graph.get("research").subnodes == ["search", "synthesis", "review"]
+    assert image_workflow_module_graph.get("grouping").subnodes == ["grouping", "review"]
+    assert image_workflow_module_graph.get("content").subnodes == ["generate", "review"]
+    assert image_workflow_module_graph.get("image").subnodes == [
+        "reference_analysis",
+        "image_planner",
+        "image_task_subgraph",
+        "image_join",
+        "image_set_review",
+    ]
+    assert image_workflow_module_graph.get("image").supports_parallel is True
+    assert image_workflow_module_graph.get("delivery").subnodes == ["package", "review", "feishu_delivery"]
+
+
+def test_image_graph_has_explicit_planner_node_and_task_subgraph() -> None:
+    assert ImagePlannerNode.__name__ == "ImagePlannerNode"
+    assert ImageTaskSubgraph.__name__ == "ImageTaskSubgraph"
+
+
+@pytest.mark.anyio
+async def test_image_workflow_uses_image_planner_tasks_for_fan_out(tmp_path: Path) -> None:
+    seen_tasks: list[ImageTaskPlan] = []
+
+    async def run_research(**kwargs) -> ResultEnvelope[ResearchResult]:
+        return ResultEnvelope[ResearchResult].success(
+            agent_name="research_agent",
+            payload=ResearchResult(summary="ok", items=[], keywords=[], sources=[]),
+            summary="research ok",
+            run_id=kwargs["run_id"],
+            step_id="research",
+        )
+
+    async def run_grouping(**kwargs) -> ResultEnvelope[GroupingResult]:
+        return ResultEnvelope[GroupingResult].success(
+            agent_name="grouping_agent",
+            payload=GroupingResult(groups=[GroupingItem(title="帽子和衣服", indices=[0, 1])]),
+            summary="grouping ok",
+            run_id=kwargs["run_id"],
+            step_id="grouping",
+        )
+
+    async def run_content(**kwargs) -> ResultEnvelope[XHSContent]:
+        return ResultEnvelope[XHSContent].success(
+            agent_name="content_agent",
+            payload=XHSContent(
+                title="通勤穿搭参考图元素迁移方案",
+                body=(
+                    "保留参考图里的帽子和衣服，换成新的通勤场景。"
+                    "封面需要让两件参考物体都清楚出现，详情页可以围绕材质、色彩和搭配关系展开。"
+                    "整体画面保持小红书图文的真实摄影感，不要生成无关物品、登录弹窗、系统诊断文字或研究限制说明。"
+                ),
+                hashtags=[],
+                call_to_action="保存。",
+            ),
+            summary="content ok",
+            run_id=kwargs["run_id"],
+            step_id="content",
+        )
+
+    async def run_image_group(**kwargs) -> ResultEnvelope[ImageResult]:
+        seen_tasks.append(kwargs["image_task"])
+        image_path = tmp_path / f"{kwargs['image_task'].image_type}.png"
+        image_path.write_bytes(b"fake-image")
+        return ResultEnvelope[ImageResult].success(
+            agent_name="image_generation_agent",
+            payload=ImageResult(
+                images=[
+                    GeneratedImage(
+                        image_path=str(image_path),
+                        prompt_used="prompt",
+                        image_type=kwargs["image_task"].image_type,
+                    )
+                ],
+                total_count=1,
+                generated_at="2026-06-05T00:00:00+00:00",
+            ),
+            summary="image ok",
+            run_id=kwargs["run_id"],
+            step_id=f"image-{kwargs['group_index']}",
+        )
+
+    async def run_delivery(**kwargs) -> ResultEnvelope[DeliveryPackage]:
+        return ResultEnvelope[DeliveryPackage].success(
+            agent_name="delivery_agent",
+            payload=DeliveryPackage(route="image_post", title="通勤穿搭参考图元素迁移方案", summary="done"),
+            summary="delivery ok",
+            run_id=kwargs["run_id"],
+            step_id="delivery",
+        )
+
+    runner = ImageWorkflowRunner(
+        deps=ImageWorkflowDeps(
+            run_research=run_research,
+            run_grouping=run_grouping,
+            run_content=run_content,
+            run_image_group=run_image_group,
+            run_delivery=run_delivery,
+        )
+    )
+
+    invocation = WorkflowInvocation(
+        objective="保留帽子和衣服，生成通勤图文",
+        route="image_post",
+        topic="通勤穿搭",
+        constraints=["strict_object_transfer"],
+        artifacts=[
+            ArtifactRef(artifact_type="image", label="hat", path="C:/tmp/hat.png"),
+            ArtifactRef(artifact_type="image", label="coat", path="C:/tmp/coat.png"),
+        ],
+    )
+
+    await runner.run(
+        topic="通勤穿搭",
+        audience="上班族",
+        run_id="run-image-planner",
+        workspace_dir=tmp_path,
+        invocation=invocation,
+        image_count=2,
+    )
+
+    assert [task.image_type for task in seen_tasks] == ["cover", "detail_1"]
+    assert all(task.generation_mode == "object_transfer" for task in seen_tasks)
+    assert seen_tasks[0].reference_images[0].role == ImageReferenceRole.OBJECT_TRANSFER

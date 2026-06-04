@@ -199,10 +199,19 @@ async def test_image_post_orchestrator_runs_real_flow_with_unified_envelopes(tmp
         "detail_1",
         "detail_2",
     ]
+    assert result.payload.metadata["workflow_graph"]["name"] == "image_post_workflow"
+    assert [module["name"] for module in result.payload.metadata["workflow_graph"]["modules"]] == [
+        "research",
+        "grouping",
+        "content",
+        "image",
+        "delivery",
+    ]
 
     manifest_path = tmp_path / "run-image-route-1" / "manifest.json"
     assert manifest_path.exists()
     manifest_text = manifest_path.read_text(encoding="utf-8")
+    assert "workflow_invocation" in manifest_text
     assert "research" in manifest_text
     assert "grouping" in manifest_text
     assert "content" in manifest_text

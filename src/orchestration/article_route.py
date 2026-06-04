@@ -22,9 +22,41 @@ from src.config.settings import PathConfig
 from .conversation import ConversationRequest
 from .request_brief import RequestBrief, build_request_brief
 from .run_options import ArticlePostRunOptions
-from .schemas import ArtifactRef, DeliveryPackage, DeliveryTextBlock, ResultEnvelope
+from .schemas import ArtifactRef, DeliveryPackage, DeliveryTextBlock, ResultEnvelope, WorkflowInvocation
 from .style_context import StyleContext
+from .workflow_graph import ModuleGraphSpec, ModuleNodeSpec
 from .workspace import WorkflowWorkspace
+
+
+article_workflow_module_graph = ModuleGraphSpec(
+    name="article_post_workflow",
+    modules=[
+        ModuleNodeSpec(
+            name="research",
+            input_refs=["workflow_invocation"],
+            output_ref="research",
+            subnodes=["search", "synthesis", "review"],
+        ),
+        ModuleNodeSpec(
+            name="content",
+            input_refs=["workflow_invocation", "research"],
+            output_ref="content",
+            subnodes=["generate", "review"],
+        ),
+        ModuleNodeSpec(
+            name="image",
+            input_refs=["workflow_invocation", "research", "content"],
+            output_ref="image",
+            subnodes=["image_planner", "image_generation", "image_review"],
+        ),
+        ModuleNodeSpec(
+            name="delivery",
+            input_refs=["workflow_invocation", "research", "content", "image"],
+            output_ref="delivery",
+            subnodes=["package", "review", "feishu_delivery"],
+        ),
+    ],
+)
 
 
 def _safe_slug(value: str, *, max_length: int = 24) -> str:
@@ -86,6 +118,10 @@ def _build_article_delivery_package(
             "source_count": research.sources_count,
             "image_count": len(artifacts),
             "run_options": run_options.model_dump(mode="json") if run_options is not None else {},
+            "workflow_graph": {
+                "name": article_workflow_module_graph.name,
+                "modules": article_workflow_module_graph.describe(),
+            },
         },
     )
 
@@ -149,6 +185,32 @@ class ArticlePostOrchestrator:
             topic=brief.topic,
             audience=brief.audience,
         )
+        workflow_invocation = WorkflowInvocation(
+            objective=brief.execution_text,
+            route="article_post",
+            topic=brief.topic,
+            audience=brief.audience,
+            selected_skills=list(style_context.matched_skills),
+            selected_prompt_templates=[ref.source for ref in style_context.prompt_refs],
+            user_requirements=[brief.requirements_text] if brief.requirements_text else [],
+            constraints=[
+                *brief.style_constraints,
+                *style_context.hard_constraints,
+                *style_context.negative_constraints,
+            ],
+            artifacts=[
+                ArtifactRef(
+                    artifact_type="image",
+                    label=ref.label,
+                    path=ref.path,
+                    mime_type=ref.mime_type,
+                )
+                for ref in style_context.reference_images
+            ],
+            run_options=resolved_run_options.model_dump(mode="json"),
+            delivery={"target": "feishu", "chat_id": chat_id},
+        )
+        workspace.save_invocation(workflow_invocation)
 
         research_agent = self._instantiate_agent(
             self.research_agent_factory,

@@ -26,6 +26,9 @@ def test_main_agent_prompt_defines_planner_not_worker_role() -> None:
     assert "category=specialist" in MAIN_AGENT_SYSTEM_PROMPT
     assert "多轮对话" in MAIN_AGENT_SYSTEM_PROMPT
     assert "TaskRunSpec" in MAIN_AGENT_SYSTEM_PROMPT
+    assert "WorkflowInvocation" in MAIN_AGENT_SYSTEM_PROMPT
+    assert "ImagePlanner" in MAIN_AGENT_SYSTEM_PROMPT
+    assert "不要规划每张图片" in MAIN_AGENT_SYSTEM_PROMPT
     assert "飞书" in MAIN_AGENT_SYSTEM_PROMPT
     assert "feishu_" in MAIN_AGENT_SYSTEM_PROMPT
     assert "本地文件" in MAIN_AGENT_SYSTEM_PROMPT

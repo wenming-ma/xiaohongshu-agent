@@ -20,7 +20,9 @@ These citizens are composed at runtime. The Planner Agent or a specialist Agent 
 - A specialist agent may keep its internal multi-round review loop. Do not split a coherent phase into smaller external agents just to expose intermediate steps.
 - The system is Agent-driven: route selection, Skill selection, prompt-template selection, and tool use decisions belong to the planner or specialist Agents. Do not replace those decisions with hidden keyword-trigger tables in helper functions.
 - Agents should expose general task capabilities, not one-off product lines. User-specific style, quantity, format, and topic requirements flow in as dynamic context.
-- Cross-agent data moves through `ResultEnvelope` in the orchestration layer. Local files are artifacts referenced by envelopes, not a separate protocol.
+- The main Agent stays outside Graph flows. It translates user intent into `TaskRunSpec` / `WorkflowInvocation`, chooses Skills and Prompt Templates, and starts workflows.
+- All executable specialist work should be represented as module nodes or subgraph nodes. Module nodes expose stable boundaries; their internal subnodes handle search, generation, review, retry, fan-out, and join.
+- Cross-agent data moves through `WorkflowInvocation`, `WorkflowState`, and `ResultEnvelope` in the orchestration layer. Local files are artifacts referenced by envelopes, not a separate protocol.
 - Final delivery is a `DeliveryPackage` sent to Feishu. Direct platform publishing is not part of the formal workflow.
 - Skill Protocol documents live in `.agents/skills/` and contain experience, style rules, prompts, and checklists only. Runtime schemas stay in Pydantic models.
 - Versioned reusable prompt snippets live in `.agents/prompt/`. Do not add rotating local prompt roots.
@@ -28,7 +30,7 @@ These citizens are composed at runtime. The Planner Agent or a specialist Agent 
 ## Feishu Agent OS Runtime
 
 - The formal Feishu entrypoint is `src/apps/feishu_agent_os/`.
-- The main Agent is a long-running task planner and organizer. It receives user events, keeps the main conversation context, asks clarifying questions, builds `TaskRunSpec`, and starts specialist Agent workflows as background tasks when the request is clear enough.
+- The main Agent is a long-running task planner and organizer. It receives user events, keeps the main conversation context, asks clarifying questions, builds `TaskRunSpec` / `WorkflowInvocation`, and starts specialist Agent workflows as background tasks when the request is clear enough.
 - Background tasks are independent task flows managed by Agent OS. Multiple workflows may run concurrently while the main Agent continues chatting, accepts status/restart commands, and reports task errors to Feishu.
 - Do not add compatibility app modules for old route orchestrators; new app entrypoints must go through Agent OS.
 - Specialist Agents remain atomic under `src/agents/<content_type>/<phase>/`.

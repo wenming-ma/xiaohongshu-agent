@@ -16,7 +16,7 @@ from src.agents.shared.login import AuthResult
 from src.config.settings import PathConfig
 
 from .conversation import ConversationRequest
-from .image_flow import ImageWorkflowDeps, ImageWorkflowRunner
+from .image_flow import ImageWorkflowDeps, ImageWorkflowRunner, image_workflow_module_graph
 from .request_brief import RequestBrief, build_request_brief
 from .run_options import ImagePostRunOptions
 from .schemas import (
@@ -26,6 +26,7 @@ from .schemas import (
     GroupingItem,
     GroupingResult,
     ResultEnvelope,
+    WorkflowInvocation,
 )
 from .style_context import StyleContext
 from .workspace import WorkflowWorkspace
@@ -99,6 +100,10 @@ def _build_image_delivery_package(
             "style_constraints": list(brief.style_constraints),
             "style_context": style_context.metadata() if style_context is not None else {},
             "run_options": run_options.model_dump(mode="json") if run_options is not None else {},
+            "workflow_graph": {
+                "name": image_workflow_module_graph.name,
+                "modules": image_workflow_module_graph.describe(),
+            },
         },
     )
 
@@ -191,6 +196,34 @@ class ImagePostOrchestrator:
             self.image_agent_factory,
             run_options=resolved_run_options.image,
         )
+        reference_artifacts = [
+            ArtifactRef(
+                artifact_type="image",
+                label=f"reference_{index + 1}",
+                path=path,
+                mime_type=_guess_mime_type(path),
+                metadata={"source": "conversation_request"},
+            )
+            for index, path in enumerate(request.reference_images)
+        ]
+        workflow_invocation = WorkflowInvocation(
+            objective=request.message or brief.execution_text,
+            route="image_post",
+            topic=brief.topic,
+            audience=brief.audience,
+            selected_skills=list(style_context.matched_skills),
+            selected_prompt_templates=[ref.source for ref in style_context.prompt_refs],
+            user_requirements=[brief.requirements_text],
+            constraints=[
+                *brief.style_constraints,
+                *style_context.hard_constraints,
+                *style_context.negative_constraints,
+            ],
+            artifacts=reference_artifacts,
+            run_options=resolved_run_options.model_dump(mode="json"),
+            delivery={"target": "feishu", "chat_id": chat_id},
+        )
+        workspace.save_invocation(workflow_invocation)
 
         async def run_research(
             *,
@@ -296,6 +329,7 @@ class ImagePostOrchestrator:
             content: ResultEnvelope[XHSContent],
             run_id: str,
             workspace_dir: Path,
+            image_task: Any | None = None,
         ) -> ResultEnvelope[ImageResult]:
             if research.payload is None or content.payload is None:
                 return ResultEnvelope[ImageResult].error(
@@ -336,6 +370,7 @@ class ImagePostOrchestrator:
                 metadata={
                     "group_title": str(group.get("title") or ""),
                     "style_context": style_context.metadata(),
+                    "image_task": image_task.model_dump(mode="json") if image_task is not None else {},
                     "prompt_summary": generated.prompt_used[:500],
                 },
             )
@@ -420,6 +455,7 @@ class ImagePostOrchestrator:
                 run_id=resolved_run_id,
                 workspace_dir=workspace.run_dir,
                 execution_text=brief.execution_text,
+                invocation=workflow_invocation,
                 image_count=brief.image_count,
                 single_item_per_image=brief.single_item_per_image,
                 max_auto_images=resolved_run_options.max_auto_images,

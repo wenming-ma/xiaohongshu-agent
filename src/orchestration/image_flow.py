@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -9,7 +10,8 @@ from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 
 from src.agents.image_post.schemas import GroupSpec, ImageResult, ResearchResult, XHSContent
 
-from .schemas import DeliveryPackage, GroupingItem, GroupingResult, ResultEnvelope
+from .schemas import DeliveryPackage, GroupingItem, GroupingResult, ImageTaskPlan, ResultEnvelope, WorkflowInvocation
+from .workflow_graph import ModuleGraphSpec, ModuleNodeSpec
 
 
 ResearchRunner = Callable[..., Awaitable[ResultEnvelope[ResearchResult]]]
@@ -35,6 +37,7 @@ class ImageWorkflowState:
     run_id: str
     workspace_dir: Path
     execution_text: str = ""
+    invocation: WorkflowInvocation | None = None
     image_count: int | None = None
     single_item_per_image: bool = False
     max_auto_images: int | None = 5
@@ -42,6 +45,7 @@ class ImageWorkflowState:
     research: ResultEnvelope[ResearchResult] | None = None
     groups: ResultEnvelope[GroupingResult] | None = None
     content: ResultEnvelope[XHSContent] | None = None
+    image_plan: ImageTaskPlan | None = None
     images: list[ResultEnvelope[ImageResult]] = field(default_factory=list)
     delivery: ResultEnvelope[DeliveryPackage] | None = None
 
@@ -81,7 +85,7 @@ class ContentNode(BaseNode[ImageWorkflowState, ImageWorkflowDeps]):
     research: ResultEnvelope[ResearchResult]
     groups: ResultEnvelope[GroupingResult]
 
-    async def run(self, ctx: GraphRunContext[ImageWorkflowState, ImageWorkflowDeps]) -> "ImagesNode":
+    async def run(self, ctx: GraphRunContext[ImageWorkflowState, ImageWorkflowDeps]) -> "ImagePlannerNode":
         result = await ctx.deps.run_content(
             topic=ctx.state.topic,
             execution_text=ctx.state.execution_text or ctx.state.topic,
@@ -91,7 +95,66 @@ class ContentNode(BaseNode[ImageWorkflowState, ImageWorkflowDeps]):
             workspace_dir=ctx.state.workspace_dir,
         )
         ctx.state.content = result
-        return ImagesNode(research=self.research, groups=self.groups, content=result)
+        return ImagePlannerNode(research=self.research, groups=self.groups, content=result)
+
+
+@dataclass
+class ImagePlannerNode(BaseNode[ImageWorkflowState, ImageWorkflowDeps]):
+    research: ResultEnvelope[ResearchResult]
+    groups: ResultEnvelope[GroupingResult]
+    content: ResultEnvelope[XHSContent]
+
+    async def run(self, ctx: GraphRunContext[ImageWorkflowState, ImageWorkflowDeps]) -> "ImagesNode":
+        invocation = ctx.state.invocation or WorkflowInvocation(
+            objective=ctx.state.execution_text or ctx.state.topic,
+            route="image_post",
+            topic=ctx.state.topic,
+            audience=ctx.state.audience,
+        )
+        image_plan = ImageTaskPlan.plan_from_groups(
+            invocation=invocation,
+            groups=self.groups.payload or GroupingResult(),
+            requested_image_count=ctx.state.image_count,
+            single_item_per_image=ctx.state.single_item_per_image,
+            max_auto_images=ctx.state.max_auto_images,
+        )
+        ctx.state.image_plan = image_plan
+        return ImagesNode(
+            research=self.research,
+            groups=self.groups,
+            content=self.content,
+            image_plan=image_plan,
+        )
+
+
+@dataclass
+class ImageTaskSubgraph:
+    """Executable subgraph boundary for one image task plan."""
+
+    deps: ImageWorkflowDeps
+
+    async def run(
+        self,
+        *,
+        state: ImageWorkflowState,
+        research: ResultEnvelope[ResearchResult],
+        content: ResultEnvelope[XHSContent],
+        image_task: object,
+        index: int,
+    ) -> ResultEnvelope[ImageResult]:
+        params = {
+            "topic": state.topic,
+            "execution_text": state.execution_text or state.topic,
+            "group": image_task.to_group_payload(),
+            "group_index": index,
+            "research": research,
+            "content": content,
+            "run_id": state.run_id,
+            "workspace_dir": state.workspace_dir,
+        }
+        if _callable_accepts_param(self.deps.run_image_group, "image_task"):
+            params["image_task"] = image_task
+        return await self.deps.run_image_group(**params)
 
 
 @dataclass
@@ -99,90 +162,26 @@ class ImagesNode(BaseNode[ImageWorkflowState, ImageWorkflowDeps]):
     research: ResultEnvelope[ResearchResult]
     groups: ResultEnvelope[GroupingResult]
     content: ResultEnvelope[XHSContent]
+    image_plan: ImageTaskPlan
 
     async def run(self, ctx: GraphRunContext[ImageWorkflowState, ImageWorkflowDeps]) -> "DeliveryNode":
-        groups = list((self.groups.payload or GroupingResult()).groups)
-        if ctx.state.single_item_per_image and groups:
-            group_specs = [
-                {
-                    "title": groups[0].title,
-                    "indices": list(groups[0].indices),
-                    "image_type": "cover",
-                    "desc": f"封面图 - 单套展示：{groups[0].title}",
-                }
-            ]
-            group_specs.extend(
-                {
-                    "title": group.title,
-                    "indices": list(group.indices),
-                    "image_type": f"detail_{index}",
-                }
-                for index, group in enumerate(groups[1:], start=1)
-            )
-        else:
-            group_specs = [
-                {"title": "封面", "indices": [], "image_type": "cover"},
-                *[
-                    {
-                        "title": group.title,
-                        "indices": list(group.indices),
-                        "image_type": f"detail_{index}",
-                    }
-                    for index, group in enumerate(groups, start=1)
-                ],
-            ]
-        if ctx.state.image_count is not None:
-            target_count = max(1, min(ctx.state.image_count, 20))
-            while len(group_specs) < target_count:
-                image_number = len(group_specs) + 1
-                image_type = "cover" if not group_specs else f"detail_{len(group_specs)}"
-                if ctx.state.single_item_per_image:
-                    title = f"第{image_number}张单套穿搭"
-                    desc = (
-                        f"{'封面图' if image_number == 1 else '详情图'} - "
-                        f"用户明确要求的第{image_number}张单套展示图；"
-                        "请根据用户原始要求、正文中的对应图号和风格约束生成，"
-                        "不要复用前面图片。"
-                    )
-                else:
-                    title = f"第{image_number}张补充画面"
-                    desc = (
-                        f"{'封面图' if image_number == 1 else '详情图'} - "
-                        f"用户明确要求的第{image_number}张图片；"
-                        "当研究或分组数量不足时，请根据用户原始要求、正文、当前主题和风格约束生成一个新的独立画面，"
-                        "不要复用前面图片，也不要生成研究限制、登录提示或系统诊断文字。"
-                    )
-                group_specs.append(
-                    {
-                        "title": title,
-                        "indices": [],
-                        "image_type": image_type,
-                        "desc": desc,
-                    }
-                )
-            group_specs = group_specs[:target_count]
-        elif ctx.state.max_auto_images is not None:
-            target_count = max(1, min(ctx.state.max_auto_images, 20))
-            group_specs = group_specs[:target_count]
 
         concurrency = max(1, ctx.state.image_generation_concurrency)
         semaphore = asyncio.Semaphore(concurrency)
+        image_task_subgraph = ImageTaskSubgraph(deps=ctx.deps)
 
-        async def run_limited_image_group(index: int, group: dict[str, object]) -> ResultEnvelope[ImageResult]:
+        async def run_limited_image_group(index: int, image_task) -> ResultEnvelope[ImageResult]:
             async with semaphore:
-                return await ctx.deps.run_image_group(
-                    topic=ctx.state.topic,
-                    execution_text=ctx.state.execution_text or ctx.state.topic,
-                    group=group,
-                    group_index=index,
+                return await image_task_subgraph.run(
+                    state=ctx.state,
                     research=self.research,
                     content=self.content,
-                    run_id=ctx.state.run_id,
-                    workspace_dir=ctx.state.workspace_dir,
+                    image_task=image_task,
+                    index=index,
                 )
 
         images = await asyncio.gather(
-            *[run_limited_image_group(index, group) for index, group in enumerate(group_specs)]
+            *[run_limited_image_group(index, image_task) for index, image_task in enumerate(self.image_plan.tasks)]
         )
         ctx.state.images = list(images)
         return DeliveryNode(
@@ -223,9 +222,54 @@ image_workflow_graph = Graph(
         ResearchNode,
         GroupingNode,
         ContentNode,
+        ImagePlannerNode,
         ImagesNode,
         DeliveryNode,
     )
+)
+
+
+image_workflow_module_graph = ModuleGraphSpec(
+    name="image_post_workflow",
+    modules=[
+        ModuleNodeSpec(
+            name="research",
+            input_refs=["workflow_invocation"],
+            output_ref="research",
+            subnodes=["search", "synthesis", "review"],
+        ),
+        ModuleNodeSpec(
+            name="grouping",
+            input_refs=["workflow_invocation", "research"],
+            output_ref="grouping",
+            subnodes=["grouping", "review"],
+        ),
+        ModuleNodeSpec(
+            name="content",
+            input_refs=["workflow_invocation", "research", "grouping"],
+            output_ref="content",
+            subnodes=["generate", "review"],
+        ),
+        ModuleNodeSpec(
+            name="image",
+            input_refs=["workflow_invocation", "grouping", "content"],
+            output_ref="images",
+            subnodes=[
+                "reference_analysis",
+                "image_planner",
+                "image_task_subgraph",
+                "image_join",
+                "image_set_review",
+            ],
+            supports_parallel=True,
+        ),
+        ModuleNodeSpec(
+            name="delivery",
+            input_refs=["workflow_invocation", "research", "grouping", "content", "images"],
+            output_ref="delivery",
+            subnodes=["package", "review", "feishu_delivery"],
+        ),
+    ],
 )
 
 
@@ -242,6 +286,7 @@ class ImageWorkflowRunner:
         run_id: str,
         workspace_dir: Path,
         execution_text: str = "",
+        invocation: WorkflowInvocation | None = None,
         image_count: int | None = None,
         single_item_per_image: bool = False,
         max_auto_images: int | None = 5,
@@ -253,6 +298,7 @@ class ImageWorkflowRunner:
             run_id=run_id,
             workspace_dir=workspace_dir,
             execution_text=execution_text,
+            invocation=invocation,
             image_count=image_count,
             single_item_per_image=single_item_per_image,
             max_auto_images=max_auto_images,
@@ -264,3 +310,14 @@ class ImageWorkflowRunner:
             deps=self.deps,
         )
         return result.output
+
+
+def _callable_accepts_param(func: Callable[..., object], param_name: str) -> bool:
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError):
+        return True
+    return param_name in signature.parameters or any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
