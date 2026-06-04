@@ -161,6 +161,7 @@ class ImageTaskPlan(BaseModel):
         requested_image_count: int | None,
         single_item_per_image: bool,
         max_auto_images: int | None,
+        reference_analysis: list[ReferenceImagePlan] | None = None,
     ) -> "ImageTaskPlan":
         group_items = list(groups.groups)
         group_payloads = cls._group_payloads(
@@ -169,7 +170,7 @@ class ImageTaskPlan(BaseModel):
             single_item_per_image=single_item_per_image,
             max_auto_images=max_auto_images,
         )
-        references = cls._reference_plans(invocation)
+        references = list(reference_analysis) if reference_analysis is not None else cls.reference_plans_from_invocation(invocation)
         mode = cls._generation_mode(references)
         hard_constraints = list(dict.fromkeys(invocation.constraints))
         qa_rules = cls._qa_rules(references=references, hard_constraints=hard_constraints)
@@ -278,24 +279,70 @@ class ImageTaskPlan(BaseModel):
         return payloads
 
     @staticmethod
-    def _reference_plans(invocation: WorkflowInvocation) -> list[ReferenceImagePlan]:
-        constraints = {constraint.lower() for constraint in invocation.constraints}
-        if "strict_object_transfer" in constraints or "object_transfer" in constraints:
-            role = ImageReferenceRole.OBJECT_TRANSFER
-        elif "preserve_reference_subject" in constraints or "subject_reference" in constraints:
-            role = ImageReferenceRole.SUBJECT_REFERENCE
-        else:
-            role = ImageReferenceRole.STYLE_REFERENCE
+    def reference_plans_from_invocation(invocation: WorkflowInvocation) -> list[ReferenceImagePlan]:
         return [
             ReferenceImagePlan(
                 label=artifact.label,
                 path=artifact.path,
-                role=role,
+                role=ImageTaskPlan._reference_role_for_artifact(invocation=invocation, artifact=artifact),
                 artifact=artifact,
+                notes=str(artifact.metadata.get("notes") or artifact.metadata.get("description") or ""),
             )
             for artifact in invocation.artifacts
             if artifact.artifact_type == "image"
         ]
+
+    @staticmethod
+    def _reference_role_for_artifact(
+        *,
+        invocation: WorkflowInvocation,
+        artifact: ArtifactRef,
+    ) -> ImageReferenceRole:
+        metadata_role = (
+            artifact.metadata.get("reference_role")
+            or artifact.metadata.get("image_reference_role")
+            or artifact.metadata.get("role")
+        )
+        if metadata_role:
+            return ImageTaskPlan._normalize_reference_role(str(metadata_role))
+
+        constraints = {constraint.lower() for constraint in invocation.constraints}
+        if "strict_object_transfer" in constraints or "object_transfer" in constraints:
+            return ImageReferenceRole.OBJECT_TRANSFER
+        if "preserve_reference_subject" in constraints or "subject_reference" in constraints:
+            return ImageReferenceRole.SUBJECT_REFERENCE
+        if "composition_reference" in constraints:
+            return ImageReferenceRole.COMPOSITION_REFERENCE
+        if "scene_reference" in constraints:
+            return ImageReferenceRole.SCENE_REFERENCE
+        if "material_color_reference" in constraints:
+            return ImageReferenceRole.MATERIAL_COLOR_REFERENCE
+        return ImageReferenceRole.STYLE_REFERENCE
+
+    @staticmethod
+    def _normalize_reference_role(value: str) -> ImageReferenceRole:
+        normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+        aliases = {
+            "style": ImageReferenceRole.STYLE_REFERENCE,
+            "style_reference": ImageReferenceRole.STYLE_REFERENCE,
+            "subject": ImageReferenceRole.SUBJECT_REFERENCE,
+            "subject_reference": ImageReferenceRole.SUBJECT_REFERENCE,
+            "preserve_subject": ImageReferenceRole.SUBJECT_REFERENCE,
+            "object": ImageReferenceRole.OBJECT_TRANSFER,
+            "object_transfer": ImageReferenceRole.OBJECT_TRANSFER,
+            "strict_object_transfer": ImageReferenceRole.OBJECT_TRANSFER,
+            "composition": ImageReferenceRole.COMPOSITION_REFERENCE,
+            "composition_reference": ImageReferenceRole.COMPOSITION_REFERENCE,
+            "scene": ImageReferenceRole.SCENE_REFERENCE,
+            "scene_reference": ImageReferenceRole.SCENE_REFERENCE,
+            "material": ImageReferenceRole.MATERIAL_COLOR_REFERENCE,
+            "material_color": ImageReferenceRole.MATERIAL_COLOR_REFERENCE,
+            "material_color_reference": ImageReferenceRole.MATERIAL_COLOR_REFERENCE,
+        }
+        try:
+            return ImageReferenceRole(normalized)
+        except ValueError:
+            return aliases.get(normalized, ImageReferenceRole.STYLE_REFERENCE)
 
     @staticmethod
     def _generation_mode(references: list[ReferenceImagePlan]) -> str:

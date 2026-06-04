@@ -11,7 +11,15 @@ from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 from src.agents.image_post.schemas import GroupSpec, ImageResult, ResearchResult, XHSContent
 from src.config.settings import ImageConfig
 
-from .schemas import DeliveryPackage, GroupingItem, GroupingResult, ImageTaskPlan, ResultEnvelope, WorkflowInvocation
+from .schemas import (
+    DeliveryPackage,
+    GroupingItem,
+    GroupingResult,
+    ImageTaskPlan,
+    ReferenceImagePlan,
+    ResultEnvelope,
+    WorkflowInvocation,
+)
 from .workflow_graph import ModuleGraphSpec, ModuleNodeSpec
 
 
@@ -47,14 +55,18 @@ class ImageWorkflowState:
     research: ResultEnvelope[ResearchResult] | None = None
     groups: ResultEnvelope[GroupingResult] | None = None
     content: ResultEnvelope[XHSContent] | None = None
+    reference_analysis: list[ReferenceImagePlan] = field(default_factory=list)
     image_plan: ImageTaskPlan | None = None
     images: list[ResultEnvelope[ImageResult]] = field(default_factory=list)
+    image_set_review_summary: str = ""
     delivery: ResultEnvelope[DeliveryPackage] | None = None
+    executed_nodes: list[str] = field(default_factory=list)
 
 
 @dataclass
 class ResearchNode(BaseNode[ImageWorkflowState, ImageWorkflowDeps]):
     async def run(self, ctx: GraphRunContext[ImageWorkflowState, ImageWorkflowDeps]) -> "GroupingNode":
+        ctx.state.executed_nodes.append("research")
         result = await ctx.deps.run_research(
             topic=ctx.state.topic,
             audience=ctx.state.audience,
@@ -71,6 +83,7 @@ class GroupingNode(BaseNode[ImageWorkflowState, ImageWorkflowDeps]):
     research: ResultEnvelope[ResearchResult]
 
     async def run(self, ctx: GraphRunContext[ImageWorkflowState, ImageWorkflowDeps]) -> "ContentNode":
+        ctx.state.executed_nodes.append("grouping")
         result = await ctx.deps.run_grouping(
             topic=ctx.state.topic,
             execution_text=ctx.state.execution_text or ctx.state.topic,
@@ -87,7 +100,8 @@ class ContentNode(BaseNode[ImageWorkflowState, ImageWorkflowDeps]):
     research: ResultEnvelope[ResearchResult]
     groups: ResultEnvelope[GroupingResult]
 
-    async def run(self, ctx: GraphRunContext[ImageWorkflowState, ImageWorkflowDeps]) -> "ImagePlannerNode":
+    async def run(self, ctx: GraphRunContext[ImageWorkflowState, ImageWorkflowDeps]) -> "ReferenceAnalysisNode":
+        ctx.state.executed_nodes.append("content")
         result = await ctx.deps.run_content(
             topic=ctx.state.topic,
             execution_text=ctx.state.execution_text or ctx.state.topic,
@@ -97,7 +111,31 @@ class ContentNode(BaseNode[ImageWorkflowState, ImageWorkflowDeps]):
             workspace_dir=ctx.state.workspace_dir,
         )
         ctx.state.content = result
-        return ImagePlannerNode(research=self.research, groups=self.groups, content=result)
+        return ReferenceAnalysisNode(research=self.research, groups=self.groups, content=result)
+
+
+@dataclass
+class ReferenceAnalysisNode(BaseNode[ImageWorkflowState, ImageWorkflowDeps]):
+    research: ResultEnvelope[ResearchResult]
+    groups: ResultEnvelope[GroupingResult]
+    content: ResultEnvelope[XHSContent]
+
+    async def run(self, ctx: GraphRunContext[ImageWorkflowState, ImageWorkflowDeps]) -> "ImagePlannerNode":
+        ctx.state.executed_nodes.append("reference_analysis")
+        invocation = ctx.state.invocation or WorkflowInvocation(
+            objective=ctx.state.execution_text or ctx.state.topic,
+            route="image_post",
+            topic=ctx.state.topic,
+            audience=ctx.state.audience,
+        )
+        references = ImageTaskPlan.reference_plans_from_invocation(invocation)
+        ctx.state.reference_analysis = references
+        return ImagePlannerNode(
+            research=self.research,
+            groups=self.groups,
+            content=self.content,
+            reference_analysis=references,
+        )
 
 
 @dataclass
@@ -105,8 +143,10 @@ class ImagePlannerNode(BaseNode[ImageWorkflowState, ImageWorkflowDeps]):
     research: ResultEnvelope[ResearchResult]
     groups: ResultEnvelope[GroupingResult]
     content: ResultEnvelope[XHSContent]
+    reference_analysis: list[ReferenceImagePlan] = field(default_factory=list)
 
     async def run(self, ctx: GraphRunContext[ImageWorkflowState, ImageWorkflowDeps]) -> "ImagesNode":
+        ctx.state.executed_nodes.append("image_planner")
         invocation = ctx.state.invocation or WorkflowInvocation(
             objective=ctx.state.execution_text or ctx.state.topic,
             route="image_post",
@@ -119,6 +159,7 @@ class ImagePlannerNode(BaseNode[ImageWorkflowState, ImageWorkflowDeps]):
             requested_image_count=ctx.state.image_count,
             single_item_per_image=ctx.state.single_item_per_image,
             max_auto_images=ctx.state.max_auto_images,
+            reference_analysis=self.reference_analysis,
         )
         ctx.state.image_plan = image_plan
         return ImagesNode(
@@ -279,8 +320,8 @@ class ImagesNode(BaseNode[ImageWorkflowState, ImageWorkflowDeps]):
     content: ResultEnvelope[XHSContent]
     image_plan: ImageTaskPlan
 
-    async def run(self, ctx: GraphRunContext[ImageWorkflowState, ImageWorkflowDeps]) -> "DeliveryNode":
-
+    async def run(self, ctx: GraphRunContext[ImageWorkflowState, ImageWorkflowDeps]) -> "ImageJoinNode":
+        ctx.state.executed_nodes.append("image_task_subgraph")
         concurrency = max(1, ctx.state.image_generation_concurrency)
         semaphore = asyncio.Semaphore(concurrency)
         image_task_subgraph = ImageTaskSubgraph(deps=ctx.deps)
@@ -299,11 +340,52 @@ class ImagesNode(BaseNode[ImageWorkflowState, ImageWorkflowDeps]):
             *[run_limited_image_group(index, image_task) for index, image_task in enumerate(self.image_plan.tasks)]
         )
         ctx.state.images = list(images)
-        return DeliveryNode(
+        return ImageJoinNode(
             research=self.research,
             groups=self.groups,
             content=self.content,
             images=list(images),
+        )
+
+
+@dataclass
+class ImageJoinNode(BaseNode[ImageWorkflowState, ImageWorkflowDeps]):
+    research: ResultEnvelope[ResearchResult]
+    groups: ResultEnvelope[GroupingResult]
+    content: ResultEnvelope[XHSContent]
+    images: list[ResultEnvelope[ImageResult]]
+
+    async def run(self, ctx: GraphRunContext[ImageWorkflowState, ImageWorkflowDeps]) -> "ImageSetReviewNode":
+        ctx.state.executed_nodes.append("image_join")
+        ctx.state.images = list(self.images)
+        return ImageSetReviewNode(
+            research=self.research,
+            groups=self.groups,
+            content=self.content,
+            images=list(self.images),
+        )
+
+
+@dataclass
+class ImageSetReviewNode(BaseNode[ImageWorkflowState, ImageWorkflowDeps]):
+    research: ResultEnvelope[ResearchResult]
+    groups: ResultEnvelope[GroupingResult]
+    content: ResultEnvelope[XHSContent]
+    images: list[ResultEnvelope[ImageResult]]
+
+    async def run(self, ctx: GraphRunContext[ImageWorkflowState, ImageWorkflowDeps]) -> "DeliveryNode":
+        ctx.state.executed_nodes.append("image_set_review")
+        success_count = sum(
+            1
+            for image in self.images
+            if image.status == "success" and image.payload is not None and bool(image.payload.images)
+        )
+        ctx.state.image_set_review_summary = f"{success_count}/{len(self.images)} image tasks passed set review"
+        return DeliveryNode(
+            research=self.research,
+            groups=self.groups,
+            content=self.content,
+            images=list(self.images),
         )
 
 
@@ -318,6 +400,7 @@ class DeliveryNode(BaseNode[ImageWorkflowState, ImageWorkflowDeps, ResultEnvelop
         self,
         ctx: GraphRunContext[ImageWorkflowState, ImageWorkflowDeps],
     ) -> End[ResultEnvelope[DeliveryPackage]]:
+        ctx.state.executed_nodes.append("delivery")
         result = await ctx.deps.run_delivery(
             topic=ctx.state.topic,
             execution_text=ctx.state.execution_text or ctx.state.topic,
@@ -328,6 +411,13 @@ class DeliveryNode(BaseNode[ImageWorkflowState, ImageWorkflowDeps, ResultEnvelop
             run_id=ctx.state.run_id,
             workspace_dir=ctx.state.workspace_dir,
         )
+        if result.payload is not None:
+            result.payload.metadata.setdefault("workflow_runner", "ImageWorkflowRunner")
+            result.payload.metadata["workflow_node_trace"] = list(ctx.state.executed_nodes)
+            result.payload.metadata["reference_analysis"] = [
+                reference.model_dump(mode="json") for reference in ctx.state.reference_analysis
+            ]
+            result.payload.metadata["image_set_review"] = ctx.state.image_set_review_summary
         ctx.state.delivery = result
         return End(result)
 
@@ -337,8 +427,11 @@ image_workflow_graph = Graph(
         ResearchNode,
         GroupingNode,
         ContentNode,
+        ReferenceAnalysisNode,
         ImagePlannerNode,
         ImagesNode,
+        ImageJoinNode,
+        ImageSetReviewNode,
         DeliveryNode,
     )
 )

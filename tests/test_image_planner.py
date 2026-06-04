@@ -13,14 +13,17 @@ from src.agents.image_post.schemas import (
 )
 from src.orchestration.image_flow import (
     ImageGenerationNode,
+    ImageJoinNode,
     ImagePlannerNode,
     ImagePromptNode,
     ImageRepairRetryNode,
     ImageReviewNode,
+    ImageSetReviewNode,
     ImageTaskSubgraph,
     ImageWorkflowDeps,
     ImageWorkflowRunner,
     ImageWorkflowState,
+    ReferenceAnalysisNode,
     image_workflow_module_graph,
 )
 from src.orchestration.schemas import (
@@ -86,6 +89,38 @@ def test_image_planner_builds_task_plans_with_reference_roles() -> None:
     assert "no_people" in plan.tasks[0].hard_constraints
 
 
+def test_reference_analysis_honors_per_artifact_roles_before_global_constraints() -> None:
+    invocation = WorkflowInvocation(
+        objective="用两张参考图做一组新图",
+        route="image_post",
+        topic="通勤穿搭",
+        constraints=["strict_object_transfer"],
+        artifacts=[
+            ArtifactRef(
+                artifact_type="image",
+                label="palette",
+                path="C:/tmp/palette.png",
+                metadata={"reference_role": "material_color_reference"},
+            ),
+            ArtifactRef(
+                artifact_type="image",
+                label="street",
+                path="C:/tmp/street.png",
+                metadata={"role": "scene"},
+            ),
+            ArtifactRef(artifact_type="image", label="bag", path="C:/tmp/bag.png"),
+        ],
+    )
+
+    references = ImageTaskPlan.reference_plans_from_invocation(invocation)
+
+    assert [(reference.label, reference.role) for reference in references] == [
+        ("palette", ImageReferenceRole.MATERIAL_COLOR_REFERENCE),
+        ("street", ImageReferenceRole.SCENE_REFERENCE),
+        ("bag", ImageReferenceRole.OBJECT_TRANSFER),
+    ]
+
+
 def test_image_workflow_exposes_fixed_module_graph_contract() -> None:
     assert image_workflow_module_graph.module_names == [
         "research",
@@ -109,12 +144,15 @@ def test_image_workflow_exposes_fixed_module_graph_contract() -> None:
 
 
 def test_image_graph_has_explicit_planner_node_and_task_subgraph() -> None:
+    assert ReferenceAnalysisNode.__name__ == "ReferenceAnalysisNode"
     assert ImagePlannerNode.__name__ == "ImagePlannerNode"
     assert ImageTaskSubgraph.__name__ == "ImageTaskSubgraph"
     assert ImagePromptNode.__name__ == "ImagePromptNode"
     assert ImageGenerationNode.__name__ == "ImageGenerationNode"
     assert ImageReviewNode.__name__ == "ImageReviewNode"
     assert ImageRepairRetryNode.__name__ == "ImageRepairRetryNode"
+    assert ImageJoinNode.__name__ == "ImageJoinNode"
+    assert ImageSetReviewNode.__name__ == "ImageSetReviewNode"
 
 
 def test_image_workflow_default_auto_cap_is_cover_plus_eight_details(tmp_path: Path) -> None:
@@ -225,7 +263,7 @@ async def test_image_workflow_uses_image_planner_tasks_for_fan_out(tmp_path: Pat
         ],
     )
 
-    await runner.run(
+    result = await runner.run(
         topic="通勤穿搭",
         audience="上班族",
         run_id="run-image-planner",
@@ -237,6 +275,21 @@ async def test_image_workflow_uses_image_planner_tasks_for_fan_out(tmp_path: Pat
     assert [task.image_type for task in seen_tasks] == ["cover", "detail_1"]
     assert all(task.generation_mode == "object_transfer" for task in seen_tasks)
     assert seen_tasks[0].reference_images[0].role == ImageReferenceRole.OBJECT_TRANSFER
+    assert result.payload is not None
+    assert result.payload.metadata["workflow_node_trace"] == [
+        "research",
+        "grouping",
+        "content",
+        "reference_analysis",
+        "image_planner",
+        "image_task_subgraph",
+        "image_join",
+        "image_set_review",
+        "delivery",
+    ]
+    assert result.payload.metadata["reference_analysis"][0]["role"] == "object_transfer"
+    assert result.payload.metadata["workflow_runner"] == "ImageWorkflowRunner"
+    assert result.payload.metadata["image_set_review"] == "2/2 image tasks passed set review"
 
 
 @pytest.mark.anyio
