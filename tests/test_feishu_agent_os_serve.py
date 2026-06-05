@@ -703,6 +703,56 @@ async def test_background_task_tool_uses_current_user_text_for_reference_image_p
 
 
 @pytest.mark.anyio
+async def test_background_task_tool_preserves_reference_image_metadata(tmp_path) -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    reference = tmp_path / "object-reference.jpg"
+    reference.write_bytes(b"jpg")
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="execute_image_post",
+            description="Fake image specialist",
+            execute=fake_specialist_tool,
+            category="specialist",
+        )
+    )
+    task_manager = module.AgentOSTaskManager(tool_registry=registry)
+    module._register_task_tools(registry, task_manager=task_manager)
+
+    result = await registry.execute(
+        "start_background_agent_task",
+        AgentToolContext(run_id="run-1"),
+        task_type="image_post",
+        spec={
+            "objective": "把参考包迁移到新场景",
+            "reference_images": [
+                {
+                    "artifact_type": "image",
+                    "label": "bag",
+                    "path": str(reference),
+                    "mime_type": "image/jpeg",
+                    "metadata": {"reference_role": "object_transfer"},
+                }
+            ],
+        },
+    )
+    await task_manager.wait_for_all()
+
+    task_summary = result.envelope.payload
+    spec = task_manager.get_task(task_summary["task_id"]).params["spec"]
+    assert result.envelope.status == "success"
+    assert spec["reference_images"] == [
+        {
+            "artifact_type": "image",
+            "label": "bag",
+            "path": str(reference.resolve()),
+            "mime_type": "image/jpeg",
+            "metadata": {"reference_role": "object_transfer"},
+        }
+    ]
+
+
+@pytest.mark.anyio
 async def test_background_task_tool_rejects_empty_route_request_without_starting_task() -> None:
     module = importlib.import_module("src.apps.feishu_agent_os.serve")
     registry = AgentToolRegistry()

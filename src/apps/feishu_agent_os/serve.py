@@ -1194,14 +1194,14 @@ def _coerce_reference_image_refs(value: Any) -> list[dict[str, Any]]:
         path = _coerce_text(value.get("path"))
         if not path:
             return []
-        return [_reference_image_ref(path, label=_coerce_text(value.get("label")))]
+        return [_reference_image_ref_from_mapping(value, path=path)]
     if isinstance(value, list | tuple | set):
         refs: list[dict[str, Any]] = []
         for item in value:
             if isinstance(item, dict):
                 path = _coerce_text(item.get("path"))
                 if path:
-                    refs.append(_reference_image_ref(path, label=_coerce_text(item.get("label"))))
+                    refs.append(_reference_image_ref_from_mapping(item, path=path))
             else:
                 path = _coerce_text(item)
                 if path:
@@ -1211,6 +1211,20 @@ def _coerce_reference_image_refs(value: Any) -> list[dict[str, Any]]:
                 ref["label"] = f"reference_{index}"
         return refs
     return []
+
+
+def _reference_image_ref_from_mapping(value: dict[str, Any], *, path: str) -> dict[str, Any]:
+    ref = _reference_image_ref(path, label=_coerce_text(value.get("label")))
+    artifact_type = _coerce_text(value.get("artifact_type"))
+    if artifact_type:
+        ref["artifact_type"] = artifact_type
+    mime_type = _coerce_text(value.get("mime_type"))
+    if mime_type:
+        ref["mime_type"] = mime_type
+    metadata = value.get("metadata")
+    if isinstance(metadata, dict):
+        ref["metadata"] = dict(metadata)
+    return ref
 
 
 def _reference_image_ref(path: str, *, label: str = "") -> dict[str, Any]:
