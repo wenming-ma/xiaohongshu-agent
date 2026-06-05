@@ -38,7 +38,7 @@ xiaohongshu-agent/
 uv sync
 ```
 
-配置 `.env`，至少提供飞书和模型相关密钥。图片生成默认走 Vertex/Gemini 配置，飞书服务通过 `FEISHU_CHAT_ID` 指定目标会话。
+配置 `.env`，至少提供飞书和模型相关密钥。图片生成默认走 Vertex/Gemini 配置。飞书目标会话支持按环境分流：开发/测试使用 `FEISHU_CHAT_DEV_ID`，部署/正式使用 `FEISHU_CHAT_DEPLOY_ID`，并通过 `FEISHU_RUNTIME_ENV=dev|deploy` 选择；旧的 `FEISHU_CHAT_ID` 仍作为显式覆盖。
 
 预热研究访问或外部站点登录态：
 

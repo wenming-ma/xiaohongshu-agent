@@ -14,6 +14,10 @@ def _bool_env(name: str, default: bool = False) -> bool:
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _normalized_env_value(name: str, default: str = "") -> str:
+    return os.getenv(name, default).strip().lower()
+
+
 def _resolve_minimax_anthropic_base_url() -> str:
     explicit = os.getenv("MINIMAX_ANTHROPIC_BASE_URL")
     if explicit:
@@ -40,6 +44,40 @@ def _resolve_minimax_openai_base_url() -> str:
             return legacy
 
     return "https://api.minimaxi.com/v1"
+
+
+def _resolve_feishu_runtime_env() -> str:
+    return _normalized_env_value("FEISHU_RUNTIME_ENV") or _normalized_env_value("APP_ENV", "dev")
+
+
+def _resolve_feishu_dev_chat_id() -> str | None:
+    return (
+        os.getenv("FEISHU_CHAT_DEV_ID")
+        or os.getenv("FEISHU_CHAT_TEST_ID")
+        or os.getenv("FEISHU_TEST_CHAT_ID")
+    )
+
+
+def _resolve_feishu_deploy_chat_id() -> str | None:
+    return (
+        os.getenv("FEISHU_CHAT_DEPLOY_ID")
+        or os.getenv("FEISHU_CHAT_PROD_ID")
+        or os.getenv("FEISHU_DEPLOY_CHAT_ID")
+    )
+
+
+def _resolve_feishu_chat_id() -> str | None:
+    explicit = os.getenv("FEISHU_CHAT_ID")
+    if explicit:
+        return explicit
+
+    dev_chat_id = _resolve_feishu_dev_chat_id()
+    deploy_chat_id = _resolve_feishu_deploy_chat_id()
+    runtime_env = _resolve_feishu_runtime_env()
+
+    if runtime_env in {"deploy", "prod", "production", "release"}:
+        return deploy_chat_id or dev_chat_id
+    return dev_chat_id or deploy_chat_id
 
 
 class RetryConfig:
@@ -183,7 +221,10 @@ class TelegramConfig:
 class FeishuConfig:
     APP_ID = os.getenv("FEISHU_APP_ID")
     APP_SECRET = os.getenv("FEISHU_APP_SECRET")
-    CHAT_ID = os.getenv("FEISHU_CHAT_ID")
+    RUNTIME_ENV = _resolve_feishu_runtime_env()
+    CHAT_DEV_ID = _resolve_feishu_dev_chat_id()
+    CHAT_DEPLOY_ID = _resolve_feishu_deploy_chat_id()
+    CHAT_ID = _resolve_feishu_chat_id()
     MENTION_USER_ID = os.getenv("FEISHU_MENTION_USER_ID", "ou_4f24c411b1b8363b40a0ca18507db836")
     MENTION_USER_NAME = os.getenv("FEISHU_MENTION_USER_NAME", "马旖旎")
     DM_MODE = os.getenv("FEISHU_DM_MODE", "0").lower() in ("1", "true", "yes", "on")
