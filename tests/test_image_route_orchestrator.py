@@ -9,6 +9,7 @@ from src.agents.shared.login import AuthResult
 from src.orchestration.conversation import ConversationRequest
 from src.orchestration.image_route import ImagePostOrchestrator
 from src.orchestration.run_options import ImagePostRunOptions, ImageRunOptions, ResearchRunOptions
+from src.orchestration.schemas import ArtifactRef, WorkflowInvocation
 from src.orchestration.style_context import StyleContext
 
 
@@ -353,6 +354,62 @@ async def test_image_post_orchestrator_carries_reference_images_into_style_conte
     assert style_metadata["reference_images"][0]["path"] == str(reference)
     assert any("参考图" in item for item in style_metadata["hard_constraints"])
     assert result.payload.metadata["style_context"]["reference_images"][0]["label"] == "reference_1"
+
+
+@pytest.mark.anyio
+async def test_image_post_orchestrator_preserves_workflow_invocation_skill_prompt_and_reference_roles(
+    tmp_path: Path,
+) -> None:
+    reference = tmp_path / "hat.png"
+    reference.write_bytes(b"reference")
+    orchestrator = ImagePostOrchestrator(
+        workspace_root=tmp_path,
+        research_agent_factory=FakeResearchAgent,
+        content_agent_factory=FakeContentAgent,
+        image_agent_factory=FakeImageAgent,
+    )
+    invocation = WorkflowInvocation(
+        objective="把帽子原封不动迁移到通勤穿搭图里",
+        route="image_post",
+        topic="通勤帽子穿搭",
+        selected_skills=["reference-image-product-alignment"],
+        selected_prompt_templates=["image/reference/product-reference-lock"],
+        constraints=["strict_object_transfer", "no_people"],
+        artifacts=[
+            ArtifactRef(
+                artifact_type="image",
+                label="hat",
+                path=str(reference),
+                mime_type="image/png",
+                metadata={"reference_role": "object_transfer"},
+            )
+        ],
+    )
+
+    result = await orchestrator.run(
+        ConversationRequest(
+            topic="通勤帽子穿搭",
+            audience="上班族",
+            message="帽子必须保留，生成 1 张纯色背景图",
+            style_constraints=["纯色背景"],
+            image_count=1,
+            reference_images=[str(reference)],
+        ),
+        run_id="run-image-route-invocation-context",
+        workflow_invocation=invocation,
+        send_to_feishu=False,
+    )
+
+    assert result.payload is not None
+    metadata = result.payload.metadata
+    assert metadata["style_context"]["matched_skills"] == ["reference-image-product-alignment"]
+    assert "image/reference/product-reference-lock" in metadata["style_context"]["prompt_ref_sources"]
+    assert metadata["reference_analysis"][0]["role"] == "object_transfer"
+    artifact = result.payload.artifacts[0]
+    assert artifact.metadata["image_task"]["generation_mode"] == "object_transfer"
+    assert artifact.metadata["image_task"]["selected_prompt_templates"] == [
+        "image/reference/product-reference-lock"
+    ]
 
 
 @pytest.mark.anyio

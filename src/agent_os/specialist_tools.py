@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 from src.orchestration.conversation import ContentRoute, ConversationRequest
@@ -82,16 +83,19 @@ def _build_route_execute(runner: Any, route: ContentRoute):
         **extra_context: Any,
     ) -> AgentToolResult:
         task_spec = TaskRunSpec.model_validate(_merge_route_extra_context(spec, extra_context))
+        workflow_invocation = workflow_invocation_from_task_spec(task_spec)
         request = conversation_request_from_task_spec(
             task_spec.model_copy(update={"route": route})
         )
-        envelope: ResultEnvelope[DeliveryPackage] = await runner.run(
-            request,
-            run_id=ctx.run_id,
-            chat_id=ctx.chat_id,
-            send_to_feishu=True,
-            run_options=_route_run_options_from_task_spec(task_spec, route),
-        )
+        runner_kwargs: dict[str, Any] = {
+            "run_id": ctx.run_id,
+            "chat_id": ctx.chat_id,
+            "send_to_feishu": True,
+            "run_options": _route_run_options_from_task_spec(task_spec, route),
+        }
+        if _callable_accepts_param(runner.run, "workflow_invocation"):
+            runner_kwargs["workflow_invocation"] = workflow_invocation
+        envelope: ResultEnvelope[DeliveryPackage] = await runner.run(request, **runner_kwargs)
         return AgentToolResult(envelope=envelope, produced_refs=[route.value])
 
     return execute
@@ -187,3 +191,14 @@ def _merge_route_extra_context(
         merged["selected_prompt_templates"] = selected_prompt_templates
 
     return merged
+
+
+def _callable_accepts_param(func: Any, param_name: str) -> bool:
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError):
+        return True
+    return param_name in signature.parameters or any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )

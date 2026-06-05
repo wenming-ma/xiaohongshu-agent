@@ -121,6 +121,60 @@ def test_reference_analysis_honors_per_artifact_roles_before_global_constraints(
     ]
 
 
+def test_reference_analysis_infers_object_transfer_from_natural_language_constraints() -> None:
+    invocation = WorkflowInvocation(
+        objective="把参考图里的黑色通勤包迁移到周末咖啡馆桌边场景",
+        route="image_post",
+        topic="周末咖啡馆随身通勤包",
+        constraints=[
+            "参考图中的黑色通勤包、肩带、容量感作为 subject/object reference 保留",
+            "将参考图主体迁移到周末咖啡馆桌边场景",
+            "不要人物",
+        ],
+        artifacts=[
+            ArtifactRef(
+                artifact_type="image",
+                label="reference_1",
+                path="C:/tmp/commute-bag.jpg",
+            )
+        ],
+    )
+
+    references = ImageTaskPlan.reference_plans_from_invocation(invocation)
+    plan = ImageTaskPlan.plan_from_groups(
+        invocation=invocation,
+        groups=GroupingResult(groups=[GroupingItem(title="咖啡馆通勤包", indices=[0])]),
+        requested_image_count=1,
+        single_item_per_image=False,
+        max_auto_images=9,
+        reference_analysis=references,
+    )
+
+    assert references[0].role == ImageReferenceRole.OBJECT_TRANSFER
+    assert plan.tasks[0].generation_mode == "object_transfer"
+    assert "must_preserve_reference_subjects" in plan.tasks[0].qa_rules
+
+
+def test_reference_analysis_keeps_style_reference_for_style_only_requests() -> None:
+    invocation = WorkflowInvocation(
+        objective="参考这张图的暖色咖啡馆摄影氛围",
+        route="image_post",
+        topic="咖啡馆随身物",
+        constraints=["只参考色调、光线和构图氛围，不要求保留原图物体"],
+        artifacts=[
+            ArtifactRef(
+                artifact_type="image",
+                label="style_ref",
+                path="C:/tmp/style.jpg",
+            )
+        ],
+    )
+
+    references = ImageTaskPlan.reference_plans_from_invocation(invocation)
+
+    assert references[0].role == ImageReferenceRole.STYLE_REFERENCE
+
+
 def test_image_workflow_exposes_fixed_module_graph_contract() -> None:
     assert image_workflow_module_graph.module_names == [
         "research",
@@ -290,6 +344,10 @@ async def test_image_workflow_uses_image_planner_tasks_for_fan_out(tmp_path: Pat
     assert result.payload.metadata["reference_analysis"][0]["role"] == "object_transfer"
     assert result.payload.metadata["workflow_runner"] == "ImageWorkflowRunner"
     assert result.payload.metadata["image_set_review"] == "2/2 image tasks passed set review"
+    assert result.payload.metadata["image_task_subgraph_traces"] == {
+        "cover": ["prompt", "image_generation", "image_review"],
+        "detail_1": ["prompt", "image_generation", "image_review"],
+    }
 
 
 @pytest.mark.anyio

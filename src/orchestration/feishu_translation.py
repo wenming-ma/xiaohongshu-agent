@@ -6,6 +6,22 @@ from typing import Any
 from .agent_events import AgentEventBridge, EnqueuePriority
 
 CONTROL_ACTIONS = {"new_session", "interrupt", "follow_up"}
+CONTROL_ACTION_ALIASES = {
+    "新开会话": "new_session",
+    "开启新会话": "new_session",
+    "重置会话": "new_session",
+    "重新开始": "new_session",
+    "/new": "new_session",
+    "中断": "interrupt",
+    "中断当前任务": "interrupt",
+    "停止当前任务": "interrupt",
+    "取消当前任务": "interrupt",
+    "/interrupt": "interrupt",
+    "稍后处理": "follow_up",
+    "等当前任务结束": "follow_up",
+    "完成后再处理": "follow_up",
+    "/follow_up": "follow_up",
+}
 
 
 @dataclass(frozen=True)
@@ -42,6 +58,8 @@ def parse_control_action_text(text: str) -> str:
     """Normalize Feishu text rewrites of hidden control shortcuts."""
 
     normalized = (text or "").strip().lstrip("@").strip()
+    if normalized in CONTROL_ACTION_ALIASES:
+        return CONTROL_ACTION_ALIASES[normalized]
     for prefix in ("__control__:", "control:"):
         if not normalized.startswith(prefix):
             continue

@@ -116,7 +116,16 @@ class AgentOSTaskManager:
             raise ValueError(f"Background task target must be a specialist tool: {tool_name}")
 
         resolved_task_id = task_id or uuid4().hex
-        task_ctx = ctx.model_copy(update={"task_id": resolved_task_id})
+        task_ctx = ctx.model_copy(
+            update={
+                "run_id": resolved_task_id,
+                "task_id": resolved_task_id,
+                "metadata": {
+                    **dict(ctx.metadata),
+                    "parent_run_id": ctx.run_id,
+                },
+            }
+        )
         record = AgentOSTaskRecord(
             task_id=resolved_task_id,
             tool_name=tool_name,

@@ -101,6 +101,8 @@ async def test_route_tool_registry_executes_image_route_with_spec_params() -> No
     assert result.envelope.payload is not None
     assert result.envelope.payload.route == "image_post"
     assert image_runner.calls[0]["request"].image_count == 10
+    assert image_runner.calls[0]["kwargs"]["workflow_invocation"].objective == "做留学图文"
+    assert image_runner.calls[0]["kwargs"]["workflow_invocation"].route == "image_post"
     assert image_runner.calls[0]["kwargs"]["send_to_feishu"] is True
     assert image_runner.calls[0]["kwargs"]["chat_id"] == "chat-1"
 

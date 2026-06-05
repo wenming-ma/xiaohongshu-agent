@@ -82,7 +82,14 @@ def test_feishu_new_session_control_resets_agent_session() -> None:
 
 
 def test_feishu_rewritten_control_text_resets_agent_session() -> None:
-    for text in ["__control__:new_session", "control:new_session", "@__control__:new_session"]:
+    for text in [
+        "__control__:new_session",
+        "control:new_session",
+        "@__control__:new_session",
+        "新开会话",
+        "重置会话",
+        "/new",
+    ]:
         run = FakeAgentRun()
         bridge = AgentEventBridge()
         bridge.attach_run(run)

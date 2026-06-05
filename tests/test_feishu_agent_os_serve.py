@@ -283,9 +283,14 @@ async def test_background_task_tool_accepts_task_type_alias() -> None:
     await task_manager.wait_for_all()
 
     task_summary = result.envelope.payload
+    task = task_manager.get_task(task_summary["task_id"])
     assert result.envelope.status == "success"
     assert task_summary["tool_name"] == "execute_image_post"
-    assert task_manager.get_task(task_summary["task_id"]).status == "succeeded"
+    assert task.status == "succeeded"
+    assert task.context.run_id == task_summary["task_id"]
+    assert task.context.metadata["parent_run_id"] == "run-1"
+    assert task.result is not None
+    assert task.result.envelope.run_id == task_summary["task_id"]
 
 
 @pytest.mark.anyio

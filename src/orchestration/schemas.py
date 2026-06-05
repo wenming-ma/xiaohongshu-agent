@@ -307,9 +307,64 @@ class ImageTaskPlan(BaseModel):
             return ImageTaskPlan._normalize_reference_role(str(metadata_role))
 
         constraints = {constraint.lower() for constraint in invocation.constraints}
-        if "strict_object_transfer" in constraints or "object_transfer" in constraints:
+        haystack = "\n".join(
+            [
+                invocation.objective,
+                *(invocation.constraints or []),
+                *(invocation.user_requirements or []),
+                str(artifact.metadata.get("notes") or ""),
+                str(artifact.metadata.get("description") or ""),
+            ]
+        ).lower()
+        style_only = (
+            any(marker in haystack for marker in ("只参考", "仅参考", "style only", "style reference only"))
+            and any(marker in haystack for marker in ("风格", "色调", "光线", "构图", "氛围", "style", "palette", "lighting"))
+            and any(marker in haystack for marker in ("不要求保留", "不需要保留", "不保留", "do not preserve", "no need to preserve"))
+        )
+        if style_only:
+            return ImageReferenceRole.STYLE_REFERENCE
+        if (
+            "strict_object_transfer" in constraints
+            or "object_transfer" in constraints
+            or any(
+                marker in haystack
+                for marker in (
+                    "subject/object reference",
+                    "object reference",
+                    "object transfer",
+                    "same object",
+                    "transfer the object",
+                    "must contain the reference",
+                    "元素迁移",
+                    "物体迁移",
+                    "主体迁移",
+                    "原封不动",
+                    "原样迁移",
+                    "原样搬",
+                    "搬到新",
+                    "迁移到",
+                )
+            )
+        ):
             return ImageReferenceRole.OBJECT_TRANSFER
-        if "preserve_reference_subject" in constraints or "subject_reference" in constraints:
+        if (
+            "preserve_reference_subject" in constraints
+            or "subject_reference" in constraints
+            or any(
+                marker in haystack
+                for marker in (
+                    "subject reference",
+                    "preserve reference subject",
+                    "preserve the subject",
+                    "preserve the referenced",
+                    "保留参考图",
+                    "保留原图",
+                    "保留主体",
+                    "保持主体",
+                    "主体参考",
+                )
+            )
+        ):
             return ImageReferenceRole.SUBJECT_REFERENCE
         if "composition_reference" in constraints:
             return ImageReferenceRole.COMPOSITION_REFERENCE

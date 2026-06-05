@@ -58,6 +58,7 @@ class ImageWorkflowState:
     reference_analysis: list[ReferenceImagePlan] = field(default_factory=list)
     image_plan: ImageTaskPlan | None = None
     images: list[ResultEnvelope[ImageResult]] = field(default_factory=list)
+    image_task_subgraph_traces: dict[str, list[str]] = field(default_factory=dict)
     image_set_review_summary: str = ""
     delivery: ResultEnvelope[DeliveryPackage] | None = None
     executed_nodes: list[str] = field(default_factory=list)
@@ -324,17 +325,23 @@ class ImagesNode(BaseNode[ImageWorkflowState, ImageWorkflowDeps]):
         ctx.state.executed_nodes.append("image_task_subgraph")
         concurrency = max(1, ctx.state.image_generation_concurrency)
         semaphore = asyncio.Semaphore(concurrency)
-        image_task_subgraph = ImageTaskSubgraph(deps=ctx.deps)
 
         async def run_limited_image_group(index: int, image_task) -> ResultEnvelope[ImageResult]:
             async with semaphore:
-                return await image_task_subgraph.run(
+                image_task_subgraph = ImageTaskSubgraph(deps=ctx.deps)
+                result = await image_task_subgraph.run(
                     state=ctx.state,
                     research=self.research,
                     content=self.content,
                     image_task=image_task,
                     index=index,
                 )
+                trace_key = getattr(image_task, "image_type", f"image-{index}")
+                if image_task_subgraph.last_state is not None:
+                    ctx.state.image_task_subgraph_traces[str(trace_key)] = list(
+                        image_task_subgraph.last_state.executed_nodes
+                    )
+                return result
 
         images = await asyncio.gather(
             *[run_limited_image_group(index, image_task) for index, image_task in enumerate(self.image_plan.tasks)]
@@ -417,6 +424,9 @@ class DeliveryNode(BaseNode[ImageWorkflowState, ImageWorkflowDeps, ResultEnvelop
             result.payload.metadata["reference_analysis"] = [
                 reference.model_dump(mode="json") for reference in ctx.state.reference_analysis
             ]
+            result.payload.metadata["image_task_subgraph_traces"] = dict(
+                ctx.state.image_task_subgraph_traces
+            )
             result.payload.metadata["image_set_review"] = ctx.state.image_set_review_summary
         ctx.state.delivery = result
         return End(result)

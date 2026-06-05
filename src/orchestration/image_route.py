@@ -28,7 +28,7 @@ from .schemas import (
     ResultEnvelope,
     WorkflowInvocation,
 )
-from .style_context import StyleContext
+from .style_context import ReferenceImageRef, StyleContext, StylePromptRef
 from .workspace import WorkflowWorkspace
 
 
@@ -44,6 +44,89 @@ def _safe_slug(value: str, *, max_length: int = 24) -> str:
 def _guess_mime_type(path: str) -> str:
     guessed, _ = mimetypes.guess_type(path)
     return guessed or "application/octet-stream"
+
+
+def _dedupe_text(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        item = str(value).strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
+
+
+def _merge_artifacts(left: list[ArtifactRef], right: list[ArtifactRef]) -> list[ArtifactRef]:
+    seen: set[tuple[str, str, str]] = set()
+    result: list[ArtifactRef] = []
+    for artifact in [*left, *right]:
+        key = (artifact.artifact_type, artifact.label, artifact.path)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(artifact)
+    return result
+
+
+def _style_context_with_invocation(
+    style_context: StyleContext,
+    invocation: WorkflowInvocation | None,
+) -> StyleContext:
+    if invocation is None:
+        return style_context
+
+    prompt_refs = list(style_context.prompt_refs)
+    existing_prompt_sources = {ref.source for ref in prompt_refs}
+    for source in invocation.selected_prompt_templates:
+        if source in existing_prompt_sources:
+            continue
+        prompt_refs.append(
+            StylePromptRef(
+                source=source,
+                title=Path(source).stem or source,
+                excerpt="由主 Agent 根据当前任务语义选择的提示词模板引用。",
+                tags=["workflow_invocation"],
+            )
+        )
+        existing_prompt_sources.add(source)
+
+    reference_images = list(style_context.reference_images)
+    existing_reference_paths = {ref.path for ref in reference_images}
+    for artifact in invocation.artifacts:
+        if artifact.artifact_type != "image" or artifact.path in existing_reference_paths:
+            continue
+        reference_images.append(
+            ReferenceImageRef(
+                label=artifact.label,
+                path=artifact.path,
+                mime_type=artifact.mime_type or _guess_mime_type(artifact.path),
+            )
+        )
+        existing_reference_paths.add(artifact.path)
+
+    return style_context.model_copy(
+        update={
+            "matched_skills": _dedupe_text(
+                [*style_context.matched_skills, *invocation.selected_skills]
+            ),
+            "prompt_refs": prompt_refs,
+            "reference_images": reference_images,
+            "hard_constraints": _dedupe_text(
+                [*style_context.hard_constraints, *invocation.constraints]
+            ),
+            "user_constraints": _dedupe_text(
+                [*style_context.user_constraints, *invocation.user_requirements]
+            ),
+            "trace": {
+                **style_context.trace,
+                "workflow_invocation": True,
+                "invocation_skill_count": len(invocation.selected_skills),
+                "invocation_prompt_template_count": len(invocation.selected_prompt_templates),
+            },
+        }
+    )
 
 
 def _grouping_payload_to_specs(payload: GroupingResult) -> list[GroupSpec]:
@@ -175,9 +258,11 @@ class ImagePostOrchestrator:
         send_to_feishu: bool = False,
         style_context: StyleContext | None = None,
         run_options: ImagePostRunOptions | None = None,
+        workflow_invocation: WorkflowInvocation | None = None,
     ) -> ResultEnvelope[DeliveryPackage]:
         brief = build_request_brief(request)
         style_context = style_context or StyleContext.from_request(request)
+        style_context = _style_context_with_invocation(style_context, workflow_invocation)
         resolved_run_options = run_options or self.run_options or ImagePostRunOptions()
         resolved_run_id = run_id or f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{_safe_slug(brief.topic)}"
         workspace = WorkflowWorkspace.create(
@@ -206,21 +291,51 @@ class ImagePostOrchestrator:
             )
             for index, path in enumerate(request.reference_images)
         ]
+        invocation_artifacts = _merge_artifacts(
+            list(workflow_invocation.artifacts) if workflow_invocation is not None else [],
+            reference_artifacts,
+        )
+        selected_skills = _dedupe_text(
+            [
+                *(workflow_invocation.selected_skills if workflow_invocation is not None else []),
+                *style_context.matched_skills,
+            ]
+        )
+        selected_prompt_templates = _dedupe_text(
+            [
+                *(workflow_invocation.selected_prompt_templates if workflow_invocation is not None else []),
+                *[ref.source for ref in style_context.prompt_refs],
+            ]
+        )
+        constraints = _dedupe_text(
+            [
+                *(workflow_invocation.constraints if workflow_invocation is not None else []),
+                *brief.style_constraints,
+                *style_context.hard_constraints,
+                *style_context.negative_constraints,
+            ]
+        )
+        user_requirements = _dedupe_text(
+            [
+                *(workflow_invocation.user_requirements if workflow_invocation is not None else []),
+                brief.requirements_text,
+            ]
+        )
         workflow_invocation = WorkflowInvocation(
             objective=request.message or brief.execution_text,
             route="image_post",
             topic=brief.topic,
             audience=brief.audience,
-            selected_skills=list(style_context.matched_skills),
-            selected_prompt_templates=[ref.source for ref in style_context.prompt_refs],
-            user_requirements=[brief.requirements_text],
-            constraints=[
-                *brief.style_constraints,
-                *style_context.hard_constraints,
-                *style_context.negative_constraints,
-            ],
-            artifacts=reference_artifacts,
-            run_options=resolved_run_options.model_dump(mode="json"),
+            selected_skills=selected_skills,
+            selected_prompt_templates=selected_prompt_templates,
+            user_requirements=user_requirements,
+            constraints=constraints,
+            artifacts=invocation_artifacts,
+            run_options=(
+                workflow_invocation.run_options
+                if workflow_invocation is not None and workflow_invocation.run_options is not None
+                else resolved_run_options.model_dump(mode="json")
+            ),
             delivery={"target": "feishu", "chat_id": chat_id},
         )
         workspace.save_invocation(workflow_invocation)

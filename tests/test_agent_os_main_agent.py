@@ -34,7 +34,12 @@ def test_main_agent_prompt_defines_planner_not_worker_role() -> None:
     assert "本地文件" in MAIN_AGENT_SYSTEM_PROMPT
     assert "文件夹路径" in MAIN_AGENT_SYSTEM_PROMPT
     assert "agent-os-conversation-planning" in MAIN_AGENT_SYSTEM_PROMPT
+    assert "list_skills" in MAIN_AGENT_SYSTEM_PROMPT
     assert "read_skill" in MAIN_AGENT_SYSTEM_PROMPT
+    assert "selected_skills" in MAIN_AGENT_SYSTEM_PROMPT
+    assert "根据语义和任务目标选择" in MAIN_AGENT_SYSTEM_PROMPT
+    assert "不要跳过 Skill 选择" in MAIN_AGENT_SYSTEM_PROMPT
+    assert "reference-image" in MAIN_AGENT_SYSTEM_PROMPT
 
 
 def test_main_agent_dependencies_hold_tool_registry() -> None:
