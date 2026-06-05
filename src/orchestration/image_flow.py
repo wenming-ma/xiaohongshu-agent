@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -514,11 +515,41 @@ class ImageWorkflowRunner:
         execution_text: str = "",
         invocation: WorkflowInvocation | None = None,
         image_count: int | None = None,
-        single_item_per_image: bool = False,
-        max_auto_images: int | None = ImageConfig.MAX_AUTO_IMAGES,
-        image_generation_concurrency: int = 3,
-        image_task_max_retries: int = 1,
+        single_item_per_image: bool | None = None,
+        max_auto_images: int | None = None,
+        image_generation_concurrency: int | None = None,
+        image_task_max_retries: int | None = None,
     ) -> ResultEnvelope[DeliveryPackage]:
+        resolved_image_count = _resolve_int_run_option(
+            explicit=image_count,
+            invocation=invocation,
+            paths=("image.count", "image_count"),
+            default=None,
+        )
+        resolved_single_item_per_image = _resolve_bool_run_option(
+            explicit=single_item_per_image,
+            invocation=invocation,
+            paths=("grouping.single_item_per_image", "single_item_per_image"),
+            default=False,
+        )
+        resolved_max_auto_images = _resolve_int_run_option(
+            explicit=max_auto_images,
+            invocation=invocation,
+            paths=("max_auto_images", "image.max_auto_images"),
+            default=ImageConfig.MAX_AUTO_IMAGES,
+        )
+        resolved_image_generation_concurrency = _resolve_int_run_option(
+            explicit=image_generation_concurrency,
+            invocation=invocation,
+            paths=("image.concurrency", "image_generation_concurrency"),
+            default=ImageConfig.GENERATION_CONCURRENCY,
+        )
+        resolved_image_task_max_retries = _resolve_int_run_option(
+            explicit=image_task_max_retries,
+            invocation=invocation,
+            paths=("image.max_retries", "image_task_max_retries", "review.max_retries"),
+            default=1,
+        )
         state = ImageWorkflowState(
             topic=topic,
             audience=audience,
@@ -526,11 +557,11 @@ class ImageWorkflowRunner:
             workspace_dir=workspace_dir,
             execution_text=execution_text,
             invocation=invocation,
-            image_count=image_count,
-            single_item_per_image=single_item_per_image,
-            max_auto_images=max_auto_images,
-            image_generation_concurrency=image_generation_concurrency,
-            image_task_max_retries=image_task_max_retries,
+            image_count=resolved_image_count,
+            single_item_per_image=resolved_single_item_per_image,
+            max_auto_images=resolved_max_auto_images,
+            image_generation_concurrency=resolved_image_generation_concurrency,
+            image_task_max_retries=resolved_image_task_max_retries,
         )
         result = await self.graph.run(
             ResearchNode(),
@@ -538,6 +569,73 @@ class ImageWorkflowRunner:
             deps=self.deps,
         )
         return result.output
+
+
+def _resolve_int_run_option(
+    *,
+    explicit: int | None,
+    invocation: WorkflowInvocation | None,
+    paths: tuple[str, ...],
+    default: int | None,
+) -> int | None:
+    if explicit is not None:
+        return explicit
+    value = _first_run_option_value(invocation, paths)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _resolve_bool_run_option(
+    *,
+    explicit: bool | None,
+    invocation: WorkflowInvocation | None,
+    paths: tuple[str, ...],
+    default: bool,
+) -> bool:
+    if explicit is not None:
+        return explicit
+    value = _first_run_option_value(invocation, paths)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off"}:
+            return False
+    return default
+
+
+def _first_run_option_value(
+    invocation: WorkflowInvocation | None,
+    paths: tuple[str, ...],
+) -> object | None:
+    options = _run_options_mapping(invocation)
+    for path in paths:
+        current: object = options
+        found = True
+        for part in path.split("."):
+            if not isinstance(current, Mapping) or part not in current:
+                found = False
+                break
+            current = current[part]
+        if found:
+            return current
+    return None
+
+
+def _run_options_mapping(invocation: WorkflowInvocation | None) -> Mapping[str, object]:
+    if invocation is None or invocation.run_options is None:
+        return {}
+    raw = invocation.run_options
+    if hasattr(raw, "model_dump"):
+        dumped = raw.model_dump(mode="json")
+        return dumped if isinstance(dumped, Mapping) else {}
+    return raw if isinstance(raw, Mapping) else {}
 
 
 def _callable_accepts_param(func: Callable[..., object], param_name: str) -> bool:

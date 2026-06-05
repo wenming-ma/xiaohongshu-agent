@@ -207,6 +207,85 @@ def test_generate_prompt_keyword_expansion_uses_call_time_image_size() -> None:
     assert "4K ultra-high resolution" not in image_system_prompt()
 
 
+def test_generate_prompt_keyword_expansion_respects_style_reference_intent(tmp_path: Path) -> None:
+    from src.orchestration.style_context import ReferenceImageRef, StyleContext
+
+    agent = ImageAgent.__new__(ImageAgent)
+    agent.run_options = ImageRunOptions(image_size="2K", aspect_ratio="3:4")
+    agent.prompt_generator = _EchoPromptGenerator()
+    agent.template_selector = _FailingTemplateSelector()
+    reference = tmp_path / "style-reference.jpg"
+    reference.write_bytes(b"reference")
+    style_context = StyleContext(
+        user_constraints=["只参考参考图的柔和光线和浅色背景，不保留物体"],
+        matched_skills=[],
+        prompt_refs=[],
+        reference_images=[
+            ReferenceImageRef(label="reference_1", path=str(reference), mime_type="image/jpeg")
+        ],
+        reference_intent="style_reference",
+        hard_constraints=["reference_role=style_reference"],
+        negative_constraints=[],
+        trace={"source": "test"},
+    )
+
+    prompt = asyncio.run(
+        agent.generate_prompt(
+            content=_content(),
+            research=_research(),
+            topic="咖啡馆桌面物",
+            image_spec={
+                "type": "cover",
+                "desc": "封面图",
+            },
+            gen_ctx=ImageGenContext(topic="咖啡馆桌面物", image_type="cover"),
+            style_context=style_context,
+        )
+    )
+
+    assert "borrow only style, color palette, lighting, composition, materials, and mood" in prompt
+    assert "preserve the visible products" not in prompt
+
+
+def test_generate_prompt_keyword_expansion_preserves_objects_for_object_transfer(tmp_path: Path) -> None:
+    from src.orchestration.style_context import ReferenceImageRef, StyleContext
+
+    agent = ImageAgent.__new__(ImageAgent)
+    agent.run_options = ImageRunOptions(image_size="2K", aspect_ratio="3:4")
+    agent.prompt_generator = _EchoPromptGenerator()
+    agent.template_selector = _FailingTemplateSelector()
+    reference = tmp_path / "bag-reference.jpg"
+    reference.write_bytes(b"reference")
+    style_context = StyleContext(
+        user_constraints=["把参考图里的黑色通勤包迁移到新场景"],
+        matched_skills=[],
+        prompt_refs=[],
+        reference_images=[
+            ReferenceImageRef(label="reference_1", path=str(reference), mime_type="image/jpeg")
+        ],
+        reference_intent="object_transfer",
+        hard_constraints=["reference_role=object_transfer"],
+        negative_constraints=[],
+        trace={"source": "test"},
+    )
+
+    prompt = asyncio.run(
+        agent.generate_prompt(
+            content=_content(),
+            research=_research(),
+            topic="通勤包桌面图",
+            image_spec={
+                "type": "cover",
+                "desc": "封面图",
+            },
+            gen_ctx=ImageGenContext(topic="通勤包桌面图", image_type="cover"),
+            style_context=style_context,
+        )
+    )
+
+    assert "preserve and transfer the visible products" in prompt
+
+
 def test_generate_prompt_falls_back_when_template_agent_fails() -> None:
     agent = ImageAgent.__new__(ImageAgent)
     agent.prompt_generator = _EchoPromptGenerator()

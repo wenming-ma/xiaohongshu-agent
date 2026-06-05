@@ -91,6 +91,21 @@ class StyleContext(BaseModel):
                     "必须识别参考图片中的核心衣物、服装、首饰或物品，并让这些参考物品实际出现在生成图里；"
                     "不要只借用风格或把参考图当作截图插入。"
                 )
+            elif self.reference_intent == "composition_reference":
+                lines.append(
+                    "只参考参考图的构图、版式、镜头角度、画面比例或空间布局；"
+                    "不要保留参考图中的具体物体，也不要把参考图当作截图插入。"
+                )
+            elif self.reference_intent == "scene_reference":
+                lines.append(
+                    "只参考参考图的场景类型、环境氛围、空间关系或地点线索；"
+                    "不要保留参考图中的具体物体，也不要把参考图当作截图插入。"
+                )
+            elif self.reference_intent == "material_color_reference":
+                lines.append(
+                    "只参考参考图的材质纹理、面料质感、色彩搭配或表面细节；"
+                    "不要保留参考图中的具体物体，也不要把参考图当作截图插入。"
+                )
             elif self.reference_intent == "style_reference":
                 lines.append(
                     "只参考参考图的风格、色调、光线、构图、材质质感或氛围；"
@@ -173,12 +188,18 @@ def _derive_reference_intent(
             *user_constraints,
         )
     ).lower()
-    if _is_style_reference_only(haystack):
-        return "style_reference"
     if _is_object_transfer_reference(haystack):
         return "object_transfer"
     if _is_subject_reference(haystack):
         return "subject_reference"
+    if _is_composition_reference(haystack):
+        return "composition_reference"
+    if _is_scene_reference(haystack):
+        return "scene_reference"
+    if _is_material_color_reference(haystack):
+        return "material_color_reference"
+    if _is_style_reference_only(haystack):
+        return "style_reference"
     if _is_style_reference(haystack):
         return "style_reference"
     return "unspecified"
@@ -240,7 +261,79 @@ def _is_style_reference(haystack: str) -> bool:
     )
 
 
+def _is_composition_reference(haystack: str) -> bool:
+    return any(
+        marker in haystack
+        for marker in (
+            "composition reference",
+            "layout reference",
+            "framing reference",
+            "参考构图",
+            "参考版式",
+            "参考画面比例",
+            "构图比例",
+            "版式",
+            "画面布局",
+            "镜头构图",
+            "留白节奏",
+        )
+    )
+
+
+def _is_scene_reference(haystack: str) -> bool:
+    return any(
+        marker in haystack
+        for marker in (
+            "scene reference",
+            "setting reference",
+            "environment reference",
+            "参考场景",
+            "参考环境",
+            "场景参考",
+            "环境氛围",
+            "空间氛围",
+            "室内场景",
+            "户外场景",
+            "咖啡馆场景",
+            "地点线索",
+        )
+    )
+
+
+def _is_material_color_reference(haystack: str) -> bool:
+    return any(
+        marker in haystack
+        for marker in (
+            "material reference",
+            "color palette reference",
+            "palette reference",
+            "texture reference",
+            "参考材质",
+            "参考面料",
+            "参考纹理",
+            "参考颜色",
+            "参考配色",
+            "材质参考",
+            "面料纹理",
+            "颜色搭配",
+            "色彩搭配",
+            "材质质感",
+        )
+    )
+
+
 def _is_object_transfer_reference(haystack: str) -> bool:
+    if any(
+        marker in haystack
+        for marker in (
+            "不迁移物体",
+            "不要迁移物体",
+            "不做物体迁移",
+            "不要物体迁移",
+            "do not transfer the object",
+        )
+    ):
+        return False
     return any(
         marker in haystack
         for marker in (
@@ -265,6 +358,24 @@ def _is_object_transfer_reference(haystack: str) -> bool:
 
 
 def _is_subject_reference(haystack: str) -> bool:
+    if any(
+        marker in haystack
+        for marker in (
+            "不保留原图",
+            "不要保留原图",
+            "不要求保留原图",
+            "不需要保留原图",
+            "不保留参考图",
+            "不要保留参考图",
+            "不保留主体",
+            "不要保留主体",
+            "不要求保留主体",
+            "不需要保留主体",
+            "do not preserve",
+            "no need to preserve",
+        )
+    ):
+        return False
     if any(
         marker in haystack
         for marker in (
@@ -312,6 +423,21 @@ def _derive_hard_constraints(
             constraints.append(
                 f"{count_text}；reference_role=subject_reference；生成图片必须识别并保留参考图中的核心衣物、服装、首饰或物品，"
                 "这些参考物品必须出现在生成图里，不要只借用风格。"
+            )
+        elif reference_intent == "composition_reference":
+            constraints.append(
+                f"{count_text}；reference_role=composition_reference；只参考参考图的构图、版式、镜头角度、画面比例或空间布局，"
+                "不要保留参考图中的具体物体。"
+            )
+        elif reference_intent == "scene_reference":
+            constraints.append(
+                f"{count_text}；reference_role=scene_reference；只参考参考图的场景类型、环境氛围、空间关系或地点线索，"
+                "不要保留参考图中的具体物体。"
+            )
+        elif reference_intent == "material_color_reference":
+            constraints.append(
+                f"{count_text}；reference_role=material_color_reference；只参考参考图的材质纹理、面料质感、色彩搭配或表面细节，"
+                "不要保留参考图中的具体物体。"
             )
         else:
             constraints.append(

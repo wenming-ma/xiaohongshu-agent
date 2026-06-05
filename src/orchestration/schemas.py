@@ -324,6 +324,66 @@ class ImageTaskPlan(BaseModel):
         if style_only:
             return ImageReferenceRole.STYLE_REFERENCE
         if (
+            "composition_reference" in constraints
+            or any(
+                marker in haystack
+                for marker in (
+                    "composition reference",
+                    "layout reference",
+                    "framing reference",
+                    "参考构图",
+                    "参考版式",
+                    "参考画面比例",
+                    "构图比例",
+                    "版式",
+                    "画面布局",
+                    "镜头构图",
+                )
+            )
+        ):
+            return ImageReferenceRole.COMPOSITION_REFERENCE
+        if (
+            "scene_reference" in constraints
+            or any(
+                marker in haystack
+                for marker in (
+                    "scene reference",
+                    "setting reference",
+                    "environment reference",
+                    "参考场景",
+                    "参考环境",
+                    "场景参考",
+                    "环境氛围",
+                    "空间氛围",
+                    "室内场景",
+                    "户外场景",
+                )
+            )
+        ):
+            return ImageReferenceRole.SCENE_REFERENCE
+        if (
+            "material_color_reference" in constraints
+            or any(
+                marker in haystack
+                for marker in (
+                    "material reference",
+                    "color palette reference",
+                    "palette reference",
+                    "texture reference",
+                    "参考材质",
+                    "参考面料",
+                    "参考纹理",
+                    "参考颜色",
+                    "参考配色",
+                    "材质参考",
+                    "面料纹理",
+                    "颜色搭配",
+                    "色彩搭配",
+                )
+            )
+        ):
+            return ImageReferenceRole.MATERIAL_COLOR_REFERENCE
+        if (
             "strict_object_transfer" in constraints
             or "object_transfer" in constraints
             or any(
@@ -366,12 +426,6 @@ class ImageTaskPlan(BaseModel):
             )
         ):
             return ImageReferenceRole.SUBJECT_REFERENCE
-        if "composition_reference" in constraints:
-            return ImageReferenceRole.COMPOSITION_REFERENCE
-        if "scene_reference" in constraints:
-            return ImageReferenceRole.SCENE_REFERENCE
-        if "material_color_reference" in constraints:
-            return ImageReferenceRole.MATERIAL_COLOR_REFERENCE
         return ImageReferenceRole.STYLE_REFERENCE
 
     @staticmethod

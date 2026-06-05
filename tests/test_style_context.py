@@ -135,6 +135,49 @@ def test_style_context_keeps_style_only_reference_images_from_forcing_subject_pr
     assert "必须识别参考图片中的核心衣物" not in prompt_text
 
 
+def test_style_context_distinguishes_composition_scene_and_material_reference_images(
+    tmp_path: Path,
+) -> None:
+    cases = [
+        (
+            "composition_reference",
+            "只参考这张图的版式、构图比例和留白节奏，不保留原图物体。",
+            "reference_role=composition_reference",
+            "只参考参考图的构图、版式、镜头角度、画面比例或空间布局",
+        ),
+        (
+            "scene_reference",
+            "只参考这张图的室内咖啡馆场景、窗边环境和空间氛围，不保留主体。",
+            "reference_role=scene_reference",
+            "只参考参考图的场景类型、环境氛围、空间关系或地点线索",
+        ),
+        (
+            "material_color_reference",
+            "只参考这张图的面料纹理、材质质感和颜色搭配，不迁移物体。",
+            "reference_role=material_color_reference",
+            "只参考参考图的材质纹理、面料质感、色彩搭配或表面细节",
+        ),
+    ]
+
+    for expected_intent, message, expected_role, expected_prompt in cases:
+        ref_path = tmp_path / f"{expected_intent}.jpg"
+        ref_path.write_bytes(b"fake-reference")
+        request = ConversationRequest(
+            topic="参考图生成测试",
+            audience="通勤女生",
+            message=message,
+            reference_images=[str(ref_path)],
+        )
+
+        context = StyleContext.from_request(request, matched_skills=[])
+        prompt_text = context.to_prompt_section()
+
+        assert context.reference_intent == expected_intent
+        assert any(expected_role in item for item in context.hard_constraints)
+        assert expected_prompt in prompt_text
+        assert "必须识别参考图片中的核心衣物" not in prompt_text
+
+
 def test_style_context_formats_prompt_without_runtime_schema_leaking_into_skill() -> None:
     context = StyleContext(
         user_constraints=["纯色背景"],

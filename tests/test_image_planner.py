@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 from pathlib import Path
 
@@ -175,6 +176,42 @@ def test_reference_analysis_keeps_style_reference_for_style_only_requests() -> N
     assert references[0].role == ImageReferenceRole.STYLE_REFERENCE
 
 
+def test_reference_analysis_infers_composition_scene_and_material_roles_from_constraints() -> None:
+    cases = [
+        (
+            "参考图1只用来参考版式和构图比例，不保留物体",
+            ImageReferenceRole.COMPOSITION_REFERENCE,
+        ),
+        (
+            "参考图2只用来参考室内咖啡馆场景和环境氛围，不保留主体",
+            ImageReferenceRole.SCENE_REFERENCE,
+        ),
+        (
+            "参考图3只用来参考材质、面料纹理和颜色搭配，不迁移物体",
+            ImageReferenceRole.MATERIAL_COLOR_REFERENCE,
+        ),
+    ]
+
+    for constraint, expected_role in cases:
+        invocation = WorkflowInvocation(
+            objective="根据参考图做新图",
+            route="image_post",
+            topic="参考图角色识别",
+            constraints=[constraint],
+            artifacts=[
+                ArtifactRef(
+                    artifact_type="image",
+                    label="reference",
+                    path="C:/tmp/reference.jpg",
+                )
+            ],
+        )
+
+        references = ImageTaskPlan.reference_plans_from_invocation(invocation)
+
+        assert references[0].role == expected_role
+
+
 def test_image_workflow_exposes_fixed_module_graph_contract() -> None:
     assert image_workflow_module_graph.module_names == [
         "research",
@@ -212,7 +249,7 @@ def test_image_graph_has_explicit_planner_node_and_task_subgraph() -> None:
 def test_image_workflow_default_auto_cap_is_cover_plus_eight_details(tmp_path: Path) -> None:
     run_signature = inspect.signature(ImageWorkflowRunner.run)
 
-    assert run_signature.parameters["max_auto_images"].default == ImageConfig.MAX_AUTO_IMAGES == 9
+    assert run_signature.parameters["max_auto_images"].default is None
     assert (
         ImageWorkflowState(
             topic="默认 8+1 测试",
@@ -223,6 +260,131 @@ def test_image_workflow_default_auto_cap_is_cover_plus_eight_details(tmp_path: P
         == ImageConfig.MAX_AUTO_IMAGES
         == 9
     )
+
+
+@pytest.mark.anyio
+async def test_image_workflow_consumes_invocation_run_options_for_image_count_and_concurrency(
+    tmp_path: Path,
+) -> None:
+    call_order: list[str] = []
+    seen_tasks: list[str] = []
+    active_generations = 0
+    max_active_generations = 0
+
+    async def run_research(**kwargs) -> ResultEnvelope[ResearchResult]:
+        return ResultEnvelope[ResearchResult].success(
+            agent_name="research_agent",
+            payload=ResearchResult(summary="ok", items=[], keywords=[], sources=[]),
+            summary="research ok",
+            run_id=kwargs["run_id"],
+            step_id="research",
+        )
+
+    async def run_grouping(**kwargs) -> ResultEnvelope[GroupingResult]:
+        return ResultEnvelope[GroupingResult].success(
+            agent_name="grouping_agent",
+            payload=GroupingResult(
+                groups=[
+                    GroupingItem(title="封面", indices=[0]),
+                    GroupingItem(title="详情 A", indices=[1]),
+                    GroupingItem(title="详情 B", indices=[2]),
+                ]
+            ),
+            summary="grouping ok",
+            run_id=kwargs["run_id"],
+            step_id="grouping",
+        )
+
+    async def run_content(**kwargs) -> ResultEnvelope[XHSContent]:
+        return ResultEnvelope[XHSContent].success(
+            agent_name="content_agent",
+            payload=XHSContent(
+                title="run options test",
+                body=(
+                    "测试 invocation.run_options 直接驱动图片规划和并发。"
+                    "这个正文需要满足内容 schema 的最小长度限制，"
+                    "同时保持语义集中在工作流调用协议上。"
+                    "如果工作流没有从 invocation 中读取图片数量和并发参数，"
+                    "这个测试会生成过多图片或出现并发执行，从而失败。"
+                ),
+                hashtags=[],
+                call_to_action="保存。",
+            ),
+            summary="content ok",
+            run_id=kwargs["run_id"],
+            step_id="content",
+        )
+
+    async def run_image_group(**kwargs) -> ResultEnvelope[ImageResult]:
+        nonlocal active_generations, max_active_generations
+        image_type = kwargs["image_task"].image_type
+        seen_tasks.append(image_type)
+        call_order.append(f"start:{image_type}")
+        active_generations += 1
+        max_active_generations = max(max_active_generations, active_generations)
+        await asyncio.sleep(0.01)
+        active_generations -= 1
+        call_order.append(f"finish:{image_type}")
+        image_path = tmp_path / f"{image_type}.png"
+        image_path.write_bytes(b"fake-image")
+        return ResultEnvelope[ImageResult].success(
+            agent_name="image_generation_agent",
+            payload=ImageResult(
+                images=[
+                    GeneratedImage(
+                        image_path=str(image_path),
+                        prompt_used="prompt",
+                        image_type=image_type,
+                    )
+                ],
+                total_count=1,
+                generated_at="2026-06-05T00:00:00+00:00",
+            ),
+            summary="image ok",
+            run_id=kwargs["run_id"],
+            step_id=f"image-{kwargs['group_index']}",
+        )
+
+    async def run_delivery(**kwargs) -> ResultEnvelope[DeliveryPackage]:
+        return ResultEnvelope[DeliveryPackage].success(
+            agent_name="delivery_agent",
+            payload=DeliveryPackage(route="image_post", title="done", summary="done"),
+            summary="delivery ok",
+            run_id=kwargs["run_id"],
+            step_id="delivery",
+        )
+
+    runner = ImageWorkflowRunner(
+        deps=ImageWorkflowDeps(
+            run_research=run_research,
+            run_grouping=run_grouping,
+            run_content=run_content,
+            run_image_group=run_image_group,
+            run_delivery=run_delivery,
+        )
+    )
+
+    invocation = WorkflowInvocation(
+        objective="用户要求只生成 2 张图，并且图片并发为 1",
+        route="image_post",
+        topic="run options",
+        run_options={
+            "image": {"count": 2, "concurrency": 1},
+            "grouping": {"single_item_per_image": True},
+        },
+    )
+
+    await runner.run(
+        topic="run options",
+        audience="测试",
+        run_id="run-invocation-options",
+        workspace_dir=tmp_path,
+        invocation=invocation,
+    )
+
+    assert seen_tasks == ["cover", "detail_1"]
+    assert max_active_generations == 1
+    assert call_order == ["start:cover", "finish:cover", "start:detail_1", "finish:detail_1"]
 
 
 @pytest.mark.anyio

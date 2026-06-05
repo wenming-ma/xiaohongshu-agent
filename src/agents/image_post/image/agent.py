@@ -444,7 +444,7 @@ class ImageAgent(BaseAgent):
             style_constraints.extend(style_context.hard_constraints)
             if style_context.reference_images:
                 reference_constraints.append(
-                    "preserve the visible products, clothing, colors, silhouettes, and material details from the user reference images"
+                    self._reference_keyword_seed(style_context.reference_intent)
                 )
 
         style_seed = "; ".join(dict.fromkeys(style_constraints)) or "realistic Xiaohongshu editorial image style"
@@ -466,6 +466,43 @@ class ImageAgent(BaseAgent):
                 f"target_aspect_ratio: {self._run_options().aspect_ratio}",
                 f"template_context: {template_seed}",
             ]
+        )
+
+    @staticmethod
+    def _reference_keyword_seed(reference_intent: str) -> str:
+        if reference_intent == "object_transfer":
+            return (
+                "preserve and transfer the visible products, clothing, colors, silhouettes, "
+                "material details, and recognizable object identity from the user reference images"
+            )
+        if reference_intent == "subject_reference":
+            return (
+                "preserve the visible subject identity, silhouette, colors, and material details "
+                "from the user reference images"
+            )
+        if reference_intent == "composition_reference":
+            return (
+                "borrow only the composition, framing, camera angle, layout rhythm, and spatial balance "
+                "from the user reference images"
+            )
+        if reference_intent == "scene_reference":
+            return (
+                "borrow only the scene type, environment mood, spatial atmosphere, and setting cues "
+                "from the user reference images"
+            )
+        if reference_intent == "material_color_reference":
+            return (
+                "borrow only the material texture, color palette, surface finish, and fabric or product tactility "
+                "from the user reference images"
+            )
+        if reference_intent == "style_reference":
+            return (
+                "borrow only style, color palette, lighting, composition, materials, and mood "
+                "from the user reference images; do not preserve or copy reference objects"
+            )
+        return (
+            "use the user reference images only as high-level visual guidance unless the current image task explicitly "
+            "requires subject preservation or object transfer"
         )
 
     async def _select_template_guidance(
