@@ -98,6 +98,45 @@ async def test_delivery_sender_routes_text_images_and_files(tmp_path: Path) -> N
 
 
 @pytest.mark.anyio
+async def test_delivery_sender_omits_internal_workflow_blocks_from_feishu_text() -> None:
+    package = DeliveryPackage(
+        route="image_post",
+        title="春夏通勤桌面9图小物清单",
+        summary="交付包已整理完成",
+        text_blocks=[
+            DeliveryTextBlock(label="topic", text="主题：内部追踪主题"),
+            DeliveryTextBlock(label="requirements", text="需求：内部参数"),
+            DeliveryTextBlock(label="title", text="标题：春夏通勤桌面9图小物清单"),
+            DeliveryTextBlock(label="body", text="正文：这是最终给用户审稿的正文。"),
+            DeliveryTextBlock(label="hashtags", text="话题：#极简桌面"),
+            DeliveryTextBlock(label="research_summary", text="调研摘要：不应发给用户"),
+            DeliveryTextBlock(label="group_summary", text="分组：不应发给用户"),
+        ],
+    )
+    envelope = ResultEnvelope[DeliveryPackage].success(
+        agent_name="delivery_agent",
+        payload=package,
+        summary="交付完成",
+        run_id="run-4",
+        step_id="delivery",
+    )
+
+    notifier = FakeNotifier()
+    sender = DeliveryPackageSender(notifier=notifier)
+
+    await sender.send(envelope)
+
+    message = notifier.messages[0]
+    assert "标题：春夏通勤桌面9图小物清单" in message
+    assert "正文：这是最终给用户审稿的正文。" in message
+    assert "话题：#极简桌面" in message
+    assert "调研摘要" not in message
+    assert "分组：" not in message
+    assert "内部参数" not in message
+    assert "内部追踪主题" not in message
+
+
+@pytest.mark.anyio
 async def test_delivery_sender_fails_when_feishu_returns_no_message_id(tmp_path: Path) -> None:
     image_path = tmp_path / "cover.png"
     image_path.write_bytes(b"fake-image")

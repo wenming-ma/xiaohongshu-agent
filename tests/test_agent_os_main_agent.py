@@ -41,7 +41,11 @@ def test_main_agent_prompt_defines_planner_not_worker_role() -> None:
     assert "不要跳过 Skill 选择" in MAIN_AGENT_SYSTEM_PROMPT
     assert "reference-image" in MAIN_AGENT_SYSTEM_PROMPT
     assert "不要主动发送研究过程" in MAIN_AGENT_SYSTEM_PROMPT
-    assert "必要信息" in MAIN_AGENT_SYSTEM_PROMPT
+    assert "自己基于上下文判断" in MAIN_AGENT_SYSTEM_PROMPT
+    assert "不要把发送节点写成固定流程" in MAIN_AGENT_SYSTEM_PROMPT
+    assert "如果用户已明确知道任务已启动，可以保持安静" in MAIN_AGENT_SYSTEM_PROMPT
+    assert "返回简短内部文本" in MAIN_AGENT_SYSTEM_PROMPT
+    assert "不要把普通文本输出当作用户消息" in MAIN_AGENT_SYSTEM_PROMPT
 
 
 def test_main_agent_dependencies_hold_tool_registry() -> None:

@@ -144,7 +144,9 @@ class AgentOSMainAgentSession:
             return
         except Exception as exc:
             logger.exception("Agent OS 主 Agent 处理事件失败")
-            await self._emit_output(f"主 Agent 处理失败：{exc}")
+            # User-facing messages must be decided by the main Agent and sent via
+            # `feishu_` tools. Do not leak internal validation/runtime errors into
+            # Feishu as an automatic service fallback.
             return
         finally:
             self._current_run_task = None
@@ -571,7 +573,11 @@ def _register_feishu_tools(registry: AgentToolRegistry, *, notifier: Any | None)
     registry.register(
         AgentTool(
             name="feishu_send_progress",
-            description="Send a short progress update to the current Feishu session.",
+            description=(
+                "Send a necessary progress or status message to the current Feishu session. "
+                "The main Agent decides whether the user needs it; do not broadcast fixed "
+                "workflow milestones by default."
+            ),
             execute=feishu_send_progress,
             category="feishu",
         )
@@ -581,9 +587,10 @@ def _register_feishu_tools(registry: AgentToolRegistry, *, notifier: Any | None)
             name="feishu_send_message",
             description=(
                 "Send a necessary user-facing message to the current Feishu session. "
+                "The main Agent decides whether a message is necessary for this moment. "
                 "Use for acknowledgements, concise status replies requested by the user, "
-                "error explanations, and ordinary chat. Do not use for internal research "
-                "steps or workflow process logs."
+                "error explanations, final delivery notes, and ordinary chat. Do not use "
+                "for internal research steps or workflow process logs."
             ),
             execute=feishu_send_message,
             category="feishu",

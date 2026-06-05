@@ -49,6 +49,11 @@ class StaticOutputAgent:
         return FakeRunResult(self.output, [*message_history, text, self.output])
 
 
+class FailingAgent:
+    async def run(self, text, *, deps, message_history):
+        raise RuntimeError("model output validation failed")
+
+
 class FakeNotifier:
     def __init__(self) -> None:
         self.messages = []
@@ -232,6 +237,23 @@ async def test_agent_os_main_session_does_not_auto_send_plain_model_output() -> 
     await session._run_once("请启动一个雨天通勤包 image_post 任务")
 
     assert notifier.messages == []
+
+
+@pytest.mark.anyio
+async def test_agent_os_main_session_does_not_auto_send_model_failure() -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    notifier = FakeNotifier()
+    session = module.AgentOSMainAgentSession(
+        agent=FailingAgent(),
+        deps=MainAgentDependencies(chat_id="chat-1"),
+        notifier=notifier,
+        session=object(),
+    )
+
+    await session._run_once("查看状态")
+
+    assert notifier.messages == []
+    assert notifier.session_messages == []
 
 
 @pytest.mark.anyio
@@ -837,3 +859,5 @@ def test_task_tool_description_includes_spec_contract_for_main_agent() -> None:
     assert "delay_seconds" in descriptions["schedule_background_agent_task"]
     assert "interval_seconds" in descriptions["schedule_background_agent_task"]
     assert "delimited" in descriptions["feishu_ask_multi_select"]
+    assert "main Agent decides" in descriptions["feishu_send_message"]
+    assert "do not broadcast fixed workflow milestones" in descriptions["feishu_send_progress"]

@@ -63,6 +63,14 @@ Follow the Pi-style session idea:
 
 If a user sends new requirements for an existing running task, first clarify whether they want to start a new task, cancel/restart the current task, or apply the request to the next task.
 
+## User-Facing Messages
+
+Everything sent to Feishu is a tool call. The main Agent decides whether a user-facing message is necessary for the current moment, then calls the appropriate `feishu_` tool.
+
+Do not hard-code a milestone broadcast sequence. It is valid to stay quiet while a background workflow runs if the user does not need anything. Use Feishu tools when the conversation needs a reply, a clarification, a choice card, an error notice, a status answer requested by the user, or the final delivery package.
+
+Never send research, grouping, image-generation, review, prompt-selection, or internal tool-call traces by default. Mention internal progress only when the user asks for status or when an error requires user action.
+
 ## Status And Error Reporting
 
 When the user asks "进度怎么样", call `list_background_agent_tasks` and summarize in plain language:

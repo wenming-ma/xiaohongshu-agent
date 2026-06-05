@@ -9,6 +9,14 @@ from .schemas import ArtifactRef, DeliveryPackage, ResultEnvelope
 
 logger = get_logger(__name__)
 
+PUBLIC_FEISHU_TEXT_BLOCK_LABELS = {
+    "title",
+    "body",
+    "hashtags",
+    "caption",
+    "script",
+}
+
 
 @dataclass(frozen=True)
 class DeliverySendReceipt:
@@ -64,7 +72,11 @@ class DeliveryPackageSender:
         if package.summary:
             header.append(f"Summary: {package.summary}")
 
-        block_lines = [f"{block.label}: {block.text}" for block in package.text_blocks if block.text.strip()]
+        block_lines = [
+            block.text
+            for block in package.text_blocks
+            if block.label in PUBLIC_FEISHU_TEXT_BLOCK_LABELS and block.text.strip()
+        ]
         if block_lines:
             header.append("")
             header.extend(block_lines)
