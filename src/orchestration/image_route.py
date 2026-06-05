@@ -60,14 +60,66 @@ def _dedupe_text(values: list[str]) -> list[str]:
 
 def _merge_artifacts(left: list[ArtifactRef], right: list[ArtifactRef]) -> list[ArtifactRef]:
     seen: set[tuple[str, str, str]] = set()
+    seen_image_paths: set[str] = set()
     result: list[ArtifactRef] = []
     for artifact in [*left, *right]:
+        if artifact.artifact_type == "image":
+            image_path_key = _normalize_artifact_path(artifact.path)
+            if image_path_key in seen_image_paths:
+                continue
+            seen_image_paths.add(image_path_key)
+            result.append(artifact)
+            continue
         key = (artifact.artifact_type, artifact.label, artifact.path)
         if key in seen:
             continue
         seen.add(key)
         result.append(artifact)
     return result
+
+
+def _normalize_artifact_path(path: str) -> str:
+    try:
+        return str(Path(path).expanduser().resolve()).lower()
+    except OSError:
+        return path.strip().lower()
+
+
+def _reference_artifact_metadata(style_context: StyleContext) -> dict[str, str]:
+    metadata = {"source": "conversation_request"}
+    role = _reference_role_from_style_context(style_context)
+    if role:
+        metadata["reference_role"] = role
+    return metadata
+
+
+def _reference_role_from_style_context(style_context: StyleContext) -> str:
+    return {
+        "style_reference": "style_reference",
+        "subject_reference": "subject_reference",
+        "object_transfer": "object_transfer",
+    }.get(style_context.reference_intent, "")
+
+
+def _enrich_reference_artifact_roles(
+    artifacts: list[ArtifactRef],
+    *,
+    style_context: StyleContext,
+) -> list[ArtifactRef]:
+    role = _reference_role_from_style_context(style_context)
+    if not role:
+        return artifacts
+    enriched: list[ArtifactRef] = []
+    for artifact in artifacts:
+        if artifact.artifact_type != "image" or artifact.metadata.get("reference_role"):
+            enriched.append(artifact)
+            continue
+        enriched.append(
+            artifact.model_copy(
+                update={"metadata": {**artifact.metadata, "reference_role": role}}
+            )
+        )
+    return enriched
 
 
 def _style_context_with_invocation(
@@ -287,13 +339,17 @@ class ImagePostOrchestrator:
                 label=f"reference_{index + 1}",
                 path=path,
                 mime_type=_guess_mime_type(path),
-                metadata={"source": "conversation_request"},
+                metadata=_reference_artifact_metadata(style_context),
             )
             for index, path in enumerate(request.reference_images)
         ]
         invocation_artifacts = _merge_artifacts(
             list(workflow_invocation.artifacts) if workflow_invocation is not None else [],
             reference_artifacts,
+        )
+        invocation_artifacts = _enrich_reference_artifact_roles(
+            invocation_artifacts,
+            style_context=style_context,
         )
         selected_skills = _dedupe_text(
             [

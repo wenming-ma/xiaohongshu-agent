@@ -152,9 +152,6 @@ class AgentOSMainAgentSession:
         all_messages = getattr(result, "all_messages", None)
         if callable(all_messages):
             self._message_history = list(all_messages())
-        output = getattr(result, "output", "")
-        if isinstance(output, str) and output.strip():
-            await self._emit_output(output.strip())
 
     async def _emit_output(self, text: str) -> None:
         if self.notifier is None:
@@ -532,6 +529,25 @@ def _register_feishu_tools(registry: AgentToolRegistry, *, notifier: Any | None)
         await feishu.feishu_send_progress(ctx.session, message, phase=phase, summary=summary)
         return _tool_success(ctx, "feishu_tools", "progress", {"sent": True})
 
+    async def feishu_send_message(
+        ctx: AgentToolContext,
+        *,
+        message: str = "",
+        text: str = "",
+        content: str = "",
+        reply: str = "",
+        phase: str = "message",
+        summary: str | None = None,
+        **_extra_params: Any,
+    ) -> AgentToolResult:
+        if ctx.session is None:
+            return _tool_error(ctx, "feishu_tools", "缺少 Feishu 会话，无法发送消息")
+        resolved_message = message or text or content or reply
+        if not resolved_message.strip():
+            return _tool_error(ctx, "feishu_tools", "缺少 message/text/content/reply，无法发送空消息")
+        await feishu.feishu_send_message(ctx.session, resolved_message, phase=phase, summary=summary)
+        return _tool_success(ctx, "feishu_tools", "message", {"sent": True})
+
     registry.register(
         AgentTool(
             name="feishu_ask_single_choice",
@@ -557,6 +573,19 @@ def _register_feishu_tools(registry: AgentToolRegistry, *, notifier: Any | None)
             name="feishu_send_progress",
             description="Send a short progress update to the current Feishu session.",
             execute=feishu_send_progress,
+            category="feishu",
+        )
+    )
+    registry.register(
+        AgentTool(
+            name="feishu_send_message",
+            description=(
+                "Send a necessary user-facing message to the current Feishu session. "
+                "Use for acknowledgements, concise status replies requested by the user, "
+                "error explanations, and ordinary chat. Do not use for internal research "
+                "steps or workflow process logs."
+            ),
+            execute=feishu_send_message,
             category="feishu",
         )
     )

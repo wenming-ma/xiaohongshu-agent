@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import mimetypes
+import re
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -27,6 +28,7 @@ class StyleContext(BaseModel):
     matched_skills: list[str] = Field(default_factory=list)
     prompt_refs: list[StylePromptRef] = Field(default_factory=list)
     reference_images: list[ReferenceImageRef] = Field(default_factory=list)
+    reference_intent: str = "none"
     hard_constraints: list[str] = Field(default_factory=list)
     negative_constraints: list[str] = Field(default_factory=list)
     trace: dict[str, Any] = Field(default_factory=dict)
@@ -40,10 +42,12 @@ class StyleContext(BaseModel):
     ) -> "StyleContext":
         user_constraints = _dedupe(getattr(request, "style_constraints", []) or [])
         reference_images = _build_reference_images(getattr(request, "reference_images", []) or [])
+        reference_intent = _derive_reference_intent(request, user_constraints, reference_images)
         hard_constraints = _derive_hard_constraints(
             request,
             user_constraints,
             reference_images=reference_images,
+            reference_intent=reference_intent,
         )
         negative_constraints = _derive_negative_constraints(user_constraints)
         prompt_refs: list[StylePromptRef] = []
@@ -55,6 +59,7 @@ class StyleContext(BaseModel):
             matched_skills=[skill.name for skill in matched_skills],
             prompt_refs=prompt_refs,
             reference_images=reference_images,
+            reference_intent=reference_intent,
             hard_constraints=hard_constraints,
             negative_constraints=negative_constraints,
             trace={
@@ -62,6 +67,7 @@ class StyleContext(BaseModel):
                 "skill_count": len(matched_skills),
                 "prompt_ref_count": len(prompt_refs),
                 "reference_image_count": len(reference_images),
+                "reference_intent": reference_intent,
             },
         )
 
@@ -80,10 +86,21 @@ class StyleContext(BaseModel):
             lines.append("用户参考图片：")
             for ref in self.reference_images:
                 lines.append(f"- {ref.label}: {ref.path}")
-            lines.append(
-                "必须识别参考图片中的核心衣物、服装、首饰或物品，并让这些参考物品实际出现在生成图里；"
-                "不要只借用风格或把参考图当作截图插入。"
-            )
+            if self.reference_intent in {"object_transfer", "subject_reference"}:
+                lines.append(
+                    "必须识别参考图片中的核心衣物、服装、首饰或物品，并让这些参考物品实际出现在生成图里；"
+                    "不要只借用风格或把参考图当作截图插入。"
+                )
+            elif self.reference_intent == "style_reference":
+                lines.append(
+                    "只参考参考图的风格、色调、光线、构图、材质质感或氛围；"
+                    "不要保留参考图中的具体物体，也不要把参考图当作截图插入。"
+                )
+            else:
+                lines.append(
+                    "参考图用途未明确时，优先作为风格、氛围或构图参考；"
+                    "不要默认迁移参考图中的具体物体，除非用户明确要求保留或迁移。"
+                )
         if self.negative_constraints:
             lines.append("禁用项：")
             lines.extend(f"- {item}" for item in self.negative_constraints)
@@ -103,6 +120,7 @@ class StyleContext(BaseModel):
             "matched_skills": list(self.matched_skills),
             "prompt_ref_sources": [ref.source for ref in self.prompt_refs],
             "reference_images": [ref.model_dump(mode="json") for ref in self.reference_images],
+            "reference_intent": self.reference_intent,
             "hard_constraints": list(self.hard_constraints),
             "negative_constraints": list(self.negative_constraints),
         }
@@ -139,21 +157,167 @@ def _build_reference_images(values: Sequence[Any]) -> list[ReferenceImageRef]:
     return refs
 
 
+def _derive_reference_intent(
+    request: Any,
+    user_constraints: Sequence[str],
+    reference_images: Sequence[ReferenceImageRef],
+) -> str:
+    if not reference_images:
+        return "none"
+    haystack = "\n".join(
+        str(value or "")
+        for value in (
+            getattr(request, "topic", ""),
+            getattr(request, "audience", ""),
+            getattr(request, "message", ""),
+            *user_constraints,
+        )
+    ).lower()
+    if _is_style_reference_only(haystack):
+        return "style_reference"
+    if _is_object_transfer_reference(haystack):
+        return "object_transfer"
+    if _is_subject_reference(haystack):
+        return "subject_reference"
+    if _is_style_reference(haystack):
+        return "style_reference"
+    return "unspecified"
+
+
+def _is_style_reference_only(haystack: str) -> bool:
+    return (
+        any(
+            marker in haystack
+            for marker in (
+                "只参考",
+                "仅参考",
+                "只借鉴",
+                "仅借鉴",
+                "style only",
+                "style reference only",
+            )
+        )
+        and _is_style_reference(haystack)
+        and any(
+            marker in haystack
+            for marker in (
+                "不要求保留",
+                "不需要保留",
+                "不要保留",
+                "不保留",
+                "不要生成原图",
+                "不复刻",
+                "do not preserve",
+                "no need to preserve",
+                "do not keep",
+            )
+        )
+    )
+
+
+def _is_style_reference(haystack: str) -> bool:
+    return any(
+        marker in haystack
+        for marker in (
+            "参考风格",
+            "参考色调",
+            "参考光线",
+            "参考构图",
+            "参考氛围",
+            "风格",
+            "色调",
+            "光线",
+            "构图",
+            "氛围",
+            "质感",
+            "style",
+            "palette",
+            "lighting",
+            "composition",
+            "mood",
+            "texture",
+        )
+    )
+
+
+def _is_object_transfer_reference(haystack: str) -> bool:
+    return any(
+        marker in haystack
+        for marker in (
+            "strict_object_transfer",
+            "object_transfer",
+            "subject/object reference",
+            "object reference",
+            "object transfer",
+            "same object",
+            "transfer the object",
+            "must contain the reference",
+            "元素迁移",
+            "物体迁移",
+            "主体迁移",
+            "原封不动",
+            "原样迁移",
+            "原样搬",
+            "搬到新",
+            "迁移到",
+        )
+    )
+
+
+def _is_subject_reference(haystack: str) -> bool:
+    if any(
+        marker in haystack
+        for marker in (
+            "preserve_reference_subject",
+            "subject_reference",
+            "subject reference",
+            "preserve reference subject",
+            "preserve the subject",
+            "preserve the referenced",
+            "保留参考图",
+            "保留原图",
+            "保留主体",
+            "保持主体",
+            "主体参考",
+        )
+    ):
+        return True
+    return bool(re.search(r"参考图[^。；;,\n]*(必须|需要|要)[^。；;,\n]*(出现在|出现|保留|包含)", haystack))
+
+
 def _derive_hard_constraints(
     request: Any,
     user_constraints: Sequence[str],
     *,
     reference_images: Sequence[ReferenceImageRef] = (),
+    reference_intent: str = "none",
 ) -> list[str]:
     constraints = list(user_constraints)
     image_count = getattr(request, "image_count", None)
     if image_count:
         constraints.append(f"图片数量：{image_count} 张")
     if reference_images:
-        constraints.append(
-            f"用户提供了 {len(reference_images)} 张参考图；生成图片必须识别并保留参考图中的核心衣物、服装、首饰或物品，"
-            "这些参考物品必须出现在生成图里，不要只借用风格。"
-        )
+        count_text = f"用户提供了 {len(reference_images)} 张参考图"
+        if reference_intent == "style_reference":
+            constraints.append(
+                f"{count_text}；reference_role=style_reference；只参考参考图的风格、色调、光线、构图、材质质感或氛围，"
+                "不要保留参考图中的具体物体。"
+            )
+        elif reference_intent == "object_transfer":
+            constraints.append(
+                f"{count_text}；reference_role=object_transfer；必须识别参考图中的目标物体、服装、首饰或商品，"
+                "并把这些参考物体迁移到新的生成场景中。"
+            )
+        elif reference_intent == "subject_reference":
+            constraints.append(
+                f"{count_text}；reference_role=subject_reference；生成图片必须识别并保留参考图中的核心衣物、服装、首饰或物品，"
+                "这些参考物品必须出现在生成图里，不要只借用风格。"
+            )
+        else:
+            constraints.append(
+                f"{count_text}；reference_role=style_reference；参考用途未明确时优先作为风格、氛围或构图参考，"
+                "不要默认迁移参考图中的具体物体。"
+            )
     return _dedupe(constraints)
 
 

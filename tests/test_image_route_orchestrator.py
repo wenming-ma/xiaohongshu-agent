@@ -82,7 +82,11 @@ class FakeImageAgent:
         style_context: StyleContext | None = None,
     ) -> GeneratedImage:
         image_type = str(image_spec["type"])
-        if style_context is not None and style_context.hard_constraints:
+        if (
+            style_context is not None
+            and "纯色背景" in style_context.user_constraints
+            and style_context.hard_constraints
+        ):
             assert "纯色背景" in style_context.hard_constraints
         if style_context is not None and style_context.reference_images:
             assert style_context.reference_images[0].label == "reference_1"
@@ -357,6 +361,45 @@ async def test_image_post_orchestrator_carries_reference_images_into_style_conte
 
 
 @pytest.mark.anyio
+async def test_image_post_orchestrator_keeps_style_only_reference_role(tmp_path: Path) -> None:
+    reference = tmp_path / "warm-cafe-style.jpg"
+    reference.write_bytes(b"reference")
+    orchestrator = ImagePostOrchestrator(
+        workspace_root=tmp_path,
+        research_agent_factory=FakeResearchAgent,
+        content_agent_factory=FakeContentAgent,
+        image_agent_factory=FakeImageAgent,
+    )
+
+    result = await orchestrator.run(
+        ConversationRequest(
+            topic="咖啡馆封面图",
+            audience="通勤女生",
+            message="只参考这张图的暖色咖啡馆窗边光线、胶片颗粒和木桌质感；不要求保留原图物体，不要生成原图里的通勤包。",
+            style_constraints=[
+                "只参考风格、色调、光线和氛围",
+                "不要求保留原图物体",
+                "不要保留或生成原图里的通勤包",
+            ],
+            image_count=1,
+            reference_images=[str(reference)],
+        ),
+        run_id="run-image-route-style-reference",
+        send_to_feishu=False,
+    )
+
+    assert result.payload is not None
+    metadata = result.payload.metadata
+    assert metadata["style_context"]["reference_intent"] == "style_reference"
+    assert metadata["reference_analysis"][0]["role"] == "style_reference"
+    artifact = result.payload.artifacts[0]
+    image_task = artifact.metadata["image_task"]
+    assert image_task["generation_mode"] == "style_reference_generation"
+    assert image_task["reference_images"][0]["role"] == "style_reference"
+    assert "must_preserve_reference_subjects" not in image_task["qa_rules"]
+
+
+@pytest.mark.anyio
 async def test_image_post_orchestrator_preserves_workflow_invocation_skill_prompt_and_reference_roles(
     tmp_path: Path,
 ) -> None:
@@ -404,9 +447,11 @@ async def test_image_post_orchestrator_preserves_workflow_invocation_skill_promp
     metadata = result.payload.metadata
     assert metadata["style_context"]["matched_skills"] == ["reference-image-product-alignment"]
     assert "image/reference/product-reference-lock" in metadata["style_context"]["prompt_ref_sources"]
+    assert len(metadata["reference_analysis"]) == 1
     assert metadata["reference_analysis"][0]["role"] == "object_transfer"
     artifact = result.payload.artifacts[0]
     assert artifact.metadata["image_task"]["generation_mode"] == "object_transfer"
+    assert len(artifact.metadata["image_task"]["reference_images"]) == 1
     assert artifact.metadata["image_task"]["selected_prompt_templates"] == [
         "image/reference/product-reference-lock"
     ]

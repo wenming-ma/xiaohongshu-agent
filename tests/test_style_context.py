@@ -107,6 +107,34 @@ def test_style_context_carries_reference_images_as_hard_visual_constraints(tmp_p
     assert context.reference_image_inputs() == [("reference_1", ref_path)]
 
 
+def test_style_context_keeps_style_only_reference_images_from_forcing_subject_preservation(
+    tmp_path: Path,
+) -> None:
+    ref_path = tmp_path / "warm-cafe-style.jpg"
+    ref_path.write_bytes(b"fake-reference")
+    request = ConversationRequest(
+        topic="咖啡馆封面图",
+        audience="通勤女生",
+        message="只参考这张图的暖色咖啡馆窗边光线、胶片颗粒和木桌质感；不要求保留原图物体，不要生成原图里的通勤包。",
+        style_constraints=[
+            "只参考风格、色调、光线和氛围",
+            "不要求保留原图物体",
+            "不要保留或生成原图里的通勤包",
+        ],
+        image_count=1,
+        reference_images=[str(ref_path)],
+    )
+
+    context = StyleContext.from_request(request, matched_skills=[])
+    prompt_text = context.to_prompt_section()
+
+    assert context.reference_intent == "style_reference"
+    assert not any("必须出现在生成图" in item for item in context.hard_constraints)
+    assert "只参考" in prompt_text
+    assert "不要保留参考图中的具体物体" in prompt_text
+    assert "必须识别参考图片中的核心衣物" not in prompt_text
+
+
 def test_style_context_formats_prompt_without_runtime_schema_leaking_into_skill() -> None:
     context = StyleContext(
         user_constraints=["纯色背景"],

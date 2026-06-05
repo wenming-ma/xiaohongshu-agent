@@ -40,15 +40,35 @@ class FakeAgent:
         return FakeRunResult(f"echo:{text}", [*message_history, text, f"echo:{text}"])
 
 
+class StaticOutputAgent:
+    def __init__(self, output: str) -> None:
+        self.output = output
+
+    async def run(self, text, *, deps, message_history):
+        assert deps.current_user_text == text
+        return FakeRunResult(self.output, [*message_history, text, self.output])
+
+
 class FakeNotifier:
     def __init__(self) -> None:
         self.messages = []
+        self.session_messages = []
         self.replies = ["__FORM__:{\"style_pure_color\":true}"]
         self.card_messages = []
         self.form_cards = []
 
     async def send_message(self, text, *, chat_id=None):
         self.messages.append({"text": text, "chat_id": chat_id})
+        return "msg-1"
+
+    async def send_session_message(self, session, message, **kwargs):
+        self.session_messages.append(
+            {
+                "session": session,
+                "message": message,
+                **kwargs,
+            }
+        )
         return "msg-1"
 
     async def send_session_card_message(self, session, title, buttons, **kwargs):
@@ -192,8 +212,26 @@ async def test_agent_os_main_session_processes_inserted_messages_sequentially() 
 
     assert [call["text"] for call in agent.calls] == ["第一条", "第二条"]
     assert agent.calls[1]["message_history"] == ["第一条", "echo:第一条"]
-    assert notifier.messages[-1]["text"] == "echo:第二条"
-    assert notifier.messages[-1]["chat_id"] == "chat-1"
+    assert notifier.messages == []
+
+
+@pytest.mark.anyio
+async def test_agent_os_main_session_does_not_auto_send_plain_model_output() -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    agent = StaticOutputAgent(
+        "已启动后台 image_post 任务，任务 ID: task-123。\n"
+        "接下来会进行研究、分组、图片生成和审核，完成后发送 DeliveryPackage。"
+    )
+    notifier = FakeNotifier()
+    session = module.AgentOSMainAgentSession(
+        agent=agent,
+        deps=MainAgentDependencies(chat_id="chat-1"),
+        notifier=notifier,
+    )
+
+    await session._run_once("请启动一个雨天通勤包 image_post 任务")
+
+    assert notifier.messages == []
 
 
 @pytest.mark.anyio
@@ -644,6 +682,7 @@ def test_default_agent_os_registry_exposes_routes_resources_and_feishu_tools() -
     assert "feishu_ask_single_choice" in tool_names
     assert "feishu_ask_multi_select" in tool_names
     assert "feishu_send_progress" in tool_names
+    assert "feishu_send_message" in tool_names
     assert "ask_feishu_single_choice" not in tool_names
     assert "ask_feishu_multi_select" not in tool_names
     assert "send_feishu_progress" not in tool_names
@@ -662,6 +701,68 @@ def test_default_agent_os_registry_exposes_routes_resources_and_feishu_tools() -
     }
     assert feishu_tool_names
     assert all(name.startswith("feishu_") for name in feishu_tool_names)
+
+
+@pytest.mark.anyio
+async def test_feishu_send_message_tool_sends_necessary_user_message() -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    notifier = FakeNotifier()
+    registry = module.build_default_tool_registry(notifier=notifier)
+    session = object()
+
+    result = await registry.execute(
+        "feishu_send_message",
+        AgentToolContext(run_id="run-1", session=session),
+        message="已受理，会在完成后发送最终内容和图片。",
+        phase="accepted",
+        summary="任务已受理",
+    )
+
+    assert result.envelope.status == "success"
+    assert notifier.session_messages == [
+        {
+            "session": session,
+            "message": "已受理，会在完成后发送最终内容和图片。",
+            "phase": "accepted",
+            "summary": "任务已受理",
+        }
+    ]
+
+
+@pytest.mark.anyio
+async def test_feishu_send_message_tool_accepts_text_alias_from_main_agent() -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    notifier = FakeNotifier()
+    registry = module.build_default_tool_registry(notifier=notifier)
+    session = object()
+
+    result = await registry.execute(
+        "feishu_send_message",
+        AgentToolContext(run_id="run-1", session=session),
+        text="任务已受理，完成后会发送最终内容和图片。",
+        phase="accepted",
+    )
+
+    assert result.envelope.status == "success"
+    assert notifier.session_messages[0]["message"] == "任务已受理，完成后会发送最终内容和图片。"
+
+
+@pytest.mark.anyio
+async def test_feishu_send_message_tool_accepts_content_alias_from_main_agent() -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    notifier = FakeNotifier()
+    registry = module.build_default_tool_registry(notifier=notifier)
+
+    result = await registry.execute(
+        "feishu_send_message",
+        AgentToolContext(run_id="run-1", session=object()),
+        content="当前没有运行中的后台任务。",
+        phase="status",
+        extra="ignored",
+    )
+
+    assert result.envelope.status == "success"
+    assert notifier.session_messages[0]["message"] == "当前没有运行中的后台任务。"
 
 
 @pytest.mark.anyio

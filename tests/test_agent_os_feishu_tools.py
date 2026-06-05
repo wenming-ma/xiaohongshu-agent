@@ -46,6 +46,7 @@ def test_agent_os_feishu_tool_public_methods_are_prefixed() -> None:
         "feishu_ask_single_choice",
         "feishu_ask_multi_select",
         "feishu_send_delivery_summary",
+        "feishu_send_message",
         "feishu_send_progress",
     }
 
@@ -107,3 +108,19 @@ async def test_feishu_tools_send_delivery_summary() -> None:
     await tools.feishu_send_delivery_summary(object(), envelope)
 
     assert "标题" in notifier.messages[0]["message"]
+
+
+@pytest.mark.anyio
+async def test_feishu_tools_send_message() -> None:
+    notifier = FakeNotifier()
+    tools = AgentOSFeishuTools(notifier=notifier)
+
+    await tools.feishu_send_message(
+        object(),
+        "已受理，会在完成后发送最终内容和图片。",
+        phase="accepted",
+        summary="任务已受理",
+    )
+
+    assert notifier.messages[0]["message"] == "已受理，会在完成后发送最终内容和图片。"
+    assert notifier.messages[0]["phase"] == "accepted"

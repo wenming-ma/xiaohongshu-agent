@@ -108,7 +108,7 @@ async def test_realistic_text_requests_are_inserted_into_main_agent_session(tmp_
         agent.calls[0]["text"],
         "planned:1",
     ]
-    assert notifier.messages[-1]["text"] == "planned:2"
+    assert notifier.messages == []
     assert service.store.read_events()[0].text.startswith("做 5 张图")
 
 

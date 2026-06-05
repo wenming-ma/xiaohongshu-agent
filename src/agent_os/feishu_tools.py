@@ -89,6 +89,21 @@ class AgentOSFeishuTools:
             summary=summary,
         )
 
+    async def feishu_send_message(
+        self,
+        session: object,
+        message: str,
+        *,
+        phase: str = "message",
+        summary: str | None = None,
+    ) -> None:
+        await self.notifier.send_session_message(
+            session,
+            message,
+            phase=phase,
+            summary=summary,
+        )
+
     async def feishu_send_delivery_summary(
         self,
         session: object,
