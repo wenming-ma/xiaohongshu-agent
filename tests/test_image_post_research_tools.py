@@ -222,3 +222,24 @@ def test_build_compact_items_filters_operational_entries_and_keeps_original_inde
             "text": "优雅通勤: 浅蓝针织Polo衫 + 卡其高腰阔腿裤",
         }
     ]
+
+
+def test_sanitize_research_filters_media_status_items_from_visual_workflow() -> None:
+    result = ResearchResult(
+        summary="轻户外装备原则。\n\n---\n\n视频语音提取结果：工具未发现可下载视频直链。",
+        items=[
+            ResearchItem(title="轻户外装备原则", content="穿得舒服、做好防晒、带足够的水。", item_type="insight"),
+            ResearchItem(title="视频语音提取结果", content="工具未发现可下载视频直链。", item_type="video_status"),
+            ResearchItem(title="图片读取结果", content="该帖类型返回为 video，未检测到图片。", item_type="image_status"),
+        ],
+        keywords=[],
+        sources=[],
+    )
+
+    sanitized = sanitize_research_for_content(result)
+    compact = build_compact_items(result.items)
+
+    assert [item.title for item in sanitized.items] == ["轻户外装备原则"]
+    assert [item["index"] for item in compact] == [0]
+    assert "视频语音提取结果" not in sanitized.summary
+    assert "图片读取结果" not in sanitized.summary

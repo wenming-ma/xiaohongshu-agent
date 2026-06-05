@@ -13,6 +13,7 @@ OPERATIONAL_RESEARCH_MARKERS = (
     "研究限制说明",
     "研究限制",
     "研究过程",
+    "素材状态",
     "任务完成情况说明",
     "登录弹窗限制",
     "登录弹窗",
@@ -27,7 +28,28 @@ OPERATIONAL_RESEARCH_MARKERS = (
     "建议：直接在飞书",
     "浏览器 session",
     "扫码登录",
+    "视频语音提取结果",
+    "图片读取结果",
+    "工具未发现可下载视频直链",
+    "无法获取口播转写",
+    "未检测到图片",
+    "无图片清单可提取",
+    "该帖类型返回为 video",
 )
+
+OPERATIONAL_RESEARCH_ITEM_TYPES = {
+    "video_status",
+    "image_status",
+    "media_status",
+    "tool_status",
+    "login_status",
+    "auth_status",
+    "session_status",
+    "research_status",
+    "operational_status",
+    "diagnostic",
+    "diagnostics",
+}
 
 
 def is_operational_research_item(item: ResearchItem | dict) -> bool:
@@ -40,6 +62,9 @@ def is_operational_research_item(item: ResearchItem | dict) -> bool:
         title = str(item.get("title") or item.get("name") or "")
         content = str(item.get("content") or item.get("description") or item.get("detail") or "")
         item_type = str(item.get("item_type") or item.get("type") or "")
+
+    if item_type.strip().lower() in OPERATIONAL_RESEARCH_ITEM_TYPES:
+        return True
 
     text = f"{item_type}\n{title}\n{content}"
     return any(marker in text for marker in OPERATIONAL_RESEARCH_MARKERS)

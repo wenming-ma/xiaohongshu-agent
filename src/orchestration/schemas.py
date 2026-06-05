@@ -163,7 +163,7 @@ class ImageTaskPlan(BaseModel):
         max_auto_images: int | None,
         reference_analysis: list[ReferenceImagePlan] | None = None,
     ) -> "ImageTaskPlan":
-        group_items = list(groups.groups)
+        group_items = [group for group in groups.groups if not cls._is_operational_group(group)]
         group_payloads = cls._group_payloads(
             group_items=group_items,
             requested_image_count=requested_image_count,
@@ -192,6 +192,26 @@ class ImageTaskPlan(BaseModel):
             for group in group_payloads
         ]
         return cls(tasks=tasks, summary=f"规划 {len(tasks)} 张图片")
+
+    @staticmethod
+    def _is_operational_group(group: "GroupingItem") -> bool:
+        """Reject process diagnostics that slipped past research cleaning."""
+        title = group.title.strip().lower()
+        operational_markers = (
+            "素材状态",
+            "研究限制",
+            "研究过程",
+            "登录弹窗",
+            "登录状态",
+            "共享 session",
+            "session",
+            "视频语音提取结果",
+            "图片读取结果",
+            "工具状态",
+            "tool status",
+            "media status",
+        )
+        return any(marker.lower() in title for marker in operational_markers)
 
     @staticmethod
     def _group_payloads(

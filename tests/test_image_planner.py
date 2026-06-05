@@ -90,6 +90,35 @@ def test_image_planner_builds_task_plans_with_reference_roles() -> None:
     assert "no_people" in plan.tasks[0].hard_constraints
 
 
+def test_image_planner_drops_operational_groups_before_image_tasks() -> None:
+    invocation = WorkflowInvocation(
+        objective="做一组城市徒步装备清单图",
+        route="image_post",
+        topic="城市徒步装备",
+        constraints=["真实摄影平铺", "无人物"],
+    )
+    groups = GroupingResult(
+        groups=[
+            GroupingItem(title="轻装清单", indices=[0, 1, 2]),
+            GroupingItem(title="素材状态", indices=[5, 6]),
+            GroupingItem(title="登录弹窗限制", indices=[7]),
+        ]
+    )
+
+    plan = ImageTaskPlan.plan_from_groups(
+        invocation=invocation,
+        groups=groups,
+        requested_image_count=None,
+        single_item_per_image=False,
+        max_auto_images=9,
+    )
+
+    assert [(task.image_type, task.group_title, task.indices) for task in plan.tasks] == [
+        ("cover", "封面", []),
+        ("detail_1", "轻装清单", [0, 1, 2]),
+    ]
+
+
 def test_reference_analysis_honors_per_artifact_roles_before_global_constraints() -> None:
     invocation = WorkflowInvocation(
         objective="用两张参考图做一组新图",
