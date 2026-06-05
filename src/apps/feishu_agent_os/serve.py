@@ -39,6 +39,7 @@ from src.orchestration.article_route import ArticlePostOrchestrator
 from src.orchestration.delivery import DeliveryPackageSender
 from src.orchestration.feishu_translation import parse_control_action_text
 from src.orchestration.image_route import ImagePostOrchestrator
+from src.orchestration.request_parser import parse_conversation_request
 from src.orchestration.schemas import ResultEnvelope
 from src.orchestration.video_route import VideoPostOrchestrator
 from src.utils.feishu_interactive_workflow import acquire_interactive_session
@@ -208,7 +209,8 @@ class FeishuAgentOSService:
         if event is None:
             return None
         self.store.append_event(event)
-        self.runtime.ingest_event(event)
+        if not self._try_start_direct_background_task(event):
+            self.runtime.ingest_event(event)
         return event
 
     async def _start_main_agent_session(self) -> None:
@@ -282,6 +284,37 @@ class FeishuAgentOSService:
         if action:
             return AgentOSEvent.control(action)
         return AgentOSEvent.text(text)
+
+    def _try_start_direct_background_task(self, event: AgentOSEvent) -> bool:
+        if event.kind != "text" or self.task_manager is None:
+            return False
+        text = event.text.strip()
+        direct_params = _direct_background_task_params_from_text(text)
+        if direct_params is None:
+            return False
+        task_type = str(direct_params.pop("task_type"))
+        tool_name = _resolve_background_tool_name(task_type)
+        if not tool_name:
+            return False
+        try:
+            task_params = _normalize_background_task_params(tool_name, direct_params)
+            ctx = AgentToolContext(
+                run_id=event.event_id,
+                chat_id=getattr(self.session, "chat_id", None) or getattr(self.notifier, "chat_id", None),
+                session=self.session,
+                metadata={"current_user_text": text, "source_event_id": event.event_id},
+            )
+            task = self.task_manager.start_task(tool_name, ctx, params=task_params)
+        except Exception:
+            logger.exception("直接启动后台任务失败，回退到主 Agent 队列")
+            return False
+        logger.info(
+            "直接启动后台任务: task_id=%s tool=%s event_id=%s",
+            task.task_id,
+            tool_name,
+            event.event_id,
+        )
+        return True
 
 
 def _resolve_env_path() -> Path:
@@ -1044,6 +1077,63 @@ def _lift_runtime_aliases_into_spec(spec: dict[str, Any], source: dict[str, Any]
 
     if normalized_run_options:
         spec["run_options"] = normalized_run_options
+
+
+def _direct_background_task_params_from_text(text: str) -> dict[str, Any] | None:
+    route = _direct_background_task_route(text)
+    if route is None:
+        return None
+    request = parse_conversation_request(text)
+    aliases = _extract_runtime_aliases_from_text(text)
+    params: dict[str, Any] = {
+        "task_type": route,
+        "objective": text,
+        "topic": request.topic,
+        "audience": request.audience,
+    }
+    if request.style_constraints:
+        params["style_constraints"] = request.style_constraints
+    if request.image_count is not None:
+        params["image_count"] = request.image_count
+    if request.reference_images:
+        params["reference_images"] = request.reference_images
+    params.update(aliases)
+    return params
+
+
+def _direct_background_task_route(text: str) -> str | None:
+    normalized = text.strip().lower()
+    if not any(
+        marker in normalized
+        for marker in (
+            "直接启动后台",
+            "启动后台",
+            "后台 image_post",
+            "后台 article_post",
+            "后台 video_post",
+            "start background",
+            "start_background",
+        )
+    ):
+        return None
+    if any(
+        marker in text
+        for marker in (
+            "查看状态",
+            "查询状态",
+            "列出任务",
+            "取消任务",
+            "重启任务",
+        )
+    ):
+        return None
+    if "video_post" in normalized or "视频" in text:
+        return "video_post"
+    if "article_post" in normalized or "文章" in text or "长文" in text:
+        return "article_post"
+    if "image_post" in normalized or "图文" in text or "图片" in text or "生成图" in text:
+        return "image_post"
+    return None
 
 
 def _extract_runtime_aliases_from_text(text: str) -> dict[str, Any]:

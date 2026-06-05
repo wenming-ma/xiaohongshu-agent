@@ -318,6 +318,71 @@ async def test_service_polls_feishu_events_without_waiting_for_main_agent_idle()
 
 
 @pytest.mark.anyio
+async def test_service_direct_background_command_starts_specialist_task_without_main_agent_queue(
+    tmp_path: Path,
+) -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    reference_one = tmp_path / "bag.jpg"
+    reference_two = tmp_path / "hat.jpg"
+    reference_one.write_bytes(b"bag")
+    reference_two.write_bytes(b"hat")
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="execute_image_post",
+            description="Fake image specialist",
+            execute=fake_specialist_tool,
+            category="specialist",
+        )
+    )
+    task_manager = module.AgentOSTaskManager(tool_registry=registry)
+    module._register_task_tools(registry, task_manager=task_manager)
+    session = FakeBusySession()
+    runtime = module.MainAgentRuntime()
+    runtime.attach_run(session)
+    service = module.FeishuAgentOSService(
+        notifier=FakeNotifier(),
+        runtime=runtime,
+        tool_registry=registry,
+        store=FakeStore(),
+        main_agent=object(),
+        agent_session=session,
+        task_manager=task_manager,
+    )
+    text = (
+        "直接启动后台 image_post 任务：测试 R6 实物迁移。"
+        "image_count=1，research_max_items=1，image_generation_concurrency=1。"
+        f"参考图路径: {reference_one}, {reference_two}；"
+        "必须把黑色通勤包、橄榄绿渔夫帽放入新的生成图中。"
+    )
+
+    async def fake_wait_for_next_event():
+        return module.AgentOSEvent.text(text)
+
+    service._wait_for_next_event = fake_wait_for_next_event
+
+    event = await service.process_next_event_once()
+    await task_manager.wait_for_all()
+
+    tasks = task_manager.list_tasks()
+    assert event is not None
+    assert session.enqueued == []
+    assert len(tasks) == 1
+    task = tasks[0]
+    spec = task.params["spec"]
+    assert task.tool_name == "execute_image_post"
+    assert task.status == "succeeded"
+    assert spec["route"] == "image_post"
+    assert spec["run_options"]["image"]["count"] == 1
+    assert spec["run_options"]["image"]["concurrency"] == 1
+    assert spec["run_options"]["research"]["max_items"] == 1
+    assert [ref["path"] for ref in spec["reference_images"]] == [
+        str(reference_one),
+        str(reference_two),
+    ]
+
+
+@pytest.mark.anyio
 async def test_prompt_template_search_tool_tolerates_agent_filter_params() -> None:
     module = importlib.import_module("src.apps.feishu_agent_os.serve")
     registry = module.build_default_tool_registry(notifier=FakeNotifier())
