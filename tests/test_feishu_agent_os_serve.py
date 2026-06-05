@@ -127,6 +127,19 @@ class FakeIdleSession:
         self.order.append("idle")
 
 
+class FakeBusySession:
+    def __init__(self) -> None:
+        self.enqueued: list[str] = []
+        self.wait_called = False
+
+    async def wait_for_idle(self) -> None:
+        self.wait_called = True
+        await asyncio.Event().wait()
+
+    def enqueue(self, text: str, *, priority: str = "asap") -> None:
+        self.enqueued.append(f"{priority}:{text}")
+
+
 async def fake_specialist_tool(ctx: AgentToolContext, **params):
     envelope = ResultEnvelope[DeliveryPackage].success(
         agent_name="fake_specialist",
@@ -278,27 +291,30 @@ async def test_agent_os_main_session_reset_discards_conversation_history() -> No
 
 
 @pytest.mark.anyio
-async def test_service_waits_for_main_agent_idle_before_polling_next_feishu_event() -> None:
+async def test_service_polls_feishu_events_without_waiting_for_main_agent_idle() -> None:
     module = importlib.import_module("src.apps.feishu_agent_os.serve")
-    order: list[str] = []
+    session = FakeBusySession()
+    runtime = module.MainAgentRuntime()
+    runtime.attach_run(session)
     service = module.FeishuAgentOSService(
         notifier=FakeNotifier(),
-        runtime=FakeRuntime(),
+        runtime=runtime,
         tool_registry=AgentToolRegistry(),
         store=FakeStore(),
         main_agent=object(),
-        agent_session=FakeIdleSession(order),
+        agent_session=session,
     )
 
     async def fake_wait_for_next_event():
-        order.append("wait")
-        return None
+        return module.AgentOSEvent.text("第二个任务")
 
     service._wait_for_next_event = fake_wait_for_next_event
 
-    await service.process_next_event_once()
+    event = await asyncio.wait_for(service.process_next_event_once(), timeout=0.2)
 
-    assert order == ["idle", "wait"]
+    assert event is not None
+    assert session.wait_called is False
+    assert session.enqueued == ["asap:第二个任务"]
 
 
 @pytest.mark.anyio

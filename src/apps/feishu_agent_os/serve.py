@@ -204,8 +204,6 @@ class FeishuAgentOSService:
     async def process_next_event_once(self) -> AgentOSEvent | None:
         if self.agent_session is None:
             await self._start_main_agent_session()
-        if self.agent_session is not None:
-            await self.agent_session.wait_for_idle()
         event = await self._wait_for_next_event()
         if event is None:
             return None
