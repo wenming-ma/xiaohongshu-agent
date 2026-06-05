@@ -75,6 +75,7 @@ class ImageAgent(BaseAgent):
         """初始化图片客户端和质量验证器"""
         options = self._run_options()
         self.image_client = VertexAIImageClient(
+            model=options.model,
             image_size=options.image_size,
             aspect_ratio=options.aspect_ratio,
         )

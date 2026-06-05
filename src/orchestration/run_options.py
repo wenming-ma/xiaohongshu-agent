@@ -38,6 +38,7 @@ class ResearchRunOptions(BaseModel):
 class ImageRunOptions(BaseModel):
     """Runtime knobs for one image-generation invocation."""
 
+    model: str = Field(default_factory=lambda: APIConfig.VERTEX_AI_IMAGE_MODEL)
     max_retries: int = Field(default_factory=lambda: RetryConfig.MAX_RETRIES, ge=1)
     image_size: str = Field(default_factory=lambda: APIConfig.GEMINI_IMAGE_SIZE)
     aspect_ratio: str = "3:4"

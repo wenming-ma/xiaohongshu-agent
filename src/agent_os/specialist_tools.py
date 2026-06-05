@@ -117,6 +117,8 @@ def _route_run_options_from_task_spec(task_spec: TaskRunSpec, route: ContentRout
             )
 
         image_updates: dict[str, Any] = {}
+        if task_spec.run_options.image.model:
+            image_updates["model"] = task_spec.run_options.image.model
         if task_spec.run_options.image.size:
             image_updates["image_size"] = task_spec.run_options.image.size
         if task_spec.run_options.image.aspect_ratio:

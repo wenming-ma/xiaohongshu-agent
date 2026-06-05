@@ -133,7 +133,13 @@ async def test_route_tool_adapts_agent_os_run_options_to_image_route_options() -
         route=ContentRoute.IMAGE_POST,
         topic="面试通勤穿搭",
         run_options=RunOptions(
-            image=ImageRunOptionsSpec(count=5, concurrency=2, size="2K", aspect_ratio="3:4")
+            image=ImageRunOptionsSpec(
+                count=5,
+                concurrency=2,
+                size="2K",
+                aspect_ratio="3:4",
+                model="gemini-3-pro-image-preview",
+            )
         ),
     )
 
@@ -147,6 +153,7 @@ async def test_route_tool_adapts_agent_os_run_options_to_image_route_options() -
     assert result.envelope.status == "success"
     assert isinstance(route_options, ImagePostRunOptions)
     assert route_options.image_generation_concurrency == 2
+    assert route_options.image.model == "gemini-3-pro-image-preview"
     assert route_options.image.image_size == "2K"
     assert route_options.image.aspect_ratio == "3:4"
 

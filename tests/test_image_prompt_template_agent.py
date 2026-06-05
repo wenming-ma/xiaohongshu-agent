@@ -443,3 +443,34 @@ def test_generate_via_api_passes_reference_images_to_image_client(tmp_path: Path
     assert image_client.calls[0]["aspect_ratio"] == "3:4"
     assert "用户参考图片" in final_prompt
     assert "必须出现在生成图" in final_prompt
+
+
+def test_image_agent_init_tools_passes_runtime_model_to_vertex_client(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeVertexAIImageClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    class _ImageAgentWithoutModelInit(ImageAgent):
+        def init_agent(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "src.agents.image_post.image.agent.VertexAIImageClient",
+        _FakeVertexAIImageClient,
+    )
+
+    _ImageAgentWithoutModelInit(
+        run_options=ImageRunOptions(
+            model="gemini-3-pro-image-preview",
+            image_size="2K",
+            aspect_ratio="3:4",
+        )
+    )
+
+    assert captured == {
+        "model": "gemini-3-pro-image-preview",
+        "image_size": "2K",
+        "aspect_ratio": "3:4",
+    }
