@@ -102,7 +102,8 @@ def test_style_context_carries_reference_images_as_hard_visual_constraints(tmp_p
 
     assert context.reference_images[0].path == str(ref_path)
     assert context.reference_images[0].label == "reference_1"
-    assert any("参考图" in item and "必须出现在生成图" in item for item in context.hard_constraints)
+    assert context.reference_intent == "object_transfer"
+    assert any("reference_role=object_transfer" in item for item in context.hard_constraints)
     assert "reference_images" in context.metadata()
     assert context.reference_image_inputs() == [("reference_1", ref_path)]
 
@@ -133,6 +134,33 @@ def test_style_context_keeps_style_only_reference_images_from_forcing_subject_pr
     assert "只参考" in prompt_text
     assert "不要保留参考图中的具体物体" in prompt_text
     assert "必须识别参考图片中的核心衣物" not in prompt_text
+
+
+def test_style_context_detects_object_transfer_from_natural_item_migration_request(
+    tmp_path: Path,
+) -> None:
+    ref_one = tmp_path / "black-commuter-bag.jpg"
+    ref_two = tmp_path / "hat-scarf-shoes.jpg"
+    ref_one.write_bytes(b"fake-reference-1")
+    ref_two.write_bytes(b"fake-reference-2")
+    request = ConversationRequest(
+        topic="雨天露营通勤穿搭平铺图",
+        audience="通勤女生",
+        message=(
+            "参考图路径: black-commuter-bag.jpg, hat-scarf-shoes.jpg；"
+            "必须把第一张参考图里的黑色通勤包，以及第二张参考图里的橄榄绿渔夫帽、"
+            "赤陶色围巾、米色鞋放入新的生成图中；这是实物迁移，不是只参考风格。"
+        ),
+        reference_images=[str(ref_one), str(ref_two)],
+    )
+
+    context = StyleContext.from_request(request, matched_skills=[])
+    prompt_text = context.to_prompt_section()
+
+    assert context.reference_intent == "object_transfer"
+    assert any("reference_role=object_transfer" in item for item in context.hard_constraints)
+    assert "必须识别参考图片中的核心衣物" in prompt_text
+    assert "不要保留参考图中的具体物体" not in prompt_text
 
 
 def test_style_context_distinguishes_composition_scene_and_material_reference_images(

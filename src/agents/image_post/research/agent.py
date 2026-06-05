@@ -265,8 +265,9 @@ class ResearchAgent(BaseAgent):
             state.tracked_stats = self.navigate_tracker.get_stats()
         except Exception:
             state.tracked_stats = state.tracked_stats or {}
+        tracked_stats = self._normalize_tracked_stats(state)
 
-        tracked_urls = list(state.tracked_stats.get("post_detail_urls") or [])
+        tracked_urls = list(tracked_stats.get("post_detail_urls") or [])
         sources = [
             ContentSource(
                 url=url,
@@ -303,6 +304,21 @@ class ResearchAgent(BaseAgent):
             keywords=[state.topic, state.target_audience],
             sources=sources,
         )
+        self._current_state = state
+
+    @staticmethod
+    def _normalize_tracked_stats(state: ResearchState) -> dict:
+        stats = dict(state.tracked_stats or {})
+        urls = list(stats.get("post_detail_urls") or [])
+        try:
+            count = int(stats.get("post_detail_count") or len(urls))
+        except (TypeError, ValueError):
+            count = len(urls)
+
+        stats["post_detail_count"] = count
+        stats["post_detail_urls"] = urls
+        state.tracked_stats = stats
+        return stats
 
     # ========================================================================
     # 验证方法
@@ -320,7 +336,7 @@ class ResearchAgent(BaseAgent):
         """
         # 从实例属性获取 state context
         state = self._current_state
-        tracked_stats = state.tracked_stats
+        tracked_stats = self._normalize_tracked_stats(state)
 
         # 基础验证
         if not isinstance(output, ResearchResult):

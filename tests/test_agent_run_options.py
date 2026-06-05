@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from pydantic_ai.exceptions import UsageLimitExceeded
 
 from src.agents.image_post.research.agent import ResearchAgent
 from src.agents.image_post.research.state import ResearchState
@@ -83,6 +84,47 @@ def test_image_research_agent_applies_per_iteration_usage_limits() -> None:
     assert captured["usage_limits"].request_limit == 9
     assert captured["usage_limits"].tool_calls_limit == 17
     assert "本轮最多进入 3 个高热帖子" in captured["prompt"]
+
+
+@pytest.mark.anyio
+async def test_image_research_budget_fallback_keeps_state_available_for_validation() -> None:
+    class FakeGenerator:
+        async def run(self, prompt, *, usage_limits):
+            raise UsageLimitExceeded("request limit exhausted")
+
+    class FakeNavigateTracker:
+        def get_stats(self):
+            return {}
+
+    class PassingValidator:
+        async def validate(self, output, context):
+            return ValidationResult.success("ok")
+
+    agent = ResearchAgent.__new__(ResearchAgent)
+    agent.run_options = ResearchRunOptions(
+        min_posts_researched=1,
+        validation_max_retries=1,
+        min_key_infos=1,
+        min_cases=1,
+        per_iteration_request_limit=1,
+        per_iteration_tool_calls_limit=1,
+    )
+    agent.max_iterations = 1
+    agent.generator = FakeGenerator()
+    agent.navigate_tracker = FakeNavigateTracker()
+    agent.depth_validator = PassingValidator()
+    agent.review_validator = PassingValidator()
+
+    state = ResearchState(topic="雨天通勤包", target_audience="小红书用户", output_dir=None)
+
+    await agent.step(state, 0)
+    validation = await agent.validate(state.current_result)
+
+    assert state.budget_exhausted is True
+    assert agent._current_state is state
+    assert state.tracked_stats["post_detail_count"] == 0
+    assert state.tracked_stats["post_detail_urls"] == []
+    assert validation.passed
 
 
 def test_image_research_continuation_prompt_has_targeted_budget(tmp_path) -> None:

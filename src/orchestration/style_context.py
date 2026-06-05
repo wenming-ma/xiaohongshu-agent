@@ -334,7 +334,7 @@ def _is_object_transfer_reference(haystack: str) -> bool:
         )
     ):
         return False
-    return any(
+    if any(
         marker in haystack
         for marker in (
             "strict_object_transfer",
@@ -347,12 +347,30 @@ def _is_object_transfer_reference(haystack: str) -> bool:
             "must contain the reference",
             "元素迁移",
             "物体迁移",
+            "实物迁移",
+            "物品迁移",
+            "商品迁移",
             "主体迁移",
             "原封不动",
             "原样迁移",
             "原样搬",
             "搬到新",
             "迁移到",
+            "放入新的生成图",
+            "放到新的生成图",
+            "放进新的生成图",
+        )
+    ):
+        return True
+    if re.search(
+        r"(?:必须|需要|要)[^。；;\n]*(?:参考图|原图)[^。；;\n]*(?:放入|放到|放进|带到|迁移|搬到|包含|出现在)",
+        haystack,
+    ):
+        return True
+    return bool(
+        re.search(
+            r"(?:参考图|原图)[^。；;\n]*(?:里的|中的)[^。；;\n]*(?:必须|需要|要)[^。；;\n]*(?:放入|放到|放进|带到|迁移|搬到|包含|出现在)",
+            haystack,
         )
     )
 
