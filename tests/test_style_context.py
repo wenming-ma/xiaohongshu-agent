@@ -136,6 +136,21 @@ def test_style_context_keeps_style_only_reference_images_from_forcing_subject_pr
     assert "必须识别参考图片中的核心衣物" not in prompt_text
 
 
+def test_style_context_turns_no_text_and_no_logo_into_negative_constraints() -> None:
+    request = ConversationRequest(
+        topic="雨天通勤包静物图",
+        audience="小红书用户",
+        message="风格：真实摄影，无文字，无logo，不要人物。",
+        style_constraints=["真实摄影", "无文字", "无logo", "不要人物"],
+    )
+
+    context = StyleContext.from_request(request, matched_skills=[])
+
+    assert any("不要生成任何可见文字" in item for item in context.negative_constraints)
+    assert any("不要生成任何品牌 logo" in item for item in context.negative_constraints)
+    assert any("不要人物" in item for item in context.negative_constraints)
+
+
 def test_style_context_detects_object_transfer_from_natural_item_migration_request(
     tmp_path: Path,
 ) -> None:

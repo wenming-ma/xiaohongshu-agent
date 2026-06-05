@@ -474,6 +474,16 @@ def _derive_negative_constraints(user_constraints: Sequence[str]) -> list[str]:
     joined = " ".join(user_constraints)
     if any(marker in joined for marker in ("不要人物", "无人物", "不需要人物", "no people")):
         negatives.append("不要人物、模特、人台或拟人化身体部位")
+    if any(
+        marker in joined.lower()
+        for marker in ("无文字", "不要文字", "不需要文字", "no text", "text-free")
+    ):
+        negatives.append("不要生成任何可见文字、标题、标签、手写字、菜单字、路牌字或装饰性字符")
+    if any(
+        marker in joined.lower()
+        for marker in ("无logo", "不要logo", "不要 logo", "no logo", "no logos", "watermark", "水印")
+    ):
+        negatives.append("不要生成任何品牌 logo、伪造商标、水印或可识别商业标识")
     return _dedupe(negatives)
 
 

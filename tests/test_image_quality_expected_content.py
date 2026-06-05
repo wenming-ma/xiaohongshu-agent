@@ -80,7 +80,9 @@ class _RecordingVisionClient:
 
 
 @pytest.mark.anyio
-async def test_image_quality_validator_compares_generated_image_against_reference_images(tmp_path: Path) -> None:
+async def test_image_quality_validator_compares_generated_image_against_object_transfer_references(
+    tmp_path: Path,
+) -> None:
     generated = tmp_path / "generated.jpg"
     _write_test_image(generated, color=(240, 240, 240))
     reference = tmp_path / "reference.jpg"
@@ -95,6 +97,7 @@ async def test_image_quality_validator_compares_generated_image_against_referenc
         {
             "topic": "通勤穿搭",
             "image_type": "detail_1",
+            "reference_intent": "object_transfer",
             "reference_images": [
                 ReferenceImageRef(label="reference_1", path=str(reference), mime_type="image/jpeg")
             ],
@@ -109,3 +112,34 @@ async def test_image_quality_validator_compares_generated_image_against_referenc
         ("reference_1", reference),
     ]
     assert "必须包含参考图片中的核心衣物" in recorder.multi_calls[0]["prompt"]
+
+
+@pytest.mark.anyio
+async def test_image_quality_validator_keeps_style_reference_from_forcing_objects(
+    tmp_path: Path,
+) -> None:
+    generated = tmp_path / "generated.jpg"
+    _write_test_image(generated, color=(240, 240, 240))
+    reference = tmp_path / "reference.jpg"
+    _write_test_image(reference, color=(20, 40, 60))
+
+    validator = ImageQualityValidator()
+    recorder = _RecordingVisionClient()
+    validator._agent = recorder
+
+    review = await validator.validate(
+        generated,
+        {
+            "topic": "咖啡馆桌面物",
+            "image_type": "cover",
+            "reference_intent": "style_reference",
+            "reference_images": [
+                ReferenceImageRef(label="reference_1", path=str(reference), mime_type="image/jpeg")
+            ],
+        },
+    )
+
+    assert review.summary == "multi"
+    prompt = recorder.multi_calls[0]["prompt"]
+    assert "参考图只用于风格、色调、光线、构图、材质质感或氛围" in prompt
+    assert "必须包含参考图片中的核心衣物" not in prompt

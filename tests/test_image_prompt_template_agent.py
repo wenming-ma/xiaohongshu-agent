@@ -217,7 +217,7 @@ def test_generate_prompt_keyword_expansion_respects_style_reference_intent(tmp_p
     reference = tmp_path / "style-reference.jpg"
     reference.write_bytes(b"reference")
     style_context = StyleContext(
-        user_constraints=["只参考参考图的柔和光线和浅色背景，不保留物体"],
+        user_constraints=["只参考参考图的柔和光线和浅色背景，不保留物体", "无文字", "无logo"],
         matched_skills=[],
         prompt_refs=[],
         reference_images=[
@@ -225,7 +225,10 @@ def test_generate_prompt_keyword_expansion_respects_style_reference_intent(tmp_p
         ],
         reference_intent="style_reference",
         hard_constraints=["reference_role=style_reference"],
-        negative_constraints=[],
+        negative_constraints=[
+            "不要生成任何可见文字、标题、标签、手写字、菜单字、路牌字或装饰性字符",
+            "不要生成任何品牌 logo、伪造商标、水印或可识别商业标识",
+        ],
         trace={"source": "test"},
     )
 
@@ -245,6 +248,9 @@ def test_generate_prompt_keyword_expansion_respects_style_reference_intent(tmp_p
 
     assert "borrow only style, color palette, lighting, composition, materials, and mood" in prompt
     assert "preserve the visible products" not in prompt
+    assert "must_not:" in prompt
+    assert "不要生成任何可见文字" in prompt
+    assert "不要生成任何品牌 logo" in prompt
 
 
 def test_generate_prompt_keyword_expansion_preserves_objects_for_object_transfer(tmp_path: Path) -> None:

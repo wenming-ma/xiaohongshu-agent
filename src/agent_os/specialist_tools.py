@@ -124,7 +124,9 @@ def _route_run_options_from_task_spec(task_spec: TaskRunSpec, route: ContentRout
         if task_spec.run_options.image.aspect_ratio:
             image_updates["aspect_ratio"] = task_spec.run_options.image.aspect_ratio
         if task_spec.run_options.image.reference_mode:
-            image_updates["reference_mode"] = task_spec.run_options.image.reference_mode
+            image_updates["reference_mode"] = _normalize_image_reference_mode(
+                task_spec.run_options.image.reference_mode
+            )
 
         route_updates: dict[str, Any] = {}
         if task_spec.run_options.image.concurrency is not None:
@@ -169,6 +171,26 @@ def _route_run_options_from_task_spec(task_spec: TaskRunSpec, route: ContentRout
         return VideoPostRunOptions(research=VideoResearchRunOptions(**research_updates))
 
     return None
+
+
+def _normalize_image_reference_mode(value: str) -> str:
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized in {"none", "off", "disabled", "no_reference", "text_to_image"}:
+        return "none"
+    if normalized in {
+        "gemini_content",
+        "reference_image",
+        "reference_images",
+        "style_reference",
+        "object_transfer",
+        "subject_reference",
+        "composition_reference",
+        "scene_reference",
+        "material_color_reference",
+        "unspecified",
+    }:
+        return "gemini_content"
+    return value
 
 
 def _merge_route_extra_context(

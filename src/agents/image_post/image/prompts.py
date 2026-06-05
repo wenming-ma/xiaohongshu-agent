@@ -158,7 +158,7 @@ A candid photograph of a young Asian woman captured mid-laugh at a sunlit café 
 直接输出 Gemini 提示词，不要任何解释。
 **写实风格的提示词必须用叙事性段落描述**（建议约 200-350 词英文），像在给摄影师讲述一个场景。
 信息图/插画风格可以用结构化描述。
-提示词末尾必须加上：IMPORTANT: All text must be in Chinese characters (简体中文). Image aspect ratio MUST follow the requested image_config aspect ratio. Do NOT generate landscape or square images unless the requested aspect ratio says so. Output must match the requested image_config resolution quality. Do NOT use the words "perfect", "flawless", or "symmetrical".
+提示词末尾必须加上：IMPORTANT: If visible text is explicitly requested, all visible text must be accurate Simplified Chinese. If visible text is not explicitly requested or the user requested no text, generate no visible text, no captions, no labels, no menu-board words, no handwriting, no decorative characters, no logos, and no watermarks. Image aspect ratio MUST follow the requested image_config aspect ratio. Do NOT generate landscape or square images unless the requested aspect ratio says so. Output must match the requested image_config resolution quality. Do NOT use the words "perfect", "flawless", or "symmetrical".
 """
 
 IMAGE_USER_PROMPT_TEMPLATE = """## 配图生成任务
@@ -369,6 +369,7 @@ IMAGE_QUALITY_REVIEW_SYSTEM_PROMPT = """# 角色定义
 - 以“本图应表达的内容”为准，topic 仅作背景参考（不要被 topic 里的数量口径误导，例如“5个/10个”）
 - 研究要点/参考信息用于判断方向是否相关，不要求图片逐条写出、完整覆盖或变成清单/信息图
 - 当用户明确要求纯色背景、无人物、单套展示、平铺等画面形式时，应优先按这些视觉约束判断；不要因为图片没有展示研究文字、用户反馈、选购标准等抽象信息而判失败
+- 当“本图应表达的内容”或“生成本图所用提示词”中明确要求无文字、无 logo、无水印时，图片中任何可见文字、标题、标签、手写字、菜单字、路牌字、装饰性字符、logo 或水印都必须判定为 passed=false
 - 如果图片内容与本图主题板块明显不一致：无条件判定 passed=false
 - 需要在 issues 与 summary 中明确指出不一致点（例如：图里是 A，但本图应讲 B）
 
@@ -390,6 +391,7 @@ IMAGE_QUALITY_REVIEW_SYSTEM_PROMPT = """# 角色定义
 4. text_is_chinese == true（主体中文；允许极少量专有名词英文/数字）
 5. 内容与"本图应表达的内容"一致（不跑题/不货不对板；研究参考信息不要求逐条覆盖）
 6. 图片文字中不得出现"网友说"、"用户反馈"、"评论区"等来源归属措辞，也不得出现任何评论者的用户名、昵称、@提及（如有则判定 passed=false）
+7. 如果用户或提示词要求无文字/无 logo/无水印，任何可见文字、logo 或水印都判定 passed=false
 """
 
 IMAGE_QUALITY_REVIEW_USER_PROMPT_TEMPLATE = """## 图片质量验证任务
@@ -410,6 +412,7 @@ IMAGE_QUALITY_REVIEW_USER_PROMPT_TEMPLATE = """## 图片质量验证任务
 - 详情图（detail_N）允许使用”主题板块/分组标题”作为顶部标题，不要求与总主题逐字一致；但不得出现与本图无关的板块标题
 - 相关性与要点数量以”本图应表达的内容”为准，不要仅依据总主题里的”5个/10个”等字样作判断
 - **提示词中刻意要求的真实感细节**（如自然瑕疵、灰尘、污渍、杂物、使用痕迹等）是反AI检测策略的一部分，不应因此扣分或判定不通过
+- 如果“本图应表达的内容”或提示词中包含“无文字 / no visible text / no text / 无 logo / no logo / 无水印 / no watermark”等约束，则不允许任何可见文字、标签、招牌字、手写字、装饰字符、logo 或水印；出现即判定 passed=false
 
 ### 验证项目
 

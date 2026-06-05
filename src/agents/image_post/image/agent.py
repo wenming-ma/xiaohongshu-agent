@@ -440,9 +440,11 @@ class ImageAgent(BaseAgent):
 
         style_constraints = []
         reference_constraints = []
+        negative_constraints = []
         if style_context is not None:
             style_constraints.extend(style_context.user_constraints)
             style_constraints.extend(style_context.hard_constraints)
+            negative_constraints.extend(style_context.negative_constraints)
             if style_context.reference_images:
                 reference_constraints.append(
                     self._reference_keyword_seed(style_context.reference_intent)
@@ -450,6 +452,7 @@ class ImageAgent(BaseAgent):
 
         style_seed = "; ".join(dict.fromkeys(style_constraints)) or "realistic Xiaohongshu editorial image style"
         reference_seed = "; ".join(reference_constraints) or "no external reference image"
+        negative_seed = "; ".join(dict.fromkeys(negative_constraints)) or "no app UI, no diagnostic cards, no unrelated stock icons"
         template_seed = template_guidance[:500] if template_guidance else "no selected local template guidance"
 
         return "\n".join(
@@ -463,6 +466,7 @@ class ImageAgent(BaseAgent):
                 "lighting: natural or controlled lighting with direction, shadows, texture, and non-flat visual depth",
                 f"style: {style_seed}",
                 f"reference_constraints: {reference_seed}",
+                f"must_not: {negative_seed}",
                 f"target_resolution: {self._run_options().image_size}",
                 f"target_aspect_ratio: {self._run_options().aspect_ratio}",
                 f"template_context: {template_seed}",
@@ -600,6 +604,10 @@ class ImageAgent(BaseAgent):
                         "image_type_info": image_spec,
                         "image_prompt": final_prompt,
                         "reference_images": style_context.reference_images if style_context is not None else [],
+                        "reference_intent": style_context.reference_intent if style_context is not None else "none",
+                        "style_constraints": style_context.user_constraints if style_context is not None else [],
+                        "hard_constraints": style_context.hard_constraints if style_context is not None else [],
+                        "negative_constraints": style_context.negative_constraints if style_context is not None else [],
                     }
                     validation_result = await self.image_quality_validator.validate(
                         image_path=image_path,

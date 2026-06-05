@@ -119,12 +119,20 @@ class ImageQualityValidator(ExternalValidator):
         parts: list[str] = []
         if image_desc:
             parts.append(f"图片目标：{image_desc}")
+        style_constraints = ImageQualityValidator._string_list(context.get("style_constraints"))
+        hard_constraints = ImageQualityValidator._string_list(context.get("hard_constraints"))
+        negative_constraints = ImageQualityValidator._string_list(context.get("negative_constraints"))
+        if style_constraints:
+            parts.append("用户风格约束：\n" + "\n".join(f"- {item}" for item in style_constraints))
+        if hard_constraints:
+            parts.append("硬性视觉约束：\n" + "\n".join(f"- {item}" for item in hard_constraints))
+        if negative_constraints:
+            parts.append("硬性禁用项：\n" + "\n".join(f"- {item}" for item in negative_constraints))
+
         reference_images = context.get("reference_images") or []
+        reference_intent = str(context.get("reference_intent") or "none")
         if reference_images:
-            parts.append(
-                "用户提供了参考图片；生成图必须包含参考图片中的核心衣物、服装、首饰或物品，"
-                "不能只做风格迁移。"
-            )
+            parts.append(ImageQualityValidator._reference_expectation(reference_intent))
 
         if not isinstance(image_type_info, dict) or image_type_info.get("type") == "cover":
             if content is not None:
@@ -169,6 +177,49 @@ class ImageQualityValidator(ExternalValidator):
             )
 
         return "\n".join(parts) if parts else "（未提供）"
+
+    @staticmethod
+    def _string_list(value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        result: list[str] = []
+        for item in value:
+            text = str(item).strip()
+            if text:
+                result.append(text)
+        return result
+
+    @staticmethod
+    def _reference_expectation(reference_intent: str) -> str:
+        if reference_intent in {"object_transfer", "subject_reference"}:
+            return (
+                "用户提供了参考图片；生成图必须包含参考图片中的核心衣物、服装、首饰或物品，"
+                "并尽量保持其颜色、轮廓、材质和可识别细节，不能只做风格迁移。"
+            )
+        if reference_intent == "style_reference":
+            return (
+                "用户提供了参考图片；参考图只用于风格、色调、光线、构图、材质质感或氛围，"
+                "不得要求保留参考图中的具体物体，也不要把参考图当作截图或拼贴插入。"
+            )
+        if reference_intent == "composition_reference":
+            return (
+                "用户提供了参考图片；参考图只用于构图、版式、镜头角度、画面比例或空间布局，"
+                "不得要求保留参考图中的具体物体。"
+            )
+        if reference_intent == "scene_reference":
+            return (
+                "用户提供了参考图片；参考图只用于场景类型、环境氛围、空间关系或地点线索，"
+                "不得要求保留参考图中的具体物体。"
+            )
+        if reference_intent == "material_color_reference":
+            return (
+                "用户提供了参考图片；参考图只用于材质纹理、面料质感、色彩搭配或表面细节，"
+                "不得要求保留参考图中的具体物体。"
+            )
+        return (
+            "用户提供了参考图片；参考用途未明确时，优先作为风格、氛围或构图参考，"
+            "不要默认要求迁移参考图中的具体物体。"
+        )
 
     def _log_success(self, review: ImageQualityReview) -> None:
         """记录验证成功"""

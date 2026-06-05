@@ -159,6 +159,30 @@ async def test_route_tool_adapts_agent_os_run_options_to_image_route_options() -
 
 
 @pytest.mark.anyio
+async def test_route_tool_maps_reference_intent_reference_mode_to_gemini_content() -> None:
+    image_runner = FakeRouteRunner("image_post")
+    registry = build_route_tool_registry(image_runner=image_runner)
+    spec = TaskRunSpec(
+        objective="把实物参考图迁移到新场景",
+        route=ContentRoute.IMAGE_POST,
+        topic="通勤装备平铺",
+        run_options=RunOptions(
+            image=ImageRunOptionsSpec(reference_mode="object_transfer")
+        ),
+    )
+
+    result = await registry.execute(
+        "execute_image_post",
+        AgentToolContext(run_id="run-1", chat_id="chat-1"),
+        spec=spec.model_dump(mode="json"),
+    )
+
+    route_options = image_runner.calls[0]["kwargs"]["run_options"]
+    assert result.envelope.status == "success"
+    assert route_options.image.reference_mode == "gemini_content"
+
+
+@pytest.mark.anyio
 async def test_route_tool_applies_research_max_items_as_fast_budget() -> None:
     image_runner = FakeRouteRunner("image_post")
     registry = build_route_tool_registry(image_runner=image_runner)
