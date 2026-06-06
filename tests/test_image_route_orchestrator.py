@@ -50,6 +50,7 @@ class FakeContentAgent:
 
 class FakeImageAgent:
     compute_group_calls: list[dict[str, object]] = []
+    step_image_tasks: list[object] = []
 
     async def compute_groups(
         self,
@@ -80,7 +81,9 @@ class FakeImageAgent:
         output_dir: Path,
         image_spec: dict[str, object],
         style_context: StyleContext | None = None,
+        image_task: object | None = None,
     ) -> GeneratedImage:
+        self.step_image_tasks.append(image_task)
         image_type = str(image_spec["type"])
         if (
             style_context is not None
@@ -403,6 +406,7 @@ async def test_image_post_orchestrator_keeps_style_only_reference_role(tmp_path:
 async def test_image_post_orchestrator_preserves_workflow_invocation_skill_prompt_and_reference_roles(
     tmp_path: Path,
 ) -> None:
+    FakeImageAgent.step_image_tasks = []
     reference = tmp_path / "hat.png"
     reference.write_bytes(b"reference")
     orchestrator = ImagePostOrchestrator(
@@ -455,6 +459,8 @@ async def test_image_post_orchestrator_preserves_workflow_invocation_skill_promp
     assert artifact.metadata["image_task"]["selected_prompt_templates"] == [
         "image/reference/product-reference-lock"
     ]
+    assert FakeImageAgent.step_image_tasks[0] is not None
+    assert getattr(FakeImageAgent.step_image_tasks[0], "generation_mode") == "object_transfer"
 
 
 @pytest.mark.anyio

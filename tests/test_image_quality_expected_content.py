@@ -49,6 +49,36 @@ def test_image_quality_expected_content_uses_research_items_for_detail_groups() 
     assert "本图必须覆盖" not in expected
 
 
+def test_image_quality_expected_content_includes_per_image_task_plan() -> None:
+    expected = ImageQualityValidator._build_expected_content(
+        {
+            "image_type_info": {
+                "type": "cover",
+                "desc": "封面图 - 参考图迁移",
+            },
+            "image_task": {
+                "generation_mode": "object_transfer",
+                "group_title": "帽子与通勤包",
+                "hard_constraints": ["橄榄绿色桶帽必须出现", "不要人物"],
+                "qa_rules": ["must_preserve_reference_subjects", "must_not_include_people"],
+                "reference_images": [
+                    {
+                        "label": "hat",
+                        "role": "object_transfer",
+                        "notes": "保留桶帽轮廓和布料纹理",
+                    }
+                ],
+            },
+        }
+    )
+
+    assert "图片任务规划" in expected
+    assert "generation_mode: object_transfer" in expected
+    assert "橄榄绿色桶帽必须出现" in expected
+    assert "must_preserve_reference_subjects" in expected
+    assert "hat | role=object_transfer" in expected
+
+
 class _RecordingVisionClient:
     def __init__(self) -> None:
         self.single_calls: list[dict] = []

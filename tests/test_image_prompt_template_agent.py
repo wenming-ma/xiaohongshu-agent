@@ -11,6 +11,7 @@ from src.agents.image_post.image.prompts import image_system_prompt
 from src.agents.image_post.schemas import ImageGenContext, ImageQualityReview, ResearchItem, ResearchResult, XHSContent
 from src.agents.image_post.utils.image import calculate_grouping_params, groups_to_image_specs
 from src.orchestration.run_options import ImageRunOptions
+from src.orchestration.schemas import ReferenceImagePlan, SingleImageTaskPlan
 
 
 class _EchoPromptGenerator:
@@ -290,6 +291,70 @@ def test_generate_prompt_keyword_expansion_preserves_objects_for_object_transfer
     )
 
     assert "preserve and transfer the visible products" in prompt
+
+
+def test_generate_prompt_includes_per_image_task_plan(tmp_path: Path) -> None:
+    from src.orchestration.schemas import ImageReferenceRole
+    from src.orchestration.style_context import ReferenceImageRef, StyleContext
+
+    agent = ImageAgent.__new__(ImageAgent)
+    agent.run_options = ImageRunOptions(image_size="2K", aspect_ratio="3:4")
+    agent.prompt_generator = _EchoPromptGenerator()
+    agent.template_selector = _FailingTemplateSelector()
+    reference = tmp_path / "olive-hat.jpg"
+    reference.write_bytes(b"reference")
+    style_context = StyleContext(
+        user_constraints=["把参考帽子原样迁移到新的平铺图"],
+        matched_skills=["reference-image-product-alignment"],
+        prompt_refs=[],
+        reference_images=[
+            ReferenceImageRef(label="hat", path=str(reference), mime_type="image/jpeg")
+        ],
+        reference_intent="object_transfer",
+        hard_constraints=["不要人物"],
+        negative_constraints=["不要文字"],
+        trace={"source": "test"},
+    )
+    image_task = SingleImageTaskPlan(
+        image_type="cover",
+        group_title="帽子与通勤包",
+        description="封面图 - 把参考帽子作为核心实物迁移到新的通勤平铺场景",
+        generation_mode="object_transfer",
+        reference_images=[
+            ReferenceImagePlan(
+                label="hat",
+                path=str(reference),
+                role=ImageReferenceRole.OBJECT_TRANSFER,
+                notes="保留橄榄绿色、桶帽轮廓和布料纹理",
+            )
+        ],
+        hard_constraints=["橄榄绿色桶帽必须出现", "不要人物"],
+        selected_skills=["reference-image-product-alignment"],
+        selected_prompt_templates=["image/reference/product-reference-lock"],
+        qa_rules=["must_preserve_reference_subjects", "must_not_include_people"],
+    )
+
+    prompt = asyncio.run(
+        agent.generate_prompt(
+            content=_content(),
+            research=_research(),
+            topic="通勤帽子平铺图",
+            image_spec={
+                "type": "cover",
+                "desc": "封面图",
+            },
+            gen_ctx=ImageGenContext(topic="通勤帽子平铺图", image_type="cover"),
+            style_context=style_context,
+            image_task=image_task,
+        )
+    )
+
+    assert "## 图片任务规划" in prompt
+    assert "generation_mode: object_transfer" in prompt
+    assert "hat | role=object_transfer" in prompt
+    assert "橄榄绿色桶帽必须出现" in prompt
+    assert "must_preserve_reference_subjects" in prompt
+    assert "image/reference/product-reference-lock" in prompt
 
 
 def test_generate_prompt_falls_back_when_template_agent_fails() -> None:

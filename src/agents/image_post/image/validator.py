@@ -129,6 +129,12 @@ class ImageQualityValidator(ExternalValidator):
         if negative_constraints:
             parts.append("硬性禁用项：\n" + "\n".join(f"- {item}" for item in negative_constraints))
 
+        image_task_text = ImageQualityValidator._image_task_expected_content(
+            context.get("image_task")
+        )
+        if image_task_text:
+            parts.append(image_task_text)
+
         reference_images = context.get("reference_images") or []
         reference_intent = str(context.get("reference_intent") or "none")
         if reference_images:
@@ -188,6 +194,54 @@ class ImageQualityValidator(ExternalValidator):
             if text:
                 result.append(text)
         return result
+
+    @staticmethod
+    def _image_task_expected_content(image_task: Any) -> str:
+        if not image_task:
+            return ""
+        task_data = ImageQualityValidator._image_task_data(image_task)
+        if not task_data:
+            return ""
+
+        lines = ["图片任务规划："]
+        for field_name in ("image_type", "group_title", "generation_mode", "description"):
+            value = str(task_data.get(field_name) or "").strip()
+            if value:
+                lines.append(f"{field_name}: {value}")
+
+        references = task_data.get("reference_images") or []
+        if references:
+            lines.append("reference_images:")
+            for reference in references:
+                if not isinstance(reference, dict):
+                    continue
+                label = str(reference.get("label") or "reference").strip()
+                role = str(reference.get("role") or "").strip()
+                notes = str(reference.get("notes") or "").strip()
+                line = f"- {label}"
+                if role:
+                    line += f" | role={role}"
+                if notes:
+                    line += f" | notes={notes}"
+                lines.append(line)
+
+        for field_name in ("hard_constraints", "qa_rules"):
+            values = ImageQualityValidator._string_list(task_data.get(field_name))
+            if not values:
+                continue
+            lines.append(f"{field_name}:")
+            lines.extend(f"- {item}" for item in values)
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _image_task_data(image_task: Any) -> dict[str, Any]:
+        if isinstance(image_task, dict):
+            return dict(image_task)
+        model_dump = getattr(image_task, "model_dump", None)
+        if callable(model_dump):
+            return model_dump(mode="json")
+        return {}
 
     @staticmethod
     def _reference_expectation(reference_intent: str) -> str:

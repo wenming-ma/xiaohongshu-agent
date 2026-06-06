@@ -266,6 +266,7 @@ class ImageAgent(BaseAgent):
         output_dir: Path,
         image_spec: ImageTypeSpec,
         style_context: StyleContext | None = None,
+        image_task: Any | None = None,
     ) -> GeneratedImage:
         """
         工作流子步骤：生成单张图片
@@ -297,6 +298,7 @@ class ImageAgent(BaseAgent):
             research=research,
             image_spec=image_spec,
             style_context=style_context,
+            image_task=image_task,
         )
 
         return GeneratedImage(
@@ -345,6 +347,7 @@ class ImageAgent(BaseAgent):
         image_spec: ImageTypeSpec,
         gen_ctx: ImageGenContext,
         style_context: StyleContext | None = None,
+        image_task: Any | None = None,
     ) -> str:
         """生成图片提示词"""
         image_type = image_spec["type"]
@@ -399,6 +402,10 @@ class ImageAgent(BaseAgent):
         if style_context is not None:
             user_prompt += "\n\n" + style_context.to_prompt_section()
 
+        image_task_section = self._image_task_prompt_section(image_task)
+        if image_task_section:
+            user_prompt += "\n\n" + image_task_section
+
         if self._run_options().keyword_prompt_expansion:
             user_prompt += "\n\n" + self._build_prompt_keyword_section(
                 content=content,
@@ -407,6 +414,7 @@ class ImageAgent(BaseAgent):
                 image_spec=image_spec,
                 style_context=style_context,
                 template_guidance=template_guidance,
+                image_task=image_task,
             )
 
         if gen_ctx.validation_feedback:
@@ -424,6 +432,7 @@ class ImageAgent(BaseAgent):
         image_spec: ImageTypeSpec,
         style_context: StyleContext | None,
         template_guidance: str,
+        image_task: Any | None = None,
     ) -> str:
         image_type = image_spec.get("type", "")
         group_title = image_spec.get("group_title", "")
@@ -448,6 +457,22 @@ class ImageAgent(BaseAgent):
             if style_context.reference_images:
                 reference_constraints.append(
                     self._reference_keyword_seed(style_context.reference_intent)
+                )
+        if image_task is not None:
+            task_data = self._image_task_data(image_task)
+            style_constraints.extend(str(item) for item in task_data.get("hard_constraints", []) or [])
+            negative_constraints.extend(str(item) for item in task_data.get("negative_constraints", []) or [])
+            task_mode = str(task_data.get("generation_mode") or "").strip()
+            if task_mode:
+                reference_constraints.append(f"current image task generation_mode={task_mode}")
+            for reference in task_data.get("reference_images", []) or []:
+                if not isinstance(reference, dict):
+                    continue
+                label = str(reference.get("label") or "reference")
+                role = str(reference.get("role") or "")
+                notes = str(reference.get("notes") or "")
+                reference_constraints.append(
+                    f"{label} role={role}; {notes}".strip("; ")
                 )
 
         style_seed = "; ".join(dict.fromkeys(style_constraints)) or "realistic Xiaohongshu editorial image style"
@@ -510,6 +535,67 @@ class ImageAgent(BaseAgent):
             "requires subject preservation or object transfer"
         )
 
+    @classmethod
+    def _image_task_prompt_section(cls, image_task: Any | None) -> str:
+        if image_task is None:
+            return ""
+        task_data = cls._image_task_data(image_task)
+        if not task_data:
+            return ""
+
+        lines = ["## 图片任务规划"]
+        for field_name in ("image_type", "group_title", "generation_mode", "description"):
+            value = str(task_data.get(field_name) or "").strip()
+            if value:
+                lines.append(f"{field_name}: {value}")
+
+        references = task_data.get("reference_images") or []
+        if references:
+            lines.append("reference_images:")
+            for reference in references:
+                if not isinstance(reference, dict):
+                    continue
+                label = str(reference.get("label") or "reference").strip()
+                role = str(reference.get("role") or "").strip()
+                path = str(reference.get("path") or "").strip()
+                notes = str(reference.get("notes") or "").strip()
+                line = f"- {label}"
+                if role:
+                    line += f" | role={role}"
+                if path:
+                    line += f" | path={path}"
+                if notes:
+                    line += f" | notes={notes}"
+                lines.append(line)
+
+        cls._append_task_list(lines, "hard_constraints", task_data.get("hard_constraints") or [])
+        cls._append_task_list(lines, "preferences", task_data.get("preferences") or [])
+        cls._append_task_list(lines, "selected_skills", task_data.get("selected_skills") or [])
+        cls._append_task_list(lines, "selected_prompt_templates", task_data.get("selected_prompt_templates") or [])
+        cls._append_task_list(lines, "qa_rules", task_data.get("qa_rules") or [])
+        lines.append(
+            "执行要求：最终图片提示词必须优先满足本图片任务规划；"
+            "如果任务规划和宽泛主题冲突，以本图片任务规划、用户原始要求和硬性约束为准。"
+        )
+        return "\n".join(lines)
+
+    @staticmethod
+    def _image_task_data(image_task: Any) -> dict[str, Any]:
+        if isinstance(image_task, dict):
+            return dict(image_task)
+        model_dump = getattr(image_task, "model_dump", None)
+        if callable(model_dump):
+            return model_dump(mode="json")
+        return {}
+
+    @staticmethod
+    def _append_task_list(lines: list[str], label: str, values: Any) -> None:
+        if not values:
+            return
+        lines.append(f"{label}:")
+        for value in values:
+            lines.append(f"- {value}")
+
     async def _select_template_guidance(
         self,
         *,
@@ -545,6 +631,7 @@ class ImageAgent(BaseAgent):
         research: ResearchResult,
         image_spec: ImageTypeSpec,
         style_context: StyleContext | None = None,
+        image_task: Any | None = None,
         max_retries: int | None = None,
     ) -> tuple[Path, str]:
         """
@@ -579,6 +666,7 @@ class ImageAgent(BaseAgent):
                     image_spec,
                     gen_ctx,
                     style_context=style_context,
+                    image_task=image_task,
                 )
                 final_prompt = prompt
 
@@ -608,6 +696,7 @@ class ImageAgent(BaseAgent):
                         "style_constraints": style_context.user_constraints if style_context is not None else [],
                         "hard_constraints": style_context.hard_constraints if style_context is not None else [],
                         "negative_constraints": style_context.negative_constraints if style_context is not None else [],
+                        "image_task": self._image_task_data(image_task) if image_task is not None else {},
                     }
                     validation_result = await self.image_quality_validator.validate(
                         image_path=image_path,

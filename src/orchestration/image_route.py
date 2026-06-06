@@ -532,6 +532,7 @@ class ImagePostOrchestrator:
                 output_dir=workspace_dir,
                 image_spec=image_spec,
                 style_context=style_context,
+                image_task=image_task,
             )
             image_artifact = ArtifactRef(
                 artifact_type="image",
