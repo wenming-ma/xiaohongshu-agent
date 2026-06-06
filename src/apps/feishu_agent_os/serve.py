@@ -209,6 +209,8 @@ class FeishuAgentOSService:
         if event is None:
             return None
         self.store.append_event(event)
+        if await self._try_handle_direct_status_event(event):
+            return event
         if not self._try_start_direct_background_task(event):
             self.runtime.ingest_event(event)
         return event
@@ -315,6 +317,33 @@ class FeishuAgentOSService:
             event.event_id,
         )
         return True
+
+    async def _try_handle_direct_status_event(self, event: AgentOSEvent) -> bool:
+        if event.kind != "text" or self.task_manager is None:
+            return False
+        text = event.text.strip()
+        if not _is_direct_status_request(text):
+            return False
+        message = _build_direct_status_message(self.task_manager)
+        await self._send_direct_service_message(message)
+        logger.info("直接回复后台任务状态: event_id=%s", event.event_id)
+        return True
+
+    async def _send_direct_service_message(self, message: str) -> None:
+        if self.session is not None and hasattr(self.notifier, "send_session_message"):
+            await self.notifier.send_session_message(
+                self.session,
+                message,
+                phase="idle",
+                summary="后台任务状态",
+            )
+            return
+        send_message = getattr(self.notifier, "send_message", None)
+        if callable(send_message):
+            await send_message(
+                message,
+                chat_id=getattr(self.session, "chat_id", None) or getattr(self.notifier, "chat_id", None),
+            )
 
 
 def _resolve_env_path() -> Path:
@@ -1144,6 +1173,64 @@ def _direct_background_task_params_from_text(text: str) -> dict[str, Any] | None
     return params
 
 
+def _is_direct_status_request(text: str) -> bool:
+    normalized = text.strip().lower()
+    if not normalized:
+        return False
+    status_markers = (
+        "status",
+        "list current tasks",
+        "list background tasks",
+        "list tasks",
+        "list schedules",
+        "current tasks",
+        "running tasks",
+        "scheduled tasks",
+        "查看状态",
+        "查询状态",
+        "列出任务",
+        "当前任务",
+        "运行状态",
+        "排程任务",
+        "周期任务",
+    )
+    return any(marker in normalized or marker in text for marker in status_markers)
+
+
+def _build_direct_status_message(task_manager: AgentOSTaskManager) -> str:
+    tasks = task_manager.list_tasks()
+    schedules = task_manager.list_schedules()
+    if not tasks and not schedules:
+        return "当前没有运行中的后台任务，也没有已排程/循环任务。"
+
+    lines = ["后台任务状态"]
+    if tasks:
+        lines.append("任务：")
+        for task in tasks[-10:]:
+            summary = task.to_summary()
+            lines.append(
+                "- {task_id} | {status} | {human_summary}".format(
+                    task_id=summary["task_id"],
+                    status=summary["status"],
+                    human_summary=summary["human_summary"],
+                )
+            )
+    if schedules:
+        lines.append("排程：")
+        for schedule in schedules[-10:]:
+            summary = schedule.to_summary()
+            lines.append(
+                "- {schedule_id} | {status} | runs {run_count}/{max_runs} | {human_summary}".format(
+                    schedule_id=summary["schedule_id"],
+                    status=summary["status"],
+                    run_count=summary["run_count"],
+                    max_runs=summary["max_runs"] if summary["max_runs"] is not None else "∞",
+                    human_summary=summary["human_summary"],
+                )
+            )
+    return "\n".join(lines)
+
+
 def _direct_background_task_route(text: str) -> str | None:
     normalized = text.strip().lower()
     if not any(
@@ -1209,14 +1296,20 @@ def _reference_image_refs_from_text(text: str) -> list[dict[str, Any]]:
     suffixes = "png|jpg|jpeg|webp|gif|bmp|tif|tiff"
     patterns = [
         rf"[A-Za-z]:\\[^；;\]\n\r]+?\.({suffixes})",
+        rf"[A-Za-z]:/[^；;\]\n\r]+?\.({suffixes})",
         rf"/[^；;\]\n\r]+?\.({suffixes})",
     ]
     paths: list[str] = []
+    spans: list[tuple[int, int]] = []
     for pattern in patterns:
         for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            span = match.span()
+            if any(span[0] < existing[1] and span[1] > existing[0] for existing in spans):
+                continue
             raw_path = match.group(0).strip().rstrip("，,。.)）]")
             if raw_path and raw_path not in paths:
                 paths.append(raw_path)
+                spans.append(span)
     return _coerce_reference_image_refs(paths)
 
 

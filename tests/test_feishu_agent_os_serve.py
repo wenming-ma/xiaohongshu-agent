@@ -383,6 +383,38 @@ async def test_service_direct_background_command_starts_specialist_task_without_
 
 
 @pytest.mark.anyio
+async def test_service_direct_status_command_replies_without_main_agent_queue() -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    session = FakeBusySession()
+    runtime = module.MainAgentRuntime()
+    runtime.attach_run(session)
+    task_manager = module.AgentOSTaskManager(tool_registry=AgentToolRegistry())
+    notifier = FakeNotifier()
+    service = module.FeishuAgentOSService(
+        notifier=notifier,
+        runtime=runtime,
+        tool_registry=AgentToolRegistry(),
+        store=FakeStore(),
+        main_agent=object(),
+        agent_session=session,
+        session=object(),
+        task_manager=task_manager,
+    )
+
+    async def fake_wait_for_next_event():
+        return module.AgentOSEvent.text("STATUS LIST CURRENT TASKS")
+
+    service._wait_for_next_event = fake_wait_for_next_event
+
+    event = await service.process_next_event_once()
+
+    assert event is not None
+    assert session.enqueued == []
+    assert notifier.session_messages
+    assert "当前没有运行中的后台任务" in notifier.session_messages[0]["message"]
+
+
+@pytest.mark.anyio
 async def test_prompt_template_search_tool_tolerates_agent_filter_params() -> None:
     module = importlib.import_module("src.apps.feishu_agent_os.serve")
     registry = module.build_default_tool_registry(notifier=FakeNotifier())
@@ -719,6 +751,54 @@ async def test_background_task_tool_uses_current_user_text_for_reference_image_p
             metadata={
                 "current_user_text": (
                     f"参考图路径：{reference}；图片数量=1；最终只发飞书。"
+                )
+            },
+        ),
+        task_type="image_post",
+        objective="创建参考图穿搭图文",
+        topic="参考图穿搭",
+    )
+    await task_manager.wait_for_all()
+
+    task_summary = result.envelope.payload
+    spec = task_manager.get_task(task_summary["task_id"]).params["spec"]
+    assert result.envelope.status == "success"
+    assert spec["reference_images"] == [
+        {
+            "artifact_type": "image",
+            "label": "reference_1",
+            "path": str(reference.resolve()),
+            "mime_type": "image/png",
+            "metadata": {},
+        }
+    ]
+
+
+@pytest.mark.anyio
+async def test_background_task_tool_accepts_forward_slash_windows_reference_path(tmp_path) -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    reference = tmp_path / "reference-look.png"
+    reference.write_bytes(b"png")
+    reference_text = str(reference).replace("\\", "/")
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="execute_image_post",
+            description="Fake image specialist",
+            execute=fake_specialist_tool,
+            category="specialist",
+        )
+    )
+    task_manager = module.AgentOSTaskManager(tool_registry=registry)
+    module._register_task_tools(registry, task_manager=task_manager)
+
+    result = await registry.execute(
+        "start_background_agent_task",
+        AgentToolContext(
+            run_id="run-1",
+            metadata={
+                "current_user_text": (
+                    f"REFERENCE_IMAGE={reference_text}; image_count=1; 最终只发飞书。"
                 )
             },
         ),
