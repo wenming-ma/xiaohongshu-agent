@@ -130,10 +130,36 @@ async def test_delivery_sender_omits_internal_workflow_blocks_from_feishu_text()
     assert "标题：春夏通勤桌面9图小物清单" in message
     assert "正文：这是最终给用户审稿的正文。" in message
     assert "话题：#极简桌面" in message
+    assert "Route:" not in message
+    assert "Title:" not in message
+    assert "Summary:" not in message
     assert "调研摘要" not in message
     assert "分组：" not in message
     assert "内部参数" not in message
     assert "内部追踪主题" not in message
+
+
+@pytest.mark.anyio
+async def test_delivery_sender_uses_plain_title_summary_fallback_without_technical_headers() -> None:
+    package = DeliveryPackage(
+        route="image_post",
+        title="奶油色桌面三件小物",
+        summary="交付包已整理完成",
+    )
+    envelope = ResultEnvelope[DeliveryPackage].success(
+        agent_name="delivery_agent",
+        payload=package,
+        summary="交付完成",
+        run_id="run-5",
+        step_id="delivery",
+    )
+
+    notifier = FakeNotifier()
+    sender = DeliveryPackageSender(notifier=notifier)
+
+    await sender.send(envelope)
+
+    assert notifier.messages[0] == "奶油色桌面三件小物\n交付包已整理完成"
 
 
 @pytest.mark.anyio

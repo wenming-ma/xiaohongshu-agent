@@ -66,21 +66,16 @@ class DeliveryPackageSender:
         return receipts
 
     def _build_message(self, package: DeliveryPackage) -> str:
-        header = [f"Route: {package.route}"]
-        if package.title:
-            header.append(f"Title: {package.title}")
-        if package.summary:
-            header.append(f"Summary: {package.summary}")
-
         block_lines = [
             block.text
             for block in package.text_blocks
             if block.label in PUBLIC_FEISHU_TEXT_BLOCK_LABELS and block.text.strip()
         ]
         if block_lines:
-            header.append("")
-            header.extend(block_lines)
-        return "\n".join(header)
+            return "\n".join(block_lines)
+
+        fallback_lines = [line for line in (package.title, package.summary) if line.strip()]
+        return "\n".join(fallback_lines)
 
     async def _send_artifact(self, artifact: ArtifactRef, *, chat_id: str | None = None) -> DeliverySendReceipt:
         path = Path(artifact.path)
