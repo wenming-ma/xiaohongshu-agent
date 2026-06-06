@@ -11,6 +11,7 @@ from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 
 from src.agents.image_post.schemas import GroupSpec, ImageResult, ResearchResult, XHSContent
 from src.config.settings import ImageConfig
+from src.utils.file_ops import save_json
 
 from .schemas import (
     DeliveryPackage,
@@ -429,6 +430,7 @@ class DeliveryNode(BaseNode[ImageWorkflowState, ImageWorkflowDeps, ResultEnvelop
                 ctx.state.image_task_subgraph_traces
             )
             result.payload.metadata["image_set_review"] = ctx.state.image_set_review_summary
+            _persist_mutated_delivery_envelope(ctx.state.workspace_dir, result)
         ctx.state.delivery = result
         return End(result)
 
@@ -446,6 +448,15 @@ image_workflow_graph = Graph(
         DeliveryNode,
     )
 )
+
+
+def _persist_mutated_delivery_envelope(
+    workspace_dir: Path,
+    envelope: ResultEnvelope[DeliveryPackage],
+) -> None:
+    steps_dir = workspace_dir / "steps"
+    steps_dir.mkdir(parents=True, exist_ok=True)
+    save_json(steps_dir / f"{envelope.step_id}.json", envelope.model_dump(mode="json"))
 
 
 image_workflow_module_graph = ModuleGraphSpec(

@@ -228,6 +228,10 @@ async def test_image_post_orchestrator_runs_real_flow_with_unified_envelopes(tmp
     assert "image-2" in manifest_text
     assert "delivery" in manifest_text
 
+    delivery_text = (tmp_path / "run-image-route-1" / "steps" / "delivery.json").read_text(encoding="utf-8")
+    assert "workflow_node_trace" in delivery_text
+    assert "image_set_review" in delivery_text
+
     assert len(sender.sent) == 1
     sent_envelope, sent_chat_id = sender.sent[0]
     assert sent_envelope.step_id == "delivery"
