@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import mimetypes
 from typing import Any
 
 from src.orchestration.conversation import ContentRoute, ConversationRequest
@@ -13,8 +14,9 @@ from src.orchestration.run_options import (
     VideoPostRunOptions,
     VideoResearchRunOptions,
 )
-from src.orchestration.schemas import DeliveryPackage, ResultEnvelope, WorkflowInvocation
+from src.orchestration.schemas import ArtifactRef, DeliveryPackage, ResultEnvelope, WorkflowInvocation
 
+from .reference_assets import ReferenceAssetBatch, ReferenceAssetStore
 from .schemas import AgentToolResult, TaskRunSpec
 from .tools import AgentTool, AgentToolContext, AgentToolRegistry
 
@@ -48,6 +50,7 @@ def build_route_tool_registry(
     image_runner: Any | None = None,
     article_runner: Any | None = None,
     video_runner: Any | None = None,
+    reference_asset_store: ReferenceAssetStore | None = None,
 ) -> AgentToolRegistry:
     registry = AgentToolRegistry()
     if image_runner is not None:
@@ -55,7 +58,11 @@ def build_route_tool_registry(
             AgentTool(
                 name="execute_image_post",
                 description="Execute an image-post specialist workflow from a TaskRunSpec.",
-                execute=_build_route_execute(image_runner, ContentRoute.IMAGE_POST),
+                execute=_build_route_execute(
+                    image_runner,
+                    ContentRoute.IMAGE_POST,
+                    reference_asset_store=reference_asset_store,
+                ),
                 resource_group="browser_research",
             )
         )
@@ -64,7 +71,11 @@ def build_route_tool_registry(
             AgentTool(
                 name="execute_article_post",
                 description="Execute an article-post specialist workflow from a TaskRunSpec.",
-                execute=_build_route_execute(article_runner, ContentRoute.ARTICLE_POST),
+                execute=_build_route_execute(
+                    article_runner,
+                    ContentRoute.ARTICLE_POST,
+                    reference_asset_store=reference_asset_store,
+                ),
                 resource_group="browser_research",
             )
         )
@@ -73,14 +84,23 @@ def build_route_tool_registry(
             AgentTool(
                 name="execute_video_post",
                 description="Execute a video-post specialist workflow from a TaskRunSpec.",
-                execute=_build_route_execute(video_runner, ContentRoute.VIDEO_POST),
+                execute=_build_route_execute(
+                    video_runner,
+                    ContentRoute.VIDEO_POST,
+                    reference_asset_store=reference_asset_store,
+                ),
                 resource_group="browser_research",
             )
         )
     return registry
 
 
-def _build_route_execute(runner: Any, route: ContentRoute):
+def _build_route_execute(
+    runner: Any,
+    route: ContentRoute,
+    *,
+    reference_asset_store: ReferenceAssetStore | None = None,
+):
     async def execute(
         ctx: AgentToolContext,
         *,
@@ -88,6 +108,7 @@ def _build_route_execute(runner: Any, route: ContentRoute):
         **extra_context: Any,
     ) -> AgentToolResult:
         task_spec = TaskRunSpec.model_validate(_merge_route_extra_context(spec, extra_context))
+        task_spec = _expand_reference_asset_batches(task_spec, reference_asset_store=reference_asset_store)
         workflow_invocation = workflow_invocation_from_task_spec(task_spec)
         request = conversation_request_from_task_spec(
             task_spec.model_copy(update={"route": route})
@@ -104,6 +125,40 @@ def _build_route_execute(runner: Any, route: ContentRoute):
         return AgentToolResult(envelope=envelope, produced_refs=[route.value])
 
     return execute
+
+
+def _expand_reference_asset_batches(
+    task_spec: TaskRunSpec,
+    *,
+    reference_asset_store: ReferenceAssetStore | None,
+) -> TaskRunSpec:
+    if not task_spec.reference_asset_batch_ids:
+        return task_spec
+    if reference_asset_store is None:
+        raise ValueError("reference_asset_batch_ids require a ReferenceAssetStore")
+
+    artifacts = list(task_spec.reference_images)
+    for batch_id in task_spec.reference_asset_batch_ids:
+        batch = reference_asset_store.get_batch(batch_id)
+        artifacts.extend(_artifact_refs_from_reference_batch(batch))
+    return task_spec.model_copy(update={"reference_images": artifacts})
+
+
+def _artifact_refs_from_reference_batch(batch: ReferenceAssetBatch) -> list[ArtifactRef]:
+    return [
+        ArtifactRef(
+            artifact_type="image",
+            label=image.label,
+            path=image.path,
+            mime_type=_guess_mime_type(image.path),
+            metadata={
+                "description": image.description,
+                "instruction": batch.instruction,
+                "reference_role": image.use_as,
+            },
+        )
+        for image in batch.images
+    ]
 
 
 def _route_run_options_from_task_spec(task_spec: TaskRunSpec, route: ContentRoute) -> Any:
@@ -196,6 +251,10 @@ def _normalize_image_reference_mode(value: str) -> str:
     }:
         return "gemini_content"
     return value
+
+
+def _guess_mime_type(path: str) -> str:
+    return mimetypes.guess_type(path)[0] or ""
 
 
 def _merge_route_extra_context(

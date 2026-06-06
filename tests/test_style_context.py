@@ -178,6 +178,50 @@ def test_style_context_detects_object_transfer_from_natural_item_migration_reque
     assert "不要保留参考图中的具体物体" not in prompt_text
 
 
+def test_style_context_describes_mixed_reference_roles_without_contradiction(tmp_path: Path) -> None:
+    style_ref = tmp_path / "style.jpg"
+    object_ref = tmp_path / "bag.jpg"
+    style_ref.write_bytes(b"style")
+    object_ref.write_bytes(b"bag")
+    request = type(
+        "Request",
+        (),
+        {
+            "topic": "雨天通勤平铺",
+            "audience": "通勤女生",
+            "message": "第一张只参考暖中性色风格；第二张黑色通勤包必须迁移到新图里。",
+            "style_constraints": [],
+            "image_count": None,
+            "reference_images": [
+                {
+                    "label": "warm-style",
+                    "path": str(style_ref),
+                    "mime_type": "image/jpeg",
+                    "role": "style_reference",
+                },
+                {
+                    "label": "black-bag",
+                    "path": str(object_ref),
+                    "mime_type": "image/jpeg",
+                    "role": "object_transfer",
+                },
+            ],
+        },
+    )()
+
+    context = StyleContext.from_request(request, matched_skills=[])
+    prompt_text = context.to_prompt_section()
+    hard_constraints = "\n".join(context.hard_constraints)
+
+    assert context.reference_images[0].role == "style_reference"
+    assert context.reference_images[1].role == "object_transfer"
+    assert "warm-style | role=style_reference" in prompt_text
+    assert "black-bag | role=object_transfer" in prompt_text
+    assert "style_reference 只参考风格" in hard_constraints
+    assert "object_transfer 必须迁移" in hard_constraints
+    assert "reference_role=style_reference；只参考参考图" not in hard_constraints
+
+
 def test_style_context_distinguishes_composition_scene_and_material_reference_images(
     tmp_path: Path,
 ) -> None:

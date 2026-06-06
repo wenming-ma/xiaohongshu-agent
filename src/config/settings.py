@@ -157,6 +157,7 @@ class APIConfig:
     GEMINI_API_KEY = _GEMINI_ALL_KEYS[0] if _GEMINI_ALL_KEYS else os.getenv("GEMINI_API_KEY")
     GEMINI_FALLBACK_API_KEYS = _GEMINI_ALL_KEYS[1:] + _split_csv_env("GEMINI_FALLBACK_API_KEYS")
     OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.5")
+    MAIN_AGENT_MODEL = os.getenv("MAIN_AGENT_MODEL", "gpt-5.5")
     OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://sub2api.wenming-dev.org/v1")
     GEMINI_IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3-pro-image-preview")
     GEMINI_IMAGE_SIZE = os.getenv("GEMINI_IMAGE_SIZE", "2K")

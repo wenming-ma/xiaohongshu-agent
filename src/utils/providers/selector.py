@@ -23,3 +23,9 @@ def get_text_model(model_name: str | None = None):
         return get_openai_model(model_name)
 
     raise ValueError(f"Unsupported MODEL_PROVIDER: {APIConfig.MODEL_PROVIDER}")
+
+
+def get_main_agent_model(model_name: str | None = None):
+    """Return the dedicated OpenAI model used only by the Feishu main Agent."""
+
+    return get_openai_model(model_name or APIConfig.MAIN_AGENT_MODEL)

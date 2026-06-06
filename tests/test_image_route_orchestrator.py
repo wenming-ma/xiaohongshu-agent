@@ -468,6 +468,69 @@ async def test_image_post_orchestrator_preserves_workflow_invocation_skill_promp
 
 
 @pytest.mark.anyio
+async def test_image_post_orchestrator_preserves_mixed_reference_roles_in_style_context(
+    tmp_path: Path,
+) -> None:
+    FakeImageAgent.step_image_tasks = []
+    style_reference = tmp_path / "warm-style.jpg"
+    object_reference = tmp_path / "black-bag.jpg"
+    style_reference.write_bytes(b"style")
+    object_reference.write_bytes(b"bag")
+    orchestrator = ImagePostOrchestrator(
+        workspace_root=tmp_path,
+        research_agent_factory=FakeResearchAgent,
+        content_agent_factory=FakeContentAgent,
+        image_agent_factory=FakeImageAgent,
+    )
+    invocation = WorkflowInvocation(
+        objective="做雨天通勤平铺图，参考暖中性色风格并迁移黑色通勤包",
+        route="image_post",
+        topic="雨天通勤平铺",
+        artifacts=[
+            ArtifactRef(
+                artifact_type="image",
+                label="warm-style",
+                path=str(style_reference),
+                mime_type="image/jpeg",
+                metadata={"reference_role": "style_reference"},
+            ),
+            ArtifactRef(
+                artifact_type="image",
+                label="black-bag",
+                path=str(object_reference),
+                mime_type="image/jpeg",
+                metadata={"reference_role": "object_transfer"},
+            ),
+        ],
+    )
+
+    result = await orchestrator.run(
+        ConversationRequest(
+            topic="雨天通勤平铺",
+            audience="通勤女生",
+            message="暖中性色只参考风格，黑色通勤包必须迁移到新图里。",
+            image_count=1,
+            reference_images=[str(style_reference), str(object_reference)],
+        ),
+        run_id="run-image-route-mixed-reference-roles",
+        workflow_invocation=invocation,
+        send_to_feishu=False,
+    )
+
+    assert result.payload is not None
+    style_metadata = result.payload.metadata["style_context"]
+    assert style_metadata["reference_images"][0]["role"] == "style_reference"
+    assert style_metadata["reference_images"][1]["role"] == "object_transfer"
+    constraints = "\n".join(style_metadata["hard_constraints"])
+    assert "style_reference 只参考风格" in constraints
+    assert "object_transfer 必须迁移" in constraints
+    assert "reference_role=style_reference；只参考参考图" not in constraints
+    assert FakeImageAgent.step_image_tasks[0] is not None
+    task_refs = getattr(FakeImageAgent.step_image_tasks[0], "reference_images")
+    assert [ref.role.value for ref in task_refs] == ["style_reference", "object_transfer"]
+
+
+@pytest.mark.anyio
 async def test_image_post_orchestrator_runs_research_access_preflight_before_research(tmp_path: Path) -> None:
     PreflightResearchAgent.prepare_calls = 0
     PreflightResearchAgent.forward_calls = 0

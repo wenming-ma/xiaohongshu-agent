@@ -115,6 +115,7 @@ class TaskRunSpec(BaseModel):
     constraints: list[str] = Field(default_factory=list)
     style_constraints: list[str] = Field(default_factory=list)
     reference_images: list[ArtifactRef] = Field(default_factory=list)
+    reference_asset_batch_ids: list[str] = Field(default_factory=list)
     selected_skills: list[str] = Field(default_factory=list)
     selected_prompt_templates: list[str] = Field(default_factory=list)
     run_options: RunOptions = Field(default_factory=RunOptions)

@@ -27,6 +27,7 @@ if load_dotenv is not None:
 
 from src.agent_os.feishu_tools import AgentOSFeishuTools
 from src.agent_os.main_agent import MainAgentDependencies, create_main_agent
+from src.agent_os.reference_assets import ReferenceAssetStore
 from src.agent_os.resource_tools import AgentOSResourceTools
 from src.agent_os.runtime import MainAgentRuntime
 from src.agent_os.schemas import AgentOSEvent, AgentToolResult, TaskRunSpec
@@ -370,25 +371,54 @@ def configure_windows_stdio() -> None:
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 
-def build_default_tool_runtime(*, notifier: Any | None = None) -> AgentOSToolRuntime:
+def build_default_tool_runtime(
+    *,
+    notifier: Any | None = None,
+    reference_asset_store: ReferenceAssetStore | None = None,
+) -> AgentOSToolRuntime:
+    return build_default_tool_runtime_with_store(
+        notifier=notifier,
+        reference_asset_store=reference_asset_store or ReferenceAssetStore(Path("output") / "agent-os"),
+    )
+
+
+def build_default_tool_runtime_with_store(
+    *,
+    notifier: Any | None = None,
+    reference_asset_store: ReferenceAssetStore,
+) -> AgentOSToolRuntime:
     delivery_sender = DeliveryPackageSender(notifier=notifier) if notifier is not None else None
     registry = build_route_tool_registry(
         image_runner=ImagePostOrchestrator(delivery_sender=delivery_sender),
         article_runner=ArticlePostOrchestrator(delivery_sender=delivery_sender),
         video_runner=VideoPostOrchestrator(delivery_sender=delivery_sender),
+        reference_asset_store=reference_asset_store,
     )
-    _register_resource_tools(registry)
+    _register_resource_tools(registry, reference_asset_store=reference_asset_store)
     _register_feishu_tools(registry, notifier=notifier)
     task_manager = AgentOSTaskManager(tool_registry=registry, notifier=notifier)
     _register_task_tools(registry, task_manager=task_manager)
     return AgentOSToolRuntime(registry=registry, task_manager=task_manager)
 
 
-def build_default_tool_registry(*, notifier: Any | None = None) -> AgentToolRegistry:
-    return build_default_tool_runtime(notifier=notifier).registry
+def build_default_tool_registry(
+    *,
+    notifier: Any | None = None,
+    reference_asset_store: ReferenceAssetStore | None = None,
+) -> AgentToolRegistry:
+    if reference_asset_store is None:
+        return build_default_tool_runtime(notifier=notifier).registry
+    return build_default_tool_runtime_with_store(
+        notifier=notifier,
+        reference_asset_store=reference_asset_store,
+    ).registry
 
 
-def _register_resource_tools(registry: AgentToolRegistry) -> None:
+def _register_resource_tools(
+    registry: AgentToolRegistry,
+    *,
+    reference_asset_store: ReferenceAssetStore,
+) -> None:
     resources = AgentOSResourceTools(
         skills_root=PathConfig.AGENT_SKILLS_DIR,
         prompt_root=Path(".agents") / "prompt",
@@ -448,6 +478,52 @@ def _register_resource_tools(registry: AgentToolRegistry) -> None:
             resources.read_local_text_file(path, max_chars=max_chars),
         )
 
+    async def create_reference_asset_batch(
+        ctx: AgentToolContext,
+        *,
+        instruction: str = "",
+        images: list[Any] | None = None,
+    ) -> AgentToolResult:
+        if not images:
+            return _tool_error(ctx, "reference_asset_store", "缺少 images，无法创建参考图片批次")
+        try:
+            batch = reference_asset_store.create_batch(
+                instruction=instruction,
+                images=images,
+            )
+        except Exception as exc:
+            return _tool_error(ctx, "reference_asset_store", str(exc))
+        return _tool_success(
+            ctx,
+            "reference_asset_store",
+            "reference_asset_batch",
+            batch.model_dump(mode="json"),
+        )
+
+    async def get_reference_asset_batch(
+        ctx: AgentToolContext,
+        *,
+        batch_id: str,
+    ) -> AgentToolResult:
+        try:
+            batch = reference_asset_store.get_batch(batch_id)
+        except Exception as exc:
+            return _tool_error(ctx, "reference_asset_store", str(exc))
+        return _tool_success(
+            ctx,
+            "reference_asset_store",
+            "reference_asset_batch",
+            batch.model_dump(mode="json"),
+        )
+
+    async def list_reference_asset_batches(ctx: AgentToolContext) -> AgentToolResult:
+        return _tool_success(
+            ctx,
+            "reference_asset_store",
+            "reference_asset_batches",
+            [batch.model_dump(mode="json") for batch in reference_asset_store.list_batches()],
+        )
+
     registry.register(
         AgentTool(
             name="list_skills",
@@ -496,6 +572,33 @@ def _register_resource_tools(registry: AgentToolRegistry) -> None:
             name="read_local_text_file",
             description="Read a user-provided local text file path with a max_chars cap.",
             execute=read_local_text_file,
+            category="resource",
+        )
+    )
+    registry.register(
+        AgentTool(
+            name="create_reference_asset_batch",
+            description=(
+                "Store a batch of user-provided reference images plus the user's "
+                "plain-language instruction for how to use them. Returns batch_id."
+            ),
+            execute=create_reference_asset_batch,
+            category="resource",
+        )
+    )
+    registry.register(
+        AgentTool(
+            name="get_reference_asset_batch",
+            description="Read a stored reference image batch by batch_id.",
+            execute=get_reference_asset_batch,
+            category="resource",
+        )
+    )
+    registry.register(
+        AgentTool(
+            name="list_reference_asset_batches",
+            description="List stored reference image batches available to the main Agent.",
+            execute=list_reference_asset_batches,
             category="resource",
         )
     )
@@ -1063,6 +1166,16 @@ def _build_task_spec_from_direct_params(
     if reference_images:
         spec["reference_images"] = _coerce_reference_image_refs(reference_images)
 
+    reference_asset_batch_ids = _coerce_text_list(
+        params.get("reference_asset_batch_ids")
+        or params.get("resource_batch_ids")
+        or params.get("reference_batch_ids")
+        or params.get("resource_batch_id")
+        or params.get("batch_id")
+    )
+    if reference_asset_batch_ids:
+        spec["reference_asset_batch_ids"] = reference_asset_batch_ids
+
     run_options = params.get("run_options")
     if isinstance(run_options, dict):
         spec["run_options"] = dict(run_options)
@@ -1104,6 +1217,20 @@ def _lift_task_spec_aliases(spec_input: Any, outer_params: dict[str, Any]) -> An
         spec["user_requirements"] = user_requirements
     if "reference_images" in spec:
         spec["reference_images"] = _coerce_reference_image_refs(spec["reference_images"])
+    reference_asset_batch_ids = _coerce_text_list(
+        spec.get("reference_asset_batch_ids")
+        or spec.get("resource_batch_ids")
+        or spec.get("reference_batch_ids")
+        or spec.get("resource_batch_id")
+        or spec.get("batch_id")
+        or outer_params.get("reference_asset_batch_ids")
+        or outer_params.get("resource_batch_ids")
+        or outer_params.get("reference_batch_ids")
+        or outer_params.get("resource_batch_id")
+        or outer_params.get("batch_id")
+    )
+    if reference_asset_batch_ids:
+        spec["reference_asset_batch_ids"] = reference_asset_batch_ids
     return spec
 
 
@@ -1289,7 +1416,24 @@ def _extract_runtime_aliases_from_text(text: str) -> dict[str, Any]:
     reference_images = _reference_image_refs_from_text(text)
     if reference_images:
         aliases["reference_images"] = reference_images
+    reference_asset_batch_ids = _reference_asset_batch_ids_from_text(text)
+    if reference_asset_batch_ids:
+        aliases["reference_asset_batch_ids"] = reference_asset_batch_ids
     return aliases
+
+
+def _reference_asset_batch_ids_from_text(text: str) -> list[str]:
+    batch_ids: list[str] = []
+    patterns = [
+        r"(?:resource_batch_id|reference_asset_batch_id|reference_batch_id|batch_id)\s*[=:：]\s*([A-Za-z0-9_-]+)",
+        r"\b(refbatch_[A-Za-z0-9_-]+)\b",
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            value = match.group(1).strip()
+            if value and value not in batch_ids:
+                batch_ids.append(value)
+    return batch_ids
 
 
 def _reference_image_refs_from_text(text: str) -> list[dict[str, Any]]:
@@ -1469,8 +1613,12 @@ def create_service(
     acquire_session: Any = acquire_interactive_session,
 ) -> FeishuAgentOSService:
     resolved_notifier = notifier or get_feishu_notifier()
+    resolved_store = store or AgentOSStore(Path("output") / "agent-os")
     if tool_registry is None:
-        tool_runtime = build_default_tool_runtime(notifier=resolved_notifier)
+        tool_runtime = build_default_tool_runtime(
+            notifier=resolved_notifier,
+            reference_asset_store=ReferenceAssetStore(resolved_store.root),
+        )
         resolved_registry = tool_runtime.registry
         resolved_task_manager = task_manager or tool_runtime.task_manager
     else:
@@ -1480,7 +1628,7 @@ def create_service(
         notifier=resolved_notifier,
         runtime=runtime or MainAgentRuntime(),
         tool_registry=resolved_registry,
-        store=store or AgentOSStore(Path("output") / "agent-os"),
+        store=resolved_store,
         main_agent=main_agent or create_main_agent(),
         acquire_session=acquire_session,
         task_manager=resolved_task_manager,

@@ -151,6 +151,41 @@ def test_reference_analysis_honors_per_artifact_roles_before_global_constraints(
     ]
 
 
+def test_reference_analysis_uses_database_text_without_reading_image_file() -> None:
+    invocation = WorkflowInvocation(
+        objective="用素材批次做雨天通勤图文",
+        route="image_post",
+        topic="雨天通勤包",
+        artifacts=[
+            ArtifactRef(
+                artifact_type="image",
+                label="black_bag",
+                path="Z:/this/path/does/not/exist/black_bag.jpg",
+                metadata={
+                    "description": "黑色尼龙通勤包，保留肩带、拉链和容量感。",
+                    "instruction": "用于雨天通勤图文，必须把参考实物迁移到新场景。",
+                    "reference_role": "object_transfer",
+                },
+            )
+        ],
+    )
+
+    references = ImageTaskPlan.reference_plans_from_invocation(invocation)
+    plan = ImageTaskPlan.plan_from_groups(
+        invocation=invocation,
+        groups=GroupingResult(groups=[GroupingItem(title="雨天通勤包", indices=[0])]),
+        requested_image_count=1,
+        single_item_per_image=False,
+        max_auto_images=9,
+        reference_analysis=references,
+    )
+
+    assert references[0].role == ImageReferenceRole.OBJECT_TRANSFER
+    assert "黑色尼龙通勤包" in references[0].notes
+    assert "必须把参考实物迁移" in references[0].notes
+    assert plan.tasks[0].reference_images[0].path == "Z:/this/path/does/not/exist/black_bag.jpg"
+
+
 def test_reference_analysis_infers_object_transfer_from_natural_language_constraints() -> None:
     invocation = WorkflowInvocation(
         objective="把参考图里的黑色通勤包迁移到周末咖啡馆桌边场景",

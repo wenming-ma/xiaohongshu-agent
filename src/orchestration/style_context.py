@@ -21,6 +21,7 @@ class ReferenceImageRef(BaseModel):
     label: str
     path: str
     mime_type: str = ""
+    role: str = ""
 
 
 class StyleContext(BaseModel):
@@ -85,8 +86,12 @@ class StyleContext(BaseModel):
         if self.reference_images:
             lines.append("用户参考图片：")
             for ref in self.reference_images:
-                lines.append(f"- {ref.label}: {ref.path}")
-            if self.reference_intent in {"object_transfer", "subject_reference"}:
+                role_suffix = f" | role={ref.role}" if ref.role else ""
+                lines.append(f"- {ref.label}{role_suffix}: {ref.path}")
+            role_lines = _reference_prompt_lines(self.reference_images)
+            if role_lines:
+                lines.extend(role_lines)
+            elif self.reference_intent in {"object_transfer", "subject_reference"}:
                 lines.append(
                     "必须识别参考图片中的核心衣物、服装、首饰或物品，并让这些参考物品实际出现在生成图里；"
                     "不要只借用风格或把参考图当作截图插入。"
@@ -143,6 +148,26 @@ class StyleContext(BaseModel):
     def reference_image_inputs(self) -> list[tuple[str, Path]]:
         return [(ref.label, Path(ref.path)) for ref in self.reference_images]
 
+    def with_reference_images(self, reference_images: Sequence[ReferenceImageRef]) -> "StyleContext":
+        refs = list(reference_images)
+        reference_intent = _derive_reference_intent_from_roles(refs) or self.reference_intent
+        return self.model_copy(
+            update={
+                "reference_images": refs,
+                "reference_intent": reference_intent,
+                "hard_constraints": _replace_reference_constraints(
+                    self.hard_constraints,
+                    refs,
+                    reference_intent,
+                ),
+                "trace": {
+                    **self.trace,
+                    "reference_image_count": len(refs),
+                    "reference_intent": reference_intent,
+                },
+            }
+        )
+
 
 def _dedupe(values: Sequence[Any]) -> list[str]:
     seen: set[str] = set()
@@ -159,6 +184,32 @@ def _dedupe(values: Sequence[Any]) -> list[str]:
 def _build_reference_images(values: Sequence[Any]) -> list[ReferenceImageRef]:
     refs: list[ReferenceImageRef] = []
     for index, value in enumerate(values):
+        if isinstance(value, ReferenceImageRef):
+            ref = value
+            path = ref.path.strip()
+            if path:
+                refs.append(ref)
+            continue
+        if isinstance(value, dict):
+            path = str(value.get("path") or value.get("url") or "").strip()
+            if not path:
+                continue
+            refs.append(
+                ReferenceImageRef(
+                    label=str(value.get("label") or value.get("title") or f"reference_{index + 1}"),
+                    path=path,
+                    mime_type=str(value.get("mime_type") or mimetypes.guess_type(path)[0] or "image/jpeg"),
+                    role=_normalize_reference_role(
+                        str(
+                            value.get("role")
+                            or value.get("use_as")
+                            or value.get("reference_role")
+                            or ""
+                        )
+                    ),
+                )
+            )
+            continue
         path = str(value).strip()
         if not path:
             continue
@@ -179,6 +230,9 @@ def _derive_reference_intent(
 ) -> str:
     if not reference_images:
         return "none"
+    role_intent = _derive_reference_intent_from_roles(reference_images)
+    if role_intent:
+        return role_intent
     haystack = "\n".join(
         str(value or "")
         for value in (
@@ -426,43 +480,146 @@ def _derive_hard_constraints(
     if image_count:
         constraints.append(f"图片数量：{image_count} 张")
     if reference_images:
-        count_text = f"用户提供了 {len(reference_images)} 张参考图"
-        if reference_intent == "style_reference":
-            constraints.append(
-                f"{count_text}；reference_role=style_reference；只参考参考图的风格、色调、光线、构图、材质质感或氛围，"
-                "不要保留参考图中的具体物体。"
-            )
-        elif reference_intent == "object_transfer":
-            constraints.append(
-                f"{count_text}；reference_role=object_transfer；必须识别参考图中的目标物体、服装、首饰或商品，"
-                "并把这些参考物体迁移到新的生成场景中。"
-            )
-        elif reference_intent == "subject_reference":
-            constraints.append(
-                f"{count_text}；reference_role=subject_reference；生成图片必须识别并保留参考图中的核心衣物、服装、首饰或物品，"
-                "这些参考物品必须出现在生成图里，不要只借用风格。"
-            )
-        elif reference_intent == "composition_reference":
-            constraints.append(
-                f"{count_text}；reference_role=composition_reference；只参考参考图的构图、版式、镜头角度、画面比例或空间布局，"
-                "不要保留参考图中的具体物体。"
-            )
-        elif reference_intent == "scene_reference":
-            constraints.append(
-                f"{count_text}；reference_role=scene_reference；只参考参考图的场景类型、环境氛围、空间关系或地点线索，"
-                "不要保留参考图中的具体物体。"
-            )
-        elif reference_intent == "material_color_reference":
-            constraints.append(
-                f"{count_text}；reference_role=material_color_reference；只参考参考图的材质纹理、面料质感、色彩搭配或表面细节，"
-                "不要保留参考图中的具体物体。"
-            )
-        else:
-            constraints.append(
-                f"{count_text}；reference_role=style_reference；参考用途未明确时优先作为风格、氛围或构图参考，"
-                "不要默认迁移参考图中的具体物体。"
-            )
+        constraints.extend(_reference_constraints(reference_images, reference_intent))
     return _dedupe(constraints)
+
+
+def _replace_reference_constraints(
+    constraints: Sequence[str],
+    reference_images: Sequence[ReferenceImageRef],
+    reference_intent: str,
+) -> list[str]:
+    base = [item for item in constraints if not _is_auto_reference_constraint(item)]
+    if reference_images:
+        base.extend(_reference_constraints(reference_images, reference_intent))
+    return _dedupe(base)
+
+
+def _is_auto_reference_constraint(item: str) -> bool:
+    return "用户提供了" in item and "参考图" in item and (
+        "reference_role=" in item or "参考用途未明确" in item
+    )
+
+
+def _reference_constraints(
+    reference_images: Sequence[ReferenceImageRef],
+    reference_intent: str,
+) -> list[str]:
+    count_text = f"用户提供了 {len(reference_images)} 张参考图"
+    roles = _reference_roles(reference_images)
+    if len(roles) > 1:
+        return [f"{count_text}；{_mixed_reference_role_instruction(roles)}"]
+    role = roles[0] if roles else reference_intent
+    if role == "style_reference":
+        return [
+            f"{count_text}；reference_role=style_reference；只参考参考图的风格、色调、光线、构图、材质质感或氛围，"
+            "不要保留参考图中的具体物体。"
+        ]
+    if role == "object_transfer":
+        return [
+            f"{count_text}；reference_role=object_transfer；必须识别参考图中的目标物体、服装、首饰或商品，"
+            "并把这些参考物体迁移到新的生成场景中。"
+        ]
+    if role == "subject_reference":
+        return [
+            f"{count_text}；reference_role=subject_reference；生成图片必须识别并保留参考图中的核心衣物、服装、首饰或物品，"
+            "这些参考物品必须出现在生成图里，不要只借用风格。"
+        ]
+    if role == "composition_reference":
+        return [
+            f"{count_text}；reference_role=composition_reference；只参考参考图的构图、版式、镜头角度、画面比例或空间布局，"
+            "不要保留参考图中的具体物体。"
+        ]
+    if role == "scene_reference":
+        return [
+            f"{count_text}；reference_role=scene_reference；只参考参考图的场景类型、环境氛围、空间关系或地点线索，"
+            "不要保留参考图中的具体物体。"
+        ]
+    if role == "material_color_reference":
+        return [
+            f"{count_text}；reference_role=material_color_reference；只参考参考图的材质纹理、面料质感、色彩搭配或表面细节，"
+            "不要保留参考图中的具体物体。"
+        ]
+    return [
+        f"{count_text}；reference_role=style_reference；参考用途未明确时优先作为风格、氛围或构图参考，"
+        "不要默认迁移参考图中的具体物体。"
+    ]
+
+
+def _reference_prompt_lines(reference_images: Sequence[ReferenceImageRef]) -> list[str]:
+    roles = _reference_roles(reference_images)
+    if len(roles) <= 1:
+        return []
+    return [
+        "参考图用途是逐张指定的：",
+        _mixed_reference_role_instruction(roles),
+        "不要把 style_reference 图片中的具体物体迁移到生成图；必须把 object_transfer 图片中的目标物体放入新场景。",
+    ]
+
+
+def _mixed_reference_role_instruction(roles: Sequence[str]) -> str:
+    parts: list[str] = []
+    if "style_reference" in roles:
+        parts.append("style_reference 只参考风格、色调、光线、构图、材质质感或氛围，不保留该类参考图中的具体物体")
+    if "composition_reference" in roles:
+        parts.append("composition_reference 只参考构图、版式、镜头角度、画面比例或空间布局")
+    if "scene_reference" in roles:
+        parts.append("scene_reference 只参考场景类型、环境氛围、空间关系或地点线索")
+    if "material_color_reference" in roles:
+        parts.append("material_color_reference 只参考材质纹理、面料质感、色彩搭配或表面细节")
+    if "subject_reference" in roles:
+        parts.append("subject_reference 必须保留参考图中的核心衣物、首饰或物品")
+    if "object_transfer" in roles:
+        parts.append("object_transfer 必须迁移目标物体、服装、首饰或商品到新的生成场景")
+    return "；".join(parts) + "。"
+
+
+def _reference_roles(reference_images: Sequence[ReferenceImageRef]) -> list[str]:
+    return _dedupe(
+        [
+            normalized
+            for ref in reference_images
+            if (normalized := _normalize_reference_role(ref.role))
+        ]
+    )
+
+
+def _derive_reference_intent_from_roles(reference_images: Sequence[ReferenceImageRef]) -> str:
+    roles = set(_reference_roles(reference_images))
+    if not roles:
+        return ""
+    for role in (
+        "object_transfer",
+        "subject_reference",
+        "composition_reference",
+        "scene_reference",
+        "material_color_reference",
+        "style_reference",
+    ):
+        if role in roles:
+            return role
+    return ""
+
+
+def _normalize_reference_role(value: str) -> str:
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "style": "style_reference",
+        "style_reference": "style_reference",
+        "object": "object_transfer",
+        "object_transfer": "object_transfer",
+        "strict_object_transfer": "object_transfer",
+        "subject": "subject_reference",
+        "subject_reference": "subject_reference",
+        "composition": "composition_reference",
+        "composition_reference": "composition_reference",
+        "scene": "scene_reference",
+        "scene_reference": "scene_reference",
+        "material": "material_color_reference",
+        "material_color": "material_color_reference",
+        "material_color_reference": "material_color_reference",
+    }
+    return aliases.get(normalized, "")
 
 
 def _derive_negative_constraints(user_constraints: Sequence[str]) -> list[str]:

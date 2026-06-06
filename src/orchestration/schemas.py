@@ -307,11 +307,20 @@ class ImageTaskPlan(BaseModel):
                 path=artifact.path,
                 role=ImageTaskPlan._reference_role_for_artifact(invocation=invocation, artifact=artifact),
                 artifact=artifact,
-                notes=str(artifact.metadata.get("notes") or artifact.metadata.get("description") or ""),
+                notes=ImageTaskPlan._reference_notes_for_artifact(artifact),
             )
             for artifact in invocation.artifacts
             if artifact.artifact_type == "image"
         ]
+
+    @staticmethod
+    def _reference_notes_for_artifact(artifact: ArtifactRef) -> str:
+        values = [
+            artifact.metadata.get("description"),
+            artifact.metadata.get("instruction"),
+            artifact.metadata.get("notes"),
+        ]
+        return "\n".join(str(value).strip() for value in values if str(value or "").strip())
 
     @staticmethod
     def _reference_role_for_artifact(

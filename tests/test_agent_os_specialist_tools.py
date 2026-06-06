@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.agent_os.reference_assets import ReferenceAsset, ReferenceAssetStore
 from src.agent_os.schemas import ImageRunOptionsSpec, ResearchRunOptionsSpec, RunOptions, TaskRunSpec
 from src.agent_os.specialist_tools import (
     build_route_tool_registry,
@@ -84,6 +85,54 @@ def test_workflow_invocation_from_task_spec_carries_dynamic_context() -> None:
     assert invocation.selected_skills == ["reference-image-product-alignment"]
     assert invocation.selected_prompt_templates == ["image/reference/object-transfer"]
     assert invocation.artifacts[0].path == "C:/tmp/hat.png"
+
+
+@pytest.mark.anyio
+async def test_route_tool_expands_reference_asset_batch_ids_to_artifacts(tmp_path) -> None:
+    source = tmp_path / "uploads" / "bag.jpg"
+    source.parent.mkdir()
+    source.write_bytes(b"bag")
+    asset_store = ReferenceAssetStore(tmp_path / "agent-os")
+    batch = asset_store.create_batch(
+        instruction="用于雨天通勤图文，必须把参考实物迁移到新场景。",
+        images=[
+            ReferenceAsset(
+                path=str(source),
+                label="black_bag",
+                description="黑色尼龙通勤包，保留肩带、拉链和容量感。",
+                use_as="object_transfer",
+            )
+        ],
+    )
+    image_runner = FakeRouteRunner("image_post")
+    registry = build_route_tool_registry(
+        image_runner=image_runner,
+        reference_asset_store=asset_store,
+    )
+    spec = TaskRunSpec(
+        objective="用素材批次做雨天通勤图文",
+        route=ContentRoute.IMAGE_POST,
+        topic="雨天通勤包",
+        reference_asset_batch_ids=[batch.batch_id],
+    )
+
+    result = await registry.execute(
+        "execute_image_post",
+        AgentToolContext(run_id="run-ref-batch", chat_id="chat-1"),
+        spec=spec.model_dump(mode="json"),
+    )
+
+    request = image_runner.calls[0]["request"]
+    invocation = image_runner.calls[0]["kwargs"]["workflow_invocation"]
+    artifact = invocation.artifacts[0]
+    assert result.envelope.status == "success"
+    assert request.reference_images == [artifact.path]
+    assert artifact.label == "black_bag"
+    assert artifact.metadata == {
+        "description": "黑色尼龙通勤包，保留肩带、拉链和容量感。",
+        "instruction": "用于雨天通勤图文，必须把参考实物迁移到新场景。",
+        "reference_role": "object_transfer",
+    }
 
 
 @pytest.mark.anyio

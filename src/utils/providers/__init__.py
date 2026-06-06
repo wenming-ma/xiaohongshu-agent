@@ -12,4 +12,4 @@ from .sub2api import (
     generate_sub2api_image,
     get_sub2api_model,
 )
-from .selector import get_text_model
+from .selector import get_main_agent_model, get_text_model

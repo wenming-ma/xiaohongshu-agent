@@ -67,6 +67,42 @@ def test_create_main_agent_returns_agent_with_expected_tools() -> None:
     assert "execute_agent_tool" in tool_names
 
 
+def test_create_main_agent_uses_dedicated_openai_model(monkeypatch) -> None:
+    import src.agent_os.main_agent as module
+
+    sentinel_model = object()
+    captured: dict[str, object] = {}
+
+    class FakeAgent:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+            self.toolsets = []
+
+        def tool(self, func):
+            return func
+
+    monkeypatch.setattr(module, "get_main_agent_model", lambda: sentinel_model)
+    monkeypatch.setattr(module, "Agent", FakeAgent)
+
+    module.create_main_agent()
+
+    assert captured["model"] is sentinel_model
+
+
+def test_main_agent_model_factory_is_openai_while_text_default_can_stay_minimax(monkeypatch) -> None:
+    import src.utils.providers.selector as selector
+
+    calls: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(selector.APIConfig, "MODEL_PROVIDER", "minimax")
+    monkeypatch.setattr(selector.APIConfig, "MAIN_AGENT_MODEL", "gpt-5.5")
+    monkeypatch.setattr(selector, "get_minimax_model", lambda model_name=None: calls.append(("minimax", model_name)) or "minimax-model")
+    monkeypatch.setattr(selector, "get_openai_model", lambda model_name=None: calls.append(("openai", model_name)) or "openai-model")
+
+    assert selector.get_text_model() == "minimax-model"
+    assert selector.get_main_agent_model() == "openai-model"
+    assert calls == [("minimax", None), ("openai", "gpt-5.5")]
+
+
 async def _fake_specialist(ctx: AgentToolContext, **params) -> AgentToolResult:
     return AgentToolResult(
         envelope=ResultEnvelope[dict].success(

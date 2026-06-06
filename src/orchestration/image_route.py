@@ -145,18 +145,36 @@ def _style_context_with_invocation(
         existing_prompt_sources.add(source)
 
     reference_images = list(style_context.reference_images)
-    existing_reference_paths = {ref.path for ref in reference_images}
+    existing_reference_paths = {
+        _normalize_artifact_path(ref.path): index
+        for index, ref in enumerate(reference_images)
+    }
     for artifact in invocation.artifacts:
-        if artifact.artifact_type != "image" or artifact.path in existing_reference_paths:
+        if artifact.artifact_type != "image":
+            continue
+        role = str(
+            artifact.metadata.get("reference_role")
+            or artifact.metadata.get("image_reference_role")
+            or ""
+        )
+        path_key = _normalize_artifact_path(artifact.path)
+        if path_key in existing_reference_paths:
+            index = existing_reference_paths[path_key]
+            existing = reference_images[index]
+            if role and not existing.role:
+                reference_images[index] = existing.model_copy(update={"role": role})
             continue
         reference_images.append(
             ReferenceImageRef(
                 label=artifact.label,
                 path=artifact.path,
                 mime_type=artifact.mime_type or _guess_mime_type(artifact.path),
+                role=role,
             )
         )
-        existing_reference_paths.add(artifact.path)
+        existing_reference_paths[path_key] = len(reference_images) - 1
+
+    style_context = style_context.with_reference_images(reference_images)
 
     return style_context.model_copy(
         update={
@@ -164,7 +182,6 @@ def _style_context_with_invocation(
                 [*style_context.matched_skills, *invocation.selected_skills]
             ),
             "prompt_refs": prompt_refs,
-            "reference_images": reference_images,
             "hard_constraints": _dedupe_text(
                 [*style_context.hard_constraints, *invocation.constraints]
             ),

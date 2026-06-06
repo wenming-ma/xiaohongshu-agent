@@ -27,7 +27,7 @@ from ..schemas import (
     ImageTypeSpec,
     ImageGenContext,
 )
-from ....utils.providers import VertexAIImageClient, get_openai_model, get_text_model
+from ....utils.providers import VertexAIImageClient, get_text_model
 from ....utils.logger import get_logger
 from ....config.settings import ImageConfig, RetryConfig
 from ....orchestration.run_options import ImageRunOptions
@@ -114,18 +114,17 @@ class ImageAgent(BaseAgent):
                 )
             return base_prompt
 
-        # 语义分组 Agent（使用 OpenAI 兼容模型）
+        # 语义分组和审核也属于专项 Agent 内部能力，统一走默认文本模型。
         self.grouping_agent = Agent(
-            model=get_openai_model(),
+            model=model,
             output_type=ImageGroupingPlan,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,
             system_prompt=(image_grouping_system_prompt(),),
         )
 
-        # 分组审核 Agent（使用 OpenAI 兼容模型）
         self.grouping_reviewer = Agent(
-            model=get_openai_model(),
+            model=model,
             output_type=ImageGroupingReviewResult,
             instrument=True,
             retries=RetryConfig.AGENT_RETRIES,

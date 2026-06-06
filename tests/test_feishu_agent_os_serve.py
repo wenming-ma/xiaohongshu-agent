@@ -952,6 +952,9 @@ def test_default_agent_os_registry_exposes_routes_resources_and_feishu_tools() -
     assert "search_prompt_templates" in tool_names
     assert "list_local_files" in tool_names
     assert "read_local_text_file" in tool_names
+    assert "create_reference_asset_batch" in tool_names
+    assert "get_reference_asset_batch" in tool_names
+    assert "list_reference_asset_batches" in tool_names
     assert "feishu_ask_single_choice" in tool_names
     assert "feishu_ask_multi_select" in tool_names
     assert "feishu_send_progress" in tool_names
@@ -974,6 +977,49 @@ def test_default_agent_os_registry_exposes_routes_resources_and_feishu_tools() -
     }
     assert feishu_tool_names
     assert all(name.startswith("feishu_") for name in feishu_tool_names)
+
+
+@pytest.mark.anyio
+async def test_reference_asset_tools_create_get_and_list_batches(tmp_path) -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    source = tmp_path / "uploads" / "style.jpg"
+    source.parent.mkdir()
+    source.write_bytes(b"style")
+    asset_store = module.ReferenceAssetStore(tmp_path / "agent-os")
+    registry = module.build_default_tool_registry(
+        notifier=FakeNotifier(),
+        reference_asset_store=asset_store,
+    )
+
+    created = await registry.execute(
+        "create_reference_asset_batch",
+        AgentToolContext(run_id="run-1"),
+        instruction="这张图只参考暖色光线和木桌质感，不保留具体物体。",
+        images=[
+            {
+                "path": str(source),
+                "label": "warm_style",
+                "description": "暖色窗边光、木桌、柔和阴影。",
+                "use_as": "style_reference",
+            }
+        ],
+    )
+    batch_id = created.envelope.payload["batch_id"]
+
+    loaded = await registry.execute(
+        "get_reference_asset_batch",
+        AgentToolContext(run_id="run-1"),
+        batch_id=batch_id,
+    )
+    listed = await registry.execute(
+        "list_reference_asset_batches",
+        AgentToolContext(run_id="run-1"),
+    )
+
+    assert created.envelope.status == "success"
+    assert loaded.envelope.payload["instruction"].startswith("这张图只参考")
+    assert loaded.envelope.payload["images"][0]["use_as"] == "style_reference"
+    assert listed.envelope.payload[0]["batch_id"] == batch_id
 
 
 @pytest.mark.anyio

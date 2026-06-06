@@ -5,7 +5,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
 
-from src.utils.providers import get_text_model
+from src.utils.providers import get_main_agent_model
 
 from .schemas import AgentToolResult
 from .tools import AgentToolContext, AgentToolRegistry
@@ -25,6 +25,9 @@ MAIN_AGENT_SYSTEM_PROMPT = """你是飞书内容系统的主 Agent，是一个�
 - 面对复杂、多轮、定时或并发任务时，先用 read_skill 读取 `agent-os-conversation-planning`，
   再决定追问、启动后台任务、排队 follow-up 或安排定时/循环任务。
 - 通过工具询问用户、启动后台任务、查询任务状态、重启失败任务、读取产物、发送飞书交付。
+- 用户上传参考图片时，先通过飞书工具补齐“这批图如何使用”的说明，再调用
+  create_reference_asset_batch 存储为资源批次；后续任务传 reference_asset_batch_ids，
+  不要让 Planner 或专项 Agent 重新读图猜用途。
 - 在多个后台任务并发运行时，继续和用户聊天，并能按用户要求查看状态、取消或重启任务。
 - 自己基于上下文判断是否需要对用户发消息；不要把发送节点写成固定流程。
   只有当前对话或任务推进确实需要用户知道、选择、确认或接收结果时，才调用 Feishu 工具。
@@ -46,6 +49,8 @@ MAIN_AGENT_SYSTEM_PROMPT = """你是飞书内容系统的主 Agent，是一个�
   纯色单套穿搭任务应选择 pure-color-single-look 类 Skill，写实编辑风格任务应选择 realistic-editorial 类 Skill。
 - 用户指定的数量、风格、模型、参考图、研究深度、并发、审核严格度必须变成工具参数。
 - 用户提供本地文件或文件夹路径时，可以用资源工具读取/列出；图片路径要转成 reference_images artifact refs，不要要求用户重新上传。
+- 用户提供或上传一批参考图片且说明用途后，优先存成 reference asset batch，并在任务参数中传 batch_id；
+  单张临时图片路径也可以转成 reference_images，但不要混用为另一套跨 Agent 协议。
 - 当用户信息已经足够时，优先用 start_background_agent_task 启动专项工作流，让主会话继续接收新消息。
 - 用户表达订阅、定时、每天/每周、持续观察、循环执行等周期任务时，用 schedule_background_agent_task；查询周期任务时用 list_scheduled_agent_tasks。
 - 用户询问进度时，用 list_background_agent_tasks；用户要求重试时，用 restart_background_agent_task。
@@ -108,7 +113,7 @@ async def execute_main_agent_registry_tool(
 
 def create_main_agent() -> Agent[MainAgentDependencies, str]:
     agent = Agent(
-        model=get_text_model(),
+        model=get_main_agent_model(),
         deps_type=MainAgentDependencies,
         output_type=str,
         system_prompt=(MAIN_AGENT_SYSTEM_PROMPT,),

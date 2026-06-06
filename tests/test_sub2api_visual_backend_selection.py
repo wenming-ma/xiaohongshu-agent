@@ -250,6 +250,38 @@ def test_visual_generation_agents_use_sub2api_image_client(
     assert not hasattr(agent, "web_image_client")
 
 
+def test_image_post_grouping_agents_use_default_text_model(monkeypatch) -> None:
+    module = _load_module("src.agents.image_post.image.agent")
+    agent_models: list[object] = []
+
+    class _FakeVertexAIImageClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    class _FakeAgent:
+        def __init__(self, *args, **kwargs):
+            agent_models.append(kwargs.get("model"))
+            self.kwargs = kwargs
+
+        def system_prompt(self, fn):
+            return fn
+
+    monkeypatch.setattr(module, "VertexAIImageClient", _FakeVertexAIImageClient, raising=False)
+    monkeypatch.setattr(module, "Agent", _FakeAgent)
+    monkeypatch.setattr(module, "get_text_model", lambda *args, **kwargs: "text-model", raising=False)
+    monkeypatch.setattr(
+        module,
+        "get_openai_model",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("specialist agents must not use OpenAI")),
+        raising=False,
+    )
+    monkeypatch.setattr(module, "ImageQualityValidator", lambda *args, **kwargs: object(), raising=False)
+
+    getattr(module, "ImageAgent")()
+
+    assert agent_models == ["text-model", "text-model", "text-model"]
+
+
 @pytest.mark.parametrize("module_name", _VALIDATOR_MODULES)
 def test_image_quality_validators_use_sub2api_vision_client(
     monkeypatch,

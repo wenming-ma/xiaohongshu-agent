@@ -60,3 +60,14 @@ def test_task_run_spec_defaults_to_feishu_delivery() -> None:
     assert isinstance(spec.delivery, DeliverySpec)
     assert spec.delivery.target == "feishu"
     assert spec.delivery.include_artifacts is True
+
+
+def test_task_run_spec_accepts_reference_asset_batch_ids_without_extra_schema_fields() -> None:
+    spec = TaskRunSpec(
+        objective="用已存素材做图文",
+        reference_asset_batch_ids=["refbatch_123"],
+    )
+
+    dumped = spec.model_dump(mode="json")
+
+    assert dumped["reference_asset_batch_ids"] == ["refbatch_123"]
