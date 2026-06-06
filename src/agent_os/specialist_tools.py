@@ -21,10 +21,15 @@ from .tools import AgentTool, AgentToolContext, AgentToolRegistry
 
 def conversation_request_from_task_spec(spec: TaskRunSpec) -> ConversationRequest:
     reference_images = [ref.path for ref in spec.reference_images]
+    message_parts = [
+        part
+        for part in [spec.objective, *spec.user_requirements]
+        if str(part or "").strip()
+    ]
     return ConversationRequest(
         topic=spec.topic or spec.objective,
         audience=spec.audience or "泛人群",
-        message=spec.objective,
+        message="\n\n".join(dict.fromkeys(message_parts)),
         route_hint=spec.route,
         style_constraints=list(spec.style_constraints),
         image_count=spec.run_options.image.count,

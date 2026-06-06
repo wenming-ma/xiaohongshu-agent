@@ -111,6 +111,7 @@ class TaskRunSpec(BaseModel):
     route: ContentRoute | None = None
     topic: str | None = None
     audience: str | None = None
+    user_requirements: list[str] = Field(default_factory=list)
     constraints: list[str] = Field(default_factory=list)
     style_constraints: list[str] = Field(default_factory=list)
     reference_images: list[ArtifactRef] = Field(default_factory=list)

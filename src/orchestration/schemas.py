@@ -56,6 +56,7 @@ class WorkflowInvocation(BaseModel):
             audience=getattr(spec, "audience", None),
             selected_skills=list(getattr(spec, "selected_skills", []) or []),
             selected_prompt_templates=list(getattr(spec, "selected_prompt_templates", []) or []),
+            user_requirements=list(getattr(spec, "user_requirements", []) or []),
             constraints=constraints,
             artifacts=list(getattr(spec, "reference_images", []) or []),
             run_options=getattr(spec, "run_options", None),

@@ -41,6 +41,7 @@ def test_conversation_request_from_task_spec_preserves_runtime_requirements() ->
         route=ContentRoute.IMAGE_POST,
         topic="出国留学",
         audience="准留学生",
+        user_requirements=["用户原始消息：新图主体必须包含米色笔记本和银色钥匙，不要数据线"],
         style_constraints=["末日废土风格"],
         run_options=RunOptions(image=ImageRunOptionsSpec(count=10, concurrency=2)),
     )
@@ -52,6 +53,8 @@ def test_conversation_request_from_task_spec_preserves_runtime_requirements() ->
     assert request.audience == "准留学生"
     assert request.style_constraints == ["末日废土风格"]
     assert request.image_count == 10
+    assert "做留学图文" in request.message
+    assert "新图主体必须包含米色笔记本和银色钥匙，不要数据线" in request.message
 
 
 def test_workflow_invocation_from_task_spec_carries_dynamic_context() -> None:
@@ -60,6 +63,7 @@ def test_workflow_invocation_from_task_spec_carries_dynamic_context() -> None:
         route=ContentRoute.IMAGE_POST,
         topic="通勤穿搭",
         audience="上班族",
+        user_requirements=["用户原始消息：新图主体必须包含米色笔记本和银色钥匙，不要数据线"],
         constraints=["strict_object_transfer"],
         style_constraints=["真实摄影"],
         selected_skills=["reference-image-product-alignment"],
@@ -73,6 +77,9 @@ def test_workflow_invocation_from_task_spec_carries_dynamic_context() -> None:
 
     assert invocation.route == "image_post"
     assert invocation.objective == "把参考图里的帽子和衣服迁移到通勤场景"
+    assert invocation.user_requirements == [
+        "用户原始消息：新图主体必须包含米色笔记本和银色钥匙，不要数据线"
+    ]
     assert invocation.constraints == ["strict_object_transfer", "真实摄影"]
     assert invocation.selected_skills == ["reference-image-product-alignment"]
     assert invocation.selected_prompt_templates == ["image/reference/object-transfer"]

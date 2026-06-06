@@ -654,6 +654,7 @@ def _register_task_tools(
         if current_user_text:
             for key, value in _extract_runtime_aliases_from_text(current_user_text).items():
                 resolved_params.setdefault(key, value)
+            _append_current_user_text_requirement(resolved_params, current_user_text)
         try:
             task_params = _normalize_background_task_params(
                 resolved_tool_name,
@@ -692,6 +693,7 @@ def _register_task_tools(
         if current_user_text:
             for key, value in _extract_runtime_aliases_from_text(current_user_text).items():
                 resolved_params.setdefault(key, value)
+            _append_current_user_text_requirement(resolved_params, current_user_text)
         try:
             task_params = _normalize_background_task_params(
                 resolved_tool_name,
@@ -940,6 +942,33 @@ def _normalize_background_task_params(
     return normalized
 
 
+def _append_current_user_text_requirement(
+    params: dict[str, Any],
+    current_user_text: str,
+) -> None:
+    user_text = _coerce_text(current_user_text)
+    if not user_text:
+        return
+    requirement = f"用户原始消息：{user_text}"
+
+    for spec_key in ("spec", "task_spec"):
+        spec_input = params.get(spec_key)
+        if not isinstance(spec_input, dict):
+            continue
+        spec = dict(spec_input)
+        requirements = _coerce_text_list(spec.get("user_requirements"))
+        if requirement not in requirements:
+            requirements.append(requirement)
+        spec["user_requirements"] = requirements
+        params[spec_key] = spec
+        return
+
+    requirements = _coerce_text_list(params.get("user_requirements"))
+    if requirement not in requirements:
+        requirements.append(requirement)
+    params["user_requirements"] = requirements
+
+
 def _build_task_spec_from_direct_params(
     tool_name: str,
     params: dict[str, Any],
@@ -971,6 +1000,14 @@ def _build_task_spec_from_direct_params(
     constraints = _coerce_text_list(params.get("constraints") or params.get("requirements"))
     if constraints:
         spec["constraints"] = constraints
+
+    user_requirements = _coerce_text_list(
+        params.get("user_requirements")
+        or params.get("requirements_text")
+        or params.get("full_user_request")
+    )
+    if user_requirements:
+        spec["user_requirements"] = user_requirements
 
     style_constraints = _coerce_text_list(
         params.get("style_constraints")
@@ -1030,6 +1067,12 @@ def _lift_task_spec_aliases(spec_input: Any, outer_params: dict[str, Any]) -> An
     spec = dict(spec_input)
     for source in (spec_input, outer_params):
         _lift_runtime_aliases_into_spec(spec, source)
+    user_requirements = _coerce_text_list(spec.get("user_requirements"))
+    for requirement in _coerce_text_list(outer_params.get("user_requirements")):
+        if requirement not in user_requirements:
+            user_requirements.append(requirement)
+    if user_requirements:
+        spec["user_requirements"] = user_requirements
     if "reference_images" in spec:
         spec["reference_images"] = _coerce_reference_image_refs(spec["reference_images"])
     return spec

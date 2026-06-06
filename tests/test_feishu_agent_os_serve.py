@@ -656,6 +656,46 @@ async def test_background_task_tool_uses_current_user_text_for_omitted_runtime_a
 
 
 @pytest.mark.anyio
+async def test_background_task_tool_preserves_current_user_text_as_requirement() -> None:
+    module = importlib.import_module("src.apps.feishu_agent_os.serve")
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="execute_image_post",
+            description="Fake image specialist",
+            execute=fake_specialist_tool,
+            category="specialist",
+        )
+    )
+    task_manager = module.AgentOSTaskManager(tool_registry=registry)
+    module._register_task_tools(registry, task_manager=task_manager)
+    current_user_text = (
+        "请做一张晨间书桌小物图。新图主体必须包含米色笔记本、银色钥匙、"
+        "浅灰绿色卡包、白色无logo无线耳机盒、浅杏色无logo护手霜；不要数据线。"
+    )
+
+    result = await registry.execute(
+        "start_background_agent_task",
+        AgentToolContext(
+            run_id="run-1",
+            metadata={"current_user_text": current_user_text},
+        ),
+        task_type="image_post",
+        spec={
+            "objective": "制作一篇晨间书桌轻便小物 image_post",
+            "topic": "晨间书桌上的轻便出门小物",
+        },
+    )
+    await task_manager.wait_for_all()
+
+    task_summary = result.envelope.payload
+    spec = task_manager.get_task(task_summary["task_id"]).params["spec"]
+    assert result.envelope.status == "success"
+    assert spec["objective"] == "制作一篇晨间书桌轻便小物 image_post"
+    assert spec["user_requirements"] == [f"用户原始消息：{current_user_text}"]
+
+
+@pytest.mark.anyio
 async def test_background_task_tool_uses_current_user_text_for_reference_image_path(tmp_path) -> None:
     module = importlib.import_module("src.apps.feishu_agent_os.serve")
     reference = tmp_path / "reference-look.png"
