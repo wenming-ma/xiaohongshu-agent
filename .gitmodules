@@ -1,0 +1,41 @@
+[submodule "submodules/pydantic-ai"]
+	path = submodules/pydantic-ai
+	url = https://github.com/pydantic/pydantic-ai.git
+[submodule "submodules/playwright-mcp"]
+	path = submodules/playwright-mcp
+	url = https://github.com/microsoft/playwright-mcp.git
+[submodule "submodules/autogen"]
+	path = submodules/autogen
+	url = https://github.com/microsoft/autogen
+[submodule "submodules/crewai"]
+	path = submodules/crewai
+	url = https://github.com/crewAIInc/crewAI
+[submodule "submodules/langgraph"]
+	path = submodules/langgraph
+	url = https://github.com/langchain-ai/langgraph
+[submodule "submodules/playwright"]
+	path = submodules/playwright
+	url = https://github.com/microsoft/playwright.git
+[submodule "submodules/reference/gemini-watermark-remover"]
+	path = submodules/reference/gemini-watermark-remover
+	url = https://github.com/GargantuaX/gemini-watermark-remover.git
+[submodule "submodules/deepagents"]
+	path = submodules/deepagents
+	url = https://github.com/langchain-ai/deepagents.git
+[submodule "submodules/lightpanda-browser"]
+	path = submodules/lightpanda-browser
+	url = https://github.com/lightpanda-io/browser.git
+	shallow = true
+[submodule "submodules/fish-speech"]
+	path = submodules/fish-speech
+	url = https://github.com/fishaudio/fish-speech.git
+[submodule "submodules/reference/anthropic-sdk-python"]
+	path = submodules/reference/anthropic-sdk-python
+	url = https://github.com/anthropics/anthropic-sdk-python.git
+[submodule "submodules/reference/claude-agent-sdk-python"]
+	path = submodules/reference/claude-agent-sdk-python
+	url = https://github.com/anthropics/claude-agent-sdk-python.git
+[submodule "submodules/pi"]
+	path = submodules/pi
+	url = https://github.com/earendil-works/pi
+	shallow = true

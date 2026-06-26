@@ -15,6 +15,18 @@ browser-sessions/
 posts/
 nul
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.token
+*credentials*.json
+*service-account*.json
+*.kubeconfig
 
 # Generated outputs (e.g., Playwright downloads)
 output/
@@ -32,3 +44,6 @@ workshop/image_post/image_post_failed_*.json
 .serena/
 .playwright-mcp/
 *.png
+
+# Private/local reference checkouts
+submodules/s2.cpp_check/
