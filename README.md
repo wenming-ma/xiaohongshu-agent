@@ -10,6 +10,8 @@
   <a href="#architecture">Architecture</a>
   ·
   <a href="#security-and-secrets">Security</a>
+  ·
+  <a href="#license">License</a>
 </p>
 
 Xiaohongshu Agent OS is a Feishu-first content workflow system for planning, researching, generating, and reviewing Xiaohongshu/Rednote-style content. It runs as an always-on Feishu agent: users describe goals in chat, the main agent clarifies missing context, launches specialist workflows in the background, and returns a review-ready delivery package back to Feishu.
@@ -26,9 +28,7 @@ It is not an auto-publisher. The system is designed to create and package conten
 - **Unified delivery contract**: returns `ResultEnvelope[DeliveryPackage]` artifacts for review and iteration in Feishu.
 - **Prompt and skill libraries**: stores reusable skills under `.agents/skills/` and versioned prompt templates under `.agents/prompt/`.
 
-## Repository Status
-
-This repository is public and source-available. It currently does not declare an open-source license. Do not assume reuse rights beyond what GitHub public visibility permits.
+## Requirements
 
 The project depends on external services and local credentials that are not included in the repository:
 
@@ -162,4 +162,4 @@ Important coverage areas include Feishu Agent OS behavior, `ResultEnvelope` cont
 
 ## License
 
-No license file is currently included. This means the repository is public, but reuse, redistribution, and derivative-work rights have not been granted through a standard open-source license.
+This project is open-sourced under the [MIT License](LICENSE).
