@@ -44,6 +44,8 @@ workshop/image_post/image_post_failed_*.json
 .serena/
 .playwright-mcp/
 *.png
+!docs/assets/
+!docs/assets/*.png
 
 # Private/local reference checkouts
 submodules/s2.cpp_check/

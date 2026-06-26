@@ -1,73 +1,99 @@
-# 小红书风格内容 Agent OS
+# Xiaohongshu Agent OS
 
-这是一个 Feishu-first 的内容创作系统。用户通过飞书和常驻主 Agent 对话，主 Agent 负责理解目标、追问缺失信息、选择 Skill 和 Prompt 模板，并把任务启动为后台专项工作流。最终交付统一回到飞书，不直接向小红书发布。
+![Xiaohongshu Agent OS cover](docs/assets/readme-cover.png)
 
-## 核心能力
+<p>
+  <a href="README.zh-CN.md">中文文档</a>
+  ·
+  <a href="#quick-start">Quick start</a>
+  ·
+  <a href="#architecture">Architecture</a>
+  ·
+  <a href="#security-and-secrets">Security</a>
+</p>
 
-- **常驻主 Agent**：持续接收飞书文本、图片、按钮和快捷操作，负责对话、任务规划和后台任务管理。
-- **原子专项 Agent**：Research、Grouping、Content、Image、Video、Article、Login、ReviewDelivery 等能力保持专项职责，通过模块节点或子图组合。
-- **统一数据协议**：跨 Agent 信息使用 `WorkflowInvocation`、`WorkflowState` 和 `ResultEnvelope`；文件与图片只作为 envelope artifacts 暴露。
-- **Skill 与 Prompt 模板**：`.agents/skills/` 保存经验、流程和检查清单；`.agents/prompt/` 保存版本化提示词模板。选择过程由 Agent 根据语义完成，不靠关键词表。
-- **飞书交付**：所有正式内容都生成 `DeliveryPackage` 并发送到飞书，供用户审核、下载或继续反馈。
+Xiaohongshu Agent OS is a Feishu-first content workflow system for planning, researching, generating, and reviewing Xiaohongshu/Rednote-style content. It runs as an always-on Feishu agent: users describe goals in chat, the main agent clarifies missing context, launches specialist workflows in the background, and returns a review-ready delivery package back to Feishu.
 
-## 项目结构
+It is not an auto-publisher. The system is designed to create and package content for human review, not to submit posts directly to Xiaohongshu/Rednote.
 
-```text
-xiaohongshu-agent/
-├── .agents/
-│   ├── skills/                 # Skill Protocol 文档
-│   └── prompt/                 # 版本化 Prompt 模板库
-├── src/
-│   ├── apps/feishu_agent_os/   # 正式 Feishu 常驻入口
-│   ├── agent_os/               # 主 Agent、工具注册、任务管理、会话运行时
-│   ├── agents/                 # 原子专项 Agent
-│   ├── orchestration/          # WorkflowInvocation、模块图、路线编排
-│   ├── config/                 # 默认配置与密钥读取
-│   └── utils/                  # Provider、飞书通知、浏览器和文件工具
-├── scripts/                    # 登录预热、服务辅助和开发脚本
-├── tests/                      # 单元、契约和集成测试
-├── output/                     # 运行日志、会话缓存、临时产物
-└── posts/                      # 工作流生成的本地产物
-```
+## What It Does
 
-## 运行方式
+- **Feishu-first operation**: accepts text, images, buttons, and follow-up choices from Feishu conversations.
+- **Main agent orchestration**: turns open-ended requests into structured `WorkflowInvocation` objects and background tasks.
+- **Specialist agents**: composes focused research, grouping, content, image, video, article, login, and review-delivery agents.
+- **Image/article/video routes**: supports image posts, long-form article packages, and video-oriented content workflows.
+- **Reference-aware image planning**: preserves user-provided visual intent, product references, style references, and image-count constraints through the workflow.
+- **Unified delivery contract**: returns `ResultEnvelope[DeliveryPackage]` artifacts for review and iteration in Feishu.
+- **Prompt and skill libraries**: stores reusable skills under `.agents/skills/` and versioned prompt templates under `.agents/prompt/`.
 
-安装依赖：
+## Repository Status
+
+This repository is public and source-available. It currently does not declare an open-source license. Do not assume reuse rights beyond what GitHub public visibility permits.
+
+The project depends on external services and local credentials that are not included in the repository:
+
+- Feishu app credentials and target chat IDs
+- LLM provider keys for Anthropic, MiniMax, Gemini/Vertex AI, OpenRouter, or compatible providers
+- Optional search, Logfire, Telegram, and Android/Rednote login configuration
+
+## Quick Start
+
+Install dependencies with `uv`:
 
 ```bash
 uv sync
 ```
 
-配置 `.env`，至少提供飞书和模型相关密钥。图片生成默认走 Vertex/Gemini 配置。飞书目标会话支持按环境分流：开发/测试使用 `FEISHU_CHAT_DEV_ID`，部署/正式使用 `FEISHU_CHAT_DEPLOY_ID`，并通过 `FEISHU_RUNTIME_ENV=dev|deploy` 选择；旧的 `FEISHU_CHAT_ID` 仍作为显式覆盖。
-
-预热研究访问或外部站点登录态：
+Create your local environment file:
 
 ```bash
-uv run python scripts/open_browser_for_login.py
+cp .env.example .env
 ```
 
-启动正式常驻服务：
+On Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Edit `.env` and provide the credentials required by the workflow you want to run. At minimum, the always-on Feishu service needs:
+
+```dotenv
+FEISHU_APP_ID=your-feishu-app-id
+FEISHU_APP_SECRET=your-feishu-app-secret
+FEISHU_RUNTIME_ENV=dev
+FEISHU_CHAT_DEV_ID=your-dev-feishu-chat-id
+FEISHU_CHAT_DEPLOY_ID=your-deploy-feishu-chat-id
+```
+
+Model provider keys are configured through `.env.example`. Image generation usually needs Gemini or Vertex AI configuration; text workflows commonly use Anthropic, MiniMax, or an OpenAI-compatible provider depending on `MODEL_PROVIDER`.
+
+Start the Feishu Agent OS service:
 
 ```bash
 uv run python -m src.apps.feishu_agent_os.serve
 ```
 
-主 Agent 会通过飞书接收用户输入。用户可以随意描述主题、风格、图片数量、参考图片、元素迁移、订阅主题或自主探索需求；缺少关键信息时，主 Agent 使用飞书工具发送点选或多选交互。
+Optional: warm up browser login state for research access:
 
-## 工作流模型
-
-```text
-飞书事件
-  -> Feishu 翻译层
-  -> 常驻主 Agent 会话
-  -> WorkflowInvocation
-  -> 后台任务管理器
-  -> 专项模块图
-  -> ResultEnvelope[DeliveryPackage]
-  -> 飞书交付
+```bash
+uv run python scripts/open_browser_for_login.py
 ```
 
-图片路线的标准模块图为：
+## Workflow Model
+
+```text
+Feishu event
+  -> Feishu translation layer
+  -> always-on main agent session
+  -> WorkflowInvocation
+  -> background task manager
+  -> specialist workflow graph
+  -> ResultEnvelope[DeliveryPackage]
+  -> Feishu review delivery
+```
+
+The standard image-post route is:
 
 ```text
 ResearchModule
@@ -77,24 +103,63 @@ ResearchModule
   -> ReviewDeliveryModule
 ```
 
-其中 ImageModule 内部包含 ReferenceAnalysis、ImagePlanner、并发 ImageTaskSubgraph、ImageJoin 和 ImageSetReview。每个单图任务再包含 Prompt、Generation、Review 和 Retry 边界。
+Inside `ImageModule`, the system separates reference analysis, image planning, concurrent image-task subgraphs, image joining, and image-set review. Individual image tasks keep explicit prompt, generation, review, and retry boundaries.
 
-## 设计原则
+## Architecture
 
-- 主 Agent 是调度中心，不做 Graph。
-- 专项 Agent 做通用能力，不做一次性产品线。
-- 用户要求进入 `WorkflowInvocation.run_options`、`constraints`、`preferences` 或 artifacts。
-- 配置文件只提供默认值，用户在飞书里指定的参数优先。
-- 文件路径不是独立协议，只能作为 `ArtifactRef` 进入 envelope。
-- 登录能力只服务研究和访问，不服务平台发布。
-- 小红书风格表示内容形态，不表示自动提交到小红书。
+```text
+xiaohongshu-agent/
+├── .agents/
+│   ├── skills/                 # Skill Protocol documents and checklists
+│   └── prompt/                 # Versioned prompt templates
+├── src/
+│   ├── apps/feishu_agent_os/   # Always-on Feishu service entrypoint
+│   ├── agent_os/               # Main agent, tool registration, tasks, sessions
+│   ├── agents/                 # Specialist agents
+│   ├── orchestration/          # WorkflowInvocation, module graph, route runners
+│   ├── config/                 # Defaults and environment-backed settings
+│   └── utils/                  # Providers, Feishu delivery, browser and file tools
+├── scripts/                    # Login warmup, service helpers, development scripts
+├── tests/                      # Unit, contract, and integration tests
+├── docs/                       # Notes and workflow documentation
+└── requirements/               # Optional dependency sets
+```
 
-## 测试
+## Design Principles
 
-运行全量测试：
+- The main agent is an orchestration center, not a monolithic graph.
+- Specialist agents provide reusable capabilities instead of one-off product-line logic.
+- User requirements flow into `WorkflowInvocation.run_options`, `constraints`, `preferences`, and artifacts.
+- Local configuration provides defaults; explicit Feishu conversation requirements take priority.
+- Files and media move through `ArtifactRef` and envelope payloads, not ad hoc path passing.
+- Login automation supports research and access checks, not platform publishing.
+- "Xiaohongshu style" describes content format and review expectations, not automatic submission to Xiaohongshu/Rednote.
+
+## Testing
+
+Run the test suite:
 
 ```bash
 uv run pytest
 ```
 
-关键测试覆盖 Feishu Agent OS、ResultEnvelope、模块图契约、Prompt 模板库、Skill 发现、图片规划、参考图角色、后台任务并发与恢复，以及 Feishu-first 架构边界。
+Important coverage areas include Feishu Agent OS behavior, `ResultEnvelope` contracts, workflow graph contracts, prompt template discovery, skill routing, image planning, reference-image roles, background task recovery, and Feishu-first delivery boundaries.
+
+## Security and Secrets
+
+- Keep real credentials in `.env` or your shell environment.
+- Never commit `.env`, service-account files, private keys, browser session stores, generated output, or downloaded media.
+- `.env.example` contains placeholders only.
+- Rotate any API keys that may have been used during local experiments before relying on a public deployment.
+- Treat Feishu chat IDs, browser sessions, and Android device identifiers as private operational data.
+
+## Related Documentation
+
+- [Chinese README](README.zh-CN.md)
+- [Article research workflow notes](docs/article_post_research_workflow/README.md)
+- [Android QR login notes](docs/android-qr-login-agent-notes.md)
+- [Logfire query notes](docs/logfire-query.md)
+
+## License
+
+No license file is currently included. This means the repository is public, but reuse, redistribution, and derivative-work rights have not been granted through a standard open-source license.
